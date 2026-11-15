@@ -521,7 +521,7 @@ namespace LanScreenShare.Desktop
             popout.StretchModeChanged += HandlePopoutStretchModeChanged;
             popout.RemoteInputSent += async (input) =>
             {
-                if (_viewerPermissions.AllowRemoteControl && _controlClient.IsConnected && _remoteControlEnabled)
+                if (CanSendRemoteControlInput())
                 {
                     await _controlClient.SendInputAsync(input);
                 }

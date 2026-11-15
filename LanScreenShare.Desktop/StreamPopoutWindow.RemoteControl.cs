@@ -264,19 +264,17 @@ namespace LanScreenShare.Desktop
             return false;
         }
 
-        private bool TryHandlePopoutControlAltShortcut(Key key)
+        private bool TryHandlePopoutControlAltShortcut(Key key) => key switch
         {
-            if (key == Key.L)
-            {
-                if (_allowRemoteControl) GameModeToggled?.Invoke();
-                return true;
-            }
-            if (key == Key.M)
-            {
-                if (_allowSourceSwitch) CycleMonitorRequested?.Invoke();
-                return true;
-            }
-            return false;
+            Key.L => InvokeShortcutIfAllowed(_allowRemoteControl, GameModeToggled),
+            Key.M => InvokeShortcutIfAllowed(_allowSourceSwitch, CycleMonitorRequested),
+            _ => false
+        };
+
+        private static bool InvokeShortcutIfAllowed(bool allowed, Action? handler)
+        {
+            if (allowed) handler?.Invoke();
+            return true;
         }
 
         private void PopoutWindow_KeyDown(object? sender, KeyEventArgs e)

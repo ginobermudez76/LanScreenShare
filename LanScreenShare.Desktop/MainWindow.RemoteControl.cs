@@ -183,19 +183,27 @@ namespace LanScreenShare.Desktop
             return false;
         }
 
-        private bool TryHandleControlAltShortcut(Key key)
+        private bool TryHandleControlAltShortcut(Key key) => key switch
         {
-            if (key == Key.L)
+            Key.L => TryExecuteShortcut(_viewerPermissions.AllowRemoteControl, ToggleGameModeAsync),
+            Key.M => TryExecuteShortcut(_viewerPermissions.AllowSourceSwitch, RequestRemoteMonitorSwitchAsync),
+            _ => false
+        };
+
+        private bool TryExecuteShortcut(bool allowed, Func<Task> action)
+        {
+            if (_isViewing && allowed)
             {
-                if (_isViewing && _viewerPermissions.AllowRemoteControl) _ = ToggleGameModeAsync();
-                return true;
+                _ = action();
             }
-            if (key == Key.M)
-            {
-                if (_isViewing && _viewerPermissions.AllowSourceSwitch) _ = RequestRemoteMonitorSwitchAsync();
-                return true;
-            }
-            return false;
+            return true;
+        }
+
+        private bool CanSendRemoteControlInput()
+        {
+            if (!_viewerPermissions.AllowRemoteControl) return false;
+            if (!_remoteControlEnabled) return false;
+            return _controlClient.IsConnected;
         }
 
         private static bool IsShortcutKey(KeyEventArgs e)
@@ -265,7 +273,7 @@ namespace LanScreenShare.Desktop
         }
 
         private bool CanProcessPointerInput(PointerEventArgs e) =>
-            _viewerPermissions.AllowRemoteControl && _remoteControlEnabled && _controlClient.IsConnected && !IsPointerOverFullscreenHeader(e);
+            CanSendRemoteControlInput() && !IsPointerOverFullscreenHeader(e);
 
         private void ScreenImage_PointerMoved(object? sender, PointerEventArgs e)
         {
@@ -379,17 +387,17 @@ namespace LanScreenShare.Desktop
 
         private void SendRemoteKeyEvent(Key key, InputEventType eventType)
         {
-            if (_viewerPermissions.AllowRemoteControl && _remoteControlEnabled && _controlClient.IsConnected)
+            if (!CanSendRemoteControlInput())
+                return;
+
+            int vk = RemoteInputHelper.ConvertAvaloniaKeyToWin32Vk(key);
+            if (vk > 0)
             {
-                int vk = RemoteInputHelper.ConvertAvaloniaKeyToWin32Vk(key);
-                if (vk > 0)
+                _ = _controlClient.SendInputAsync(new RemoteInputMessage
                 {
-                    _ = _controlClient.SendInputAsync(new RemoteInputMessage
-                    {
-                        Type = eventType,
-                        KeyCode = vk
-                    });
-                }
+                    Type = eventType,
+                    KeyCode = vk
+                });
             }
         }
 
