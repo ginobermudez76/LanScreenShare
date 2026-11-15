@@ -1054,8 +1054,8 @@ namespace LanScreenShare.Desktop
             }
         }
 
-        [DllImport("user32.dll")]
-        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+        [LibraryImport("user32.dll")]
+        private static partial uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
         private int GetTargetAudioProcessId()
         {
@@ -1077,8 +1077,8 @@ namespace LanScreenShare.Desktop
             return 0;
         }
 
-        [DllImport("user32.dll")]
-        private static extern int GetSystemMetrics(int nIndex);
+        [LibraryImport("user32.dll")]
+        private static partial int GetSystemMetrics(int nIndex);
         private const int SM_CXSCREEN = 0;
         private const int SM_CYSCREEN = 1;
 

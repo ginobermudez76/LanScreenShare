@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
 using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,8 +10,11 @@ using NAudio.Wave;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public sealed class ProcessLoopbackAudioCapture : IDisposable
+    public sealed partial class ProcessLoopbackAudioCapture : IDisposable
     {
+        private static readonly StrategyBasedComWrappers ComWrappersInstance = new();
+        private static readonly Guid IID_IAudioClient = new("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
+        private static readonly Guid IID_IAudioCaptureClient = new("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
         public static Action<string>? OnLog { get; set; }
 
         private static void Log(string msg)
@@ -36,34 +40,49 @@ namespace LanScreenShare.Media
 
         private static (IntPtr pProp, IntPtr pParams) CreateActivationPropVariant(uint targetPid, bool includeProcess)
         {
-            var activationParams = new AUDIOCLIENT_ACTIVATION_PARAMS
+            var activationParams = new AudioClientActivationParams
             {
-                ActivationType = AUDIOCLIENT_ACTIVATION_TYPE.ProcessLoopback,
-                ProcessLoopbackParams = new AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS
+                ActivationType = AudioClientActivationType.ProcessLoopback,
+                ProcessLoopbackParams = new AudioClientProcessLoopbackParams
                 {
                     TargetProcessId = targetPid,
                     ProcessLoopbackMode = includeProcess
-                        ? PROCESS_LOOPBACK_MODE.IncludeTargetProcessTree
-                        : PROCESS_LOOPBACK_MODE.ExcludeTargetProcessTree
+                        ? ProcessLoopbackMode.IncludeTargetProcessTree
+                        : ProcessLoopbackMode.ExcludeTargetProcessTree
                 }
             };
 
-            IntPtr pParams = Marshal.AllocHGlobal(Marshal.SizeOf<AUDIOCLIENT_ACTIVATION_PARAMS>());
+            IntPtr pParams = Marshal.AllocHGlobal(Marshal.SizeOf<AudioClientActivationParams>());
             Marshal.StructureToPtr(activationParams, pParams, false);
 
-            var propVariant = new PROPVARIANT
+            var propVariant = new PropVariant
             {
                 vt = 65, // VT_BLOB
-                blob = new BLOB
+                blob = new NativeBlob
                 {
-                    cbSize = Marshal.SizeOf<AUDIOCLIENT_ACTIVATION_PARAMS>(),
+                    cbSize = Marshal.SizeOf<AudioClientActivationParams>(),
                     pBlobData = pParams
                 }
             };
 
-            IntPtr pProp = Marshal.AllocHGlobal(Marshal.SizeOf<PROPVARIANT>());
+            IntPtr pProp = Marshal.AllocHGlobal(Marshal.SizeOf<PropVariant>());
             Marshal.StructureToPtr(propVariant, pProp, false);
             return (pProp, pParams);
+        }
+
+        private static IAudioClient? CreateAudioClientFromUnknown(IntPtr pUnk)
+        {
+            if (pUnk == IntPtr.Zero)
+                return null;
+
+            try
+            {
+                return ComWrappersInstance.GetOrCreateObjectForComInstance(pUnk, CreateObjectFlags.UniqueInstance) as IAudioClient;
+            }
+            finally
+            {
+                Marshal.Release(pUnk);
+            }
         }
 
         private static async Task<IAudioClient?> ActivateProcessLoopbackClientAsync(uint targetPid, bool includeProcess, CancellationToken cancellationToken)
@@ -76,7 +95,7 @@ namespace LanScreenShare.Media
             {
                 int hr = ActivateAudioInterfaceAsync(
                     VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
-                    typeof(IAudioClient).GUID,
+                    in IID_IAudioClient,
                     pProp,
                     handler,
                     out asyncOp);
@@ -92,8 +111,8 @@ namespace LanScreenShare.Media
 
                 try
                 {
-                    var rawClient = await handler.Task.WaitAsync(linkedCts.Token);
-                    return rawClient as IAudioClient;
+                    IntPtr pUnk = await handler.Task.WaitAsync(linkedCts.Token);
+                    return CreateAudioClientFromUnknown(pUnk);
                 }
                 catch (Exception ex)
                 {
@@ -104,25 +123,15 @@ namespace LanScreenShare.Media
             finally
             {
                 GC.KeepAlive(handler);
-                if (asyncOp != null)
-                {
-                    try
-                    {
-                        Marshal.ReleaseComObject(asyncOp);
-                    }
-                    catch
-                    {
-                        // Ignore COM release failure
-                    }
-                }
+                ReleaseComInstance(asyncOp);
                 Marshal.FreeHGlobal(pProp);
                 Marshal.FreeHGlobal(pParams);
             }
         }
 
-        private static WAVEFORMATEXTENSIBLE CreateWaveFormatExtensible(int sampleRate) => new()
+        private static WaveFormatExtensible CreateWaveFormatExtensible(int sampleRate) => new()
         {
-            Format = new WAVEFORMATEX
+            Format = new WaveFormatEx
             {
                 wFormatTag = 0xFFFE, // WAVE_FORMAT_EXTENSIBLE
                 nChannels = 2,
@@ -159,7 +168,7 @@ namespace LanScreenShare.Media
 
         private static int InitializeAudioClientFormat(IAudioClient audioClient, out WaveFormat waveFormat)
         {
-            IntPtr pFormat = Marshal.AllocHGlobal(Marshal.SizeOf<WAVEFORMATEXTENSIBLE>());
+            IntPtr pFormat = Marshal.AllocHGlobal(Marshal.SizeOf<WaveFormatExtensible>());
             long bufferDurationHns = 10000000; // 1 segundo (en unidades de 100ns)
             try
             {
@@ -244,14 +253,23 @@ namespace LanScreenShare.Media
                 return false;
             }
 
-            hr = client.GetService(typeof(IAudioCaptureClient).GUID, out object rawCaptureClient);
-            if (hr < 0 || rawCaptureClient == null)
+            hr = client.GetService(in IID_IAudioCaptureClient, out IntPtr pCaptureClient);
+            if (hr < 0 || pCaptureClient == IntPtr.Zero)
             {
                 Log($"[ProcessAudio] GetService(IAudioCaptureClient) falló con HRESULT: 0x{hr:X8}");
                 return false;
             }
 
-            captureClient = (IAudioCaptureClient)rawCaptureClient;
+            try
+            {
+                captureClient = (IAudioCaptureClient)ComWrappersInstance.GetOrCreateObjectForComInstance(
+                    pCaptureClient,
+                    CreateObjectFlags.UniqueInstance);
+            }
+            finally
+            {
+                Marshal.Release(pCaptureClient);
+            }
             hr = client.Start();
             if (hr < 0)
             {
@@ -356,6 +374,21 @@ namespace LanScreenShare.Media
             Console.WriteLine("[ProcessAudio] Captura de audio de proceso detenida.");
         }
 
+        private static void ReleaseComInstance(object? comObject)
+        {
+            if (comObject is ComObject managedCom)
+            {
+                try
+                {
+                    managedCom.FinalRelease();
+                }
+                catch
+                {
+                    // Ignore COM release errors during cleanup
+                }
+            }
+        }
+
         private void Cleanup()
         {
             IsCapturing = false;
@@ -363,31 +396,11 @@ namespace LanScreenShare.Media
             _cts = null;
             _captureTask = null;
 
-            if (_audioClient != null)
-            {
-                try
-                {
-                    Marshal.ReleaseComObject(_audioClient);
-                }
-                catch
-                {
-                    // Ignore COM release errors during cleanup
-                }
-                _audioClient = null;
-            }
+            ReleaseComInstance(_audioClient);
+            _audioClient = null;
 
-            if (_captureClient != null)
-            {
-                try
-                {
-                    Marshal.ReleaseComObject(_captureClient);
-                }
-                catch
-                {
-                    // Ignore COM release errors during cleanup
-                }
-                _captureClient = null;
-            }
+            ReleaseComInstance(_captureClient);
+            _captureClient = null;
 
             _bufferEvent?.Dispose();
             _bufferEvent = null;
@@ -404,34 +417,34 @@ namespace LanScreenShare.Media
 
         #region Native COM Definitions
 
-        private enum AUDIOCLIENT_ACTIVATION_TYPE
+        private enum AudioClientActivationType
         {
             Default = 0,
             ProcessLoopback = 1
         }
 
-        private enum PROCESS_LOOPBACK_MODE
+        private enum ProcessLoopbackMode
         {
             IncludeTargetProcessTree = 0,
             ExcludeTargetProcessTree = 1
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS
+        private struct AudioClientProcessLoopbackParams
         {
             public uint TargetProcessId;
-            public PROCESS_LOOPBACK_MODE ProcessLoopbackMode;
+            public ProcessLoopbackMode ProcessLoopbackMode;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct AUDIOCLIENT_ACTIVATION_PARAMS
+        private struct AudioClientActivationParams
         {
-            public AUDIOCLIENT_ACTIVATION_TYPE ActivationType;
-            public AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS ProcessLoopbackParams;
+            public AudioClientActivationType ActivationType;
+            public AudioClientProcessLoopbackParams ProcessLoopbackParams;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 2)]
-        private struct WAVEFORMATEX
+        private struct WaveFormatEx
         {
             public ushort wFormatTag;
             public ushort nChannels;
@@ -443,59 +456,55 @@ namespace LanScreenShare.Media
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 2)]
-        private struct WAVEFORMATEXTENSIBLE
+        private struct WaveFormatExtensible
         {
-            public WAVEFORMATEX Format;
+            public WaveFormatEx Format;
             public ushort wValidBitsPerSample;
             public uint dwChannelMask;
             public Guid SubFormat;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct BLOB
+        private struct NativeBlob
         {
             public int cbSize;
             public IntPtr pBlobData;
         }
 
         [StructLayout(LayoutKind.Explicit)]
-        private struct PROPVARIANT
+        private struct PropVariant
         {
             [FieldOffset(0)] public ushort vt;
             [FieldOffset(2)] public ushort wReserved1;
             [FieldOffset(4)] public ushort wReserved2;
             [FieldOffset(6)] public ushort wReserved3;
-            [FieldOffset(8)] public BLOB blob;
+            [FieldOffset(8)] public NativeBlob blob;
         }
 
-        [ComImport]
+        [GeneratedComInterface]
         [Guid("41D949AB-9862-444A-80F6-C261334DA5EB")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IActivateAudioInterfaceCompletionHandler
+        internal partial interface IActivateAudioInterfaceCompletionHandler
         {
             void ActivateCompleted(IActivateAudioInterfaceAsyncOperation activateOperation);
         }
 
-        [ComImport]
+        [GeneratedComInterface]
         [Guid("94EA2B94-E9CC-49E0-C0FF-EE64CA8F5B90")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IAgileObject
+        internal partial interface IAgileObject
         {
         }
 
-        [ComImport]
+        [GeneratedComInterface]
         [Guid("72A22D78-CDE4-431D-B8CC-843A71199B6D")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IActivateAudioInterfaceAsyncOperation
+        internal partial interface IActivateAudioInterfaceAsyncOperation
         {
             [PreserveSig]
-            int GetActivateResult(out int hrResult, [MarshalAs(UnmanagedType.IUnknown)] out object ppUnk);
+            int GetActivateResult(out int hrResult, out IntPtr ppUnk);
         }
 
-        [ComImport]
+        [GeneratedComInterface]
         [Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IAudioClient
+        internal partial interface IAudioClient
         {
             [PreserveSig]
             int Initialize(
@@ -537,13 +546,12 @@ namespace LanScreenShare.Media
             int SetEventHandle(IntPtr eventHandle);
 
             [PreserveSig]
-            int GetService([In, MarshalAs(UnmanagedType.LPStruct)] Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object ppv);
+            int GetService(in Guid riid, out IntPtr ppv);
         }
 
-        [ComImport]
+        [GeneratedComInterface]
         [Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        private interface IAudioCaptureClient
+        internal partial interface IAudioCaptureClient
         {
             [PreserveSig]
             int GetBuffer(
@@ -560,31 +568,32 @@ namespace LanScreenShare.Media
             int GetNextPacketSize(out uint pNumFramesInNextPacket);
         }
 
-        [DllImport("mmdevapi.dll", ExactSpelling = true, PreserveSig = true)]
-        private static extern int ActivateAudioInterfaceAsync(
-            [MarshalAs(UnmanagedType.LPWStr)] string deviceInterfacePath,
-            [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
+        [LibraryImport("mmdevapi.dll", StringMarshalling = StringMarshalling.Utf16)]
+        private static partial int ActivateAudioInterfaceAsync(
+            string deviceInterfacePath,
+            in Guid riid,
             IntPtr activationParams,
             IActivateAudioInterfaceCompletionHandler completionHandler,
-            out IActivateAudioInterfaceAsyncOperation activationOperation);
+            out IActivateAudioInterfaceAsyncOperation? activationOperation);
 
-        private sealed class AudioInterfaceCompletionHandler : IActivateAudioInterfaceCompletionHandler, IAgileObject
+        [GeneratedComClass]
+        internal sealed partial class AudioInterfaceCompletionHandler : IActivateAudioInterfaceCompletionHandler, IAgileObject
         {
-            private readonly TaskCompletionSource<object> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            private readonly TaskCompletionSource<IntPtr> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            public Task<object> Task => _tcs.Task;
+            public Task<IntPtr> Task => _tcs.Task;
 
-            private static bool IsActivationSuccessful(int hrMethod, int hrActivate, object? unk) =>
-                hrMethod >= 0 && hrActivate >= 0 && unk != null;
+            private static bool IsActivationSuccessful(int hrMethod, int hrActivate, IntPtr unk) =>
+                hrMethod >= 0 && hrActivate >= 0 && unk != IntPtr.Zero;
 
             public void ActivateCompleted(IActivateAudioInterfaceAsyncOperation activateOperation)
             {
                 try
                 {
-                    int hrMethod = activateOperation.GetActivateResult(out int hrActivate, out object ppUnk);
-                    if (IsActivationSuccessful(hrMethod, hrActivate, ppUnk))
+                    int hrMethod = activateOperation.GetActivateResult(out int hrActivate, out IntPtr pUnk);
+                    if (IsActivationSuccessful(hrMethod, hrActivate, pUnk))
                     {
-                        _tcs.TrySetResult(ppUnk);
+                        _tcs.TrySetResult(pUnk);
                     }
                     else
                     {

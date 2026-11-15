@@ -47,7 +47,9 @@ namespace LanScreenShare.Desktop
             return CreateDefaultScreenSource();
         }
 
+#pragma warning disable CA1859 // Mantener abstracción multiplataforma IVideoDecoderService para evitar CA1416
         private static IVideoDecoderService? TryCreateH264Decoder()
+#pragma warning restore CA1859
         {
             if (!OperatingSystem.IsWindows()) return null;
             try

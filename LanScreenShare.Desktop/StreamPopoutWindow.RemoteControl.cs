@@ -93,7 +93,7 @@ namespace LanScreenShare.Desktop
             if (!OperatingSystem.IsWindows()) return;
 
             var center = GetScreenImageCenterOnScreen();
-            if (GetCursorPos(out POINT curPos))
+            if (GetCursorPos(out NativePoint curPos))
             {
                 int dx = curPos.X - center.X;
                 int dy = curPos.Y - center.Y;
@@ -276,14 +276,16 @@ namespace LanScreenShare.Desktop
 
         #region Win32 P/Invoke
 
-        [DllImport("user32.dll")]
-        private static extern bool SetCursorPos(int X, int Y);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool SetCursorPos(int X, int Y);
 
-        [DllImport("user32.dll")]
-        private static extern bool GetCursorPos(out POINT lpPoint);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool GetCursorPos(out NativePoint lpPoint);
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct POINT
+        private struct NativePoint
         {
             public int X;
             public int Y;
