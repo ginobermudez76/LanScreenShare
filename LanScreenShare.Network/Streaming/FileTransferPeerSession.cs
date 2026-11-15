@@ -96,16 +96,15 @@ namespace LanScreenShare.Network.Streaming
             }
         }
 
-        private static readonly IReadOnlyDictionary<FileTransferPacketType, Func<FileTransferPeerSession, uint, CancellationToken, Task>> PacketHandlers =
-            new Dictionary<FileTransferPacketType, Func<FileTransferPeerSession, uint, CancellationToken, Task>>
-            {
-                [FileTransferPacketType.Chunk] = (session, length, ct) => session.HandleChunkPacketAsync(length, ct),
-                [FileTransferPacketType.Offer] = (session, length, ct) => session.HandleOfferPacketAsync(length, ct),
-                [FileTransferPacketType.Accept] = (session, length, ct) => session.HandleSignalPacketAsync(length, accepted: true, ct),
-                [FileTransferPacketType.Reject] = (session, length, ct) => session.HandleSignalPacketAsync(length, accepted: false, ct),
-                [FileTransferPacketType.Complete] = (session, length, ct) => session.HandleCompletePacketAsync(length, ct),
-                [FileTransferPacketType.Cancel] = (session, length, ct) => session.HandleCancelPacketAsync(length, ct)
-            };
+        private static readonly Dictionary<FileTransferPacketType, Func<FileTransferPeerSession, uint, CancellationToken, Task>> PacketHandlers = new()
+        {
+            [FileTransferPacketType.Chunk] = (session, length, ct) => session.HandleChunkPacketAsync(length, ct),
+            [FileTransferPacketType.Offer] = (session, length, ct) => session.HandleOfferPacketAsync(length, ct),
+            [FileTransferPacketType.Accept] = (session, length, ct) => session.HandleSignalPacketAsync(length, accepted: true, ct),
+            [FileTransferPacketType.Reject] = (session, length, ct) => session.HandleSignalPacketAsync(length, accepted: false, ct),
+            [FileTransferPacketType.Complete] = (session, length, ct) => session.HandleCompletePacketAsync(length, ct),
+            [FileTransferPacketType.Cancel] = (session, length, ct) => session.HandleCancelPacketAsync(length, ct)
+        };
 
         private Task DispatchPacketAsync(FileTransferPacketType type, uint payloadLength, CancellationToken ct) =>
             PacketHandlers.TryGetValue(type, out var handler)
