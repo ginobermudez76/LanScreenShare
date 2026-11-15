@@ -134,7 +134,7 @@ namespace LanScreenShare.Media
                 activate.GetUINT32(MF_TRANSFORM_ASYNC, out uint isAsyncVal);
                 bool isAsync = isAsyncVal != 0;
 
-                var (vendor, isHardware, displayName, priority) = CategorizeEncoder(friendlyName, isAsync);
+                var (vendor, isHardware, displayName, priority) = CategorizeEncoder(friendlyName);
 
                 return new MftEncoderInfo(
                     FriendlyName: friendlyName,
@@ -204,16 +204,10 @@ namespace LanScreenShare.Media
             return encoders;
         }
 
-        private static bool MatchesAny(string text, params string[] patterns)
-        {
-            foreach (var p in patterns)
-            {
-                if (text.Contains(p)) return true;
-            }
-            return false;
-        }
+        private static bool MatchesAny(string text, params string[] patterns) =>
+            Array.Exists(patterns, text.Contains);
 
-        private static (EncoderGpuVendor Vendor, bool IsHardware, string DisplayName, int Priority) CategorizeEncoder(string friendlyName, bool isAsync)
+        private static (EncoderGpuVendor Vendor, bool IsHardware, string DisplayName, int Priority) CategorizeEncoder(string friendlyName)
         {
             string lower = friendlyName.ToLowerInvariant();
 

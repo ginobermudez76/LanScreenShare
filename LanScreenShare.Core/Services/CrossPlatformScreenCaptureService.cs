@@ -12,13 +12,10 @@ namespace LanScreenShare.Core.Services
     /// Proporciona un pipeline de fotogramas desacoplado de las APIs exclusivas de Windows (GDI/DXGI),
     /// permitiendo ejecutar, probar y transmitir en sistemas no-Windows de forma estable.
     /// </summary>
-    public class CrossPlatformScreenCaptureService : IScreenCaptureService
+    public sealed class CrossPlatformScreenCaptureService : IScreenCaptureService
     {
         public event EventHandler<CapturedFrame>? FrameCaptured;
         public event EventHandler<bool>? SecureDesktopChanged;
-
-        protected virtual void OnSecureDesktopChanged(bool isSecure) =>
-            SecureDesktopChanged?.Invoke(this, isSecure);
 
         private volatile bool _isCapturing;
         private CancellationTokenSource? _cts;
@@ -30,7 +27,6 @@ namespace LanScreenShare.Core.Services
         private double _resolutionScale = 1.0;
         private int _targetWidth = 1920;
         private int _targetHeight = 1080;
-        private string _codec = "jpeg";
 
         public bool IsCapturing => _isCapturing;
         public int TargetFps { get => _targetFps; set => _targetFps = Math.Clamp(value, 1, 120); }
@@ -39,7 +35,7 @@ namespace LanScreenShare.Core.Services
         public double ResolutionScale { get => _resolutionScale; set => _resolutionScale = Math.Clamp(value, 0.1, 2.0); }
         public int TargetWidth { get => _targetWidth; set => _targetWidth = Math.Max(0, value); }
         public int TargetHeight { get => _targetHeight; set => _targetHeight = Math.Max(0, value); }
-        public string Codec { get => _codec; set => _codec = value; }
+        public string Codec { get; set; } = "jpeg";
 
         public string ActiveEncoderDescription => "CrossPlatform Universal Engine";
         public bool IsHardwareAccelerated => false;
@@ -51,7 +47,7 @@ namespace LanScreenShare.Core.Services
             _targetFps = Math.Clamp(profile.TargetFps, 1, 120);
             _quality = profile.Quality;
             _resolutionScale = profile.ResolutionScale;
-            _codec = profile.Codec;
+            Codec = profile.Codec;
             _targetWidth = profile.TargetWidth > 0 ? profile.TargetWidth : 1280;
             _targetHeight = profile.TargetHeight > 0 ? profile.TargetHeight : 720;
             _bitrateMbps = profile.BitrateMbps;
@@ -76,7 +72,7 @@ namespace LanScreenShare.Core.Services
                         int h = _targetHeight;
 
                         // Generar un fotograma sintético minimalista (patrón de color test card)
-                        byte[] dummyJpeg = GenerateSyntheticJpeg(w, h, frameCounter);
+                        byte[] dummyJpeg = GenerateSyntheticJpeg(frameCounter);
 
                         var frame = new CapturedFrame
                         {
@@ -122,12 +118,16 @@ namespace LanScreenShare.Core.Services
                 _cts?.Cancel();
                 _captureTask?.Wait(500);
             }
-            catch { }
+            catch
+            {
+                // Ignorar excepciones de cancelación durante el cierre de captura
+            }
             finally
             {
                 _cts?.Dispose();
                 _cts = null;
                 _captureTask = null;
+                SecureDesktopChanged?.Invoke(this, false);
             }
         }
 
@@ -144,6 +144,7 @@ namespace LanScreenShare.Core.Services
 
         public void RequestKeyframe()
         {
+            // No requerido para codificación sintética JPEG sin estado entre cuadros
         }
 
         public void Dispose()
@@ -151,7 +152,7 @@ namespace LanScreenShare.Core.Services
             StopCapture();
         }
 
-        private static byte[] GenerateSyntheticJpeg(int width, int height, int frameCounter)
+        private static byte[] GenerateSyntheticJpeg(int frameCounter)
         {
             // Encabezado JPEG sintético mínimo para mantener compatibilidad con decodificadores sin requerir System.Drawing
             byte[] header = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xD9 };

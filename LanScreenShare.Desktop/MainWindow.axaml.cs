@@ -114,12 +114,14 @@ namespace LanScreenShare.Desktop
         private TaskCompletionSource<bool>? _controlApprovalTcs;
 
         // Decodificador de video por hardware (H.264)
+#pragma warning disable CA1859 // Mantener abstracción multiplataforma IVideoDecoderService para evitar CA1416
         private IVideoDecoderService? _h264Decoder;
+#pragma warning restore CA1859
         private WriteableBitmap? _viewerWriteableBitmap;
         private byte[]? _latestDecodedBgra;
         private int _latestDecodedWidth;
         private int _latestDecodedHeight;
-        private readonly object _bitmapLock = new();
+        private readonly Lock _bitmapLock = new();
         private int _isUiRenderPending;
 
         // Estadísticas de flujo en tiempo real y sincronización A/V
@@ -131,9 +133,9 @@ namespace LanScreenShare.Desktop
         private int _lastHostFps;
         private int _lastHostFrameTimeMs;
         private DispatcherTimer _metricsTimer = null!;
-        private AppSettings _appSettings = new();
-        private bool _isInitializingSettings = true;
-        private bool _isApplyingPreset = false;
+        private AppSettings _appSettings;
+        private bool _isInitializingSettings;
+        private bool _isApplyingPreset;
         private CaptureSource _currentSource = new()
         {
             Type = CaptureSourceType.Screen,
@@ -148,6 +150,7 @@ namespace LanScreenShare.Desktop
         {
             InitializeComponent();
 
+            _isInitializingSettings = true;
             _appSettings = SettingsService.Load();
 
             InitializeCaptureAndDiscovery();

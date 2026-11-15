@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 using LanScreenShare.Core.Models;
 
 namespace LanScreenShare.Desktop
@@ -18,7 +19,7 @@ namespace LanScreenShare.Desktop
             WriteIndented = true
         };
 
-        private static readonly object FileLock = new();
+        private static readonly Lock FileLock = new();
 
         public static AppSettings Load()
         {

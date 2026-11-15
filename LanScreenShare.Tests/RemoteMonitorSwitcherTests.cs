@@ -201,13 +201,20 @@ namespace LanScreenShare.Tests
             lock (receivedLabels)
             {
                 CollectionAssert.AreEqual(
-                    new[] { "Pantalla 2", "Todas las pantallas", "Pantalla 1" },
+                    ExpectedCycleMonitorLabels,
                     receivedLabels);
             }
 
             await client.DisconnectAsync();
             server.Stop();
         }
+
+        private static readonly string[] ExpectedCycleMonitorLabels =
+        [
+            "Pantalla 2",
+            "Todas las pantallas",
+            "Pantalla 1"
+        ];
 
         [TestMethod]
         public async Task SelectSource_ViewerRequestsCatalogAndSelectsWindowSourceById()

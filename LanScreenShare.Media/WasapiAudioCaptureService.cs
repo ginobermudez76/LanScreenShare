@@ -10,11 +10,10 @@ using NAudio.Wave;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public class WasapiAudioCaptureService : IAudioCaptureService
+    public sealed class WasapiAudioCaptureService : IAudioCaptureService
     {
         private WasapiLoopbackCapture? _capture;
         private ProcessLoopbackAudioCapture? _processCapture;
-        private int _currentProcessId;
         private bool _disposed;
 
         public event EventHandler<CapturedAudioChunk>? AudioCaptured;
@@ -25,7 +24,6 @@ namespace LanScreenShare.Media
         public void StartCapture(int processId)
         {
             StopCapture();
-            _currentProcessId = processId;
 
             if (TryStartProcessLoopback(processId))
             {

@@ -239,7 +239,7 @@ namespace LanScreenShare.Desktop
 
             try
             {
-                var handshake = (_streamClient as TcpStreamClient)?.ActiveSessionHandshake;
+                var handshake = _streamClient.ActiveSessionHandshake;
                 await _controlClient.ConnectAsync(new ControlClientConnectionOptions(_currentConnectedDeviceIp, 5003, _sslClientOptions, handshake?.SessionId, handshake?.ControlToken));
                 Console.WriteLine($"[ControlViewer] Conectado a canal de control remoto en {_currentConnectedDeviceIp}:5003");
                 _remoteControlEnabled = true;
@@ -629,7 +629,6 @@ namespace LanScreenShare.Desktop
             [Key.Back] = 0x08,
             [Key.Tab] = 0x09,
             [Key.Return] = 0x0D,
-            [Key.Enter] = 0x0D,
             [Key.Escape] = 0x1B,
             [Key.Space] = 0x20,
             [Key.Left] = 0x25,

@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using LanScreenShare.Core.Models;
 
 namespace LanScreenShare.Core.Services
@@ -24,15 +25,15 @@ namespace LanScreenShare.Core.Services
     /// </summary>
     public sealed class AdaptiveBitrateController
     {
-        private readonly object _lock = new();
+        private readonly Lock _lock = new();
         private readonly Func<long> _timeProvider;
 
         private int _currentBitrateMbps;
         private int _minBitrateMbps = 2;
         private int _maxBitrateMbps = 25;
 
-        private int _targetFps = 60;
-        private int _baseFps = 60;
+        private int _targetFps;
+        private int _baseFps;
         private int _minFps = 30;
 
         private AbrNetworkState _currentState = AbrNetworkState.Optimal;

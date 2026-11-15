@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Threading;
 using LanScreenShare.Core.Interfaces;
 using LanScreenShare.Core.Models;
 using Vortice.MediaFoundation;
@@ -8,7 +9,7 @@ using Vortice.MediaFoundation;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public class MediaFoundationH264DecoderService : IVideoDecoderService
+    public sealed class MediaFoundationH264DecoderService : IVideoDecoderService
     {
         private static readonly Guid CLSID_CMSH264DecoderMFT = new("62ce7e72-4c71-4d20-b15d-452831a87d9d");
         private static readonly Guid CODECAPI_AVLowLatencyMode = new("9c27891a-ed7a-40e1-88e8-b22727a024ee");
@@ -24,7 +25,7 @@ namespace LanScreenShare.Media
         private byte[]? _decodedBgraBuffer;
         private byte[]? _nv12Buffer;
         private long _sampleTimeCounter;
-        private readonly object _lock = new();
+        private readonly Lock _lock = new();
         private bool _disposed;
         private bool _mftProvidesSamples;
         private int _outputBufferSize;

@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Threading;
 using LanScreenShare.Core.Interfaces;
 using LanScreenShare.Core.Models;
 using NAudio.CoreAudioApi;
@@ -11,13 +12,12 @@ using NAudio.Wave;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public class WasapiAudioPlayerService : IAudioPlayerService
+    public sealed class WasapiAudioPlayerService : IAudioPlayerService
     {
         private WasapiOut? _wasapiOut;
         private BufferedWaveProvider? _waveProvider;
         private WaveFormat? _currentWaveFormat;
-        private readonly object _lock = new();
-        private bool _isMuted;
+        private readonly Lock _lock = new();
         private float _volume = 1.0f;
         private bool _disposed;
 
@@ -42,11 +42,7 @@ namespace LanScreenShare.Media
             }
         }
 
-        public bool IsMuted
-        {
-            get => _isMuted;
-            set => _isMuted = value;
-        }
+        public bool IsMuted { get; set; }
 
         public float Volume
         {
@@ -91,9 +87,9 @@ namespace LanScreenShare.Media
                 _waveProvider.ClearBuffer();
             }
 
-            float currentVol = _isMuted ? 0f : _volume;
-            ApplyVolume(chunk.Data!, chunk.AudioFormat, chunk.BitsPerSample, currentVol);
-            _waveProvider.AddSamples(chunk.Data!, 0, chunk.Data!.Length);
+            float currentVol = IsMuted ? 0f : _volume;
+            ApplyVolume(chunk.Data, chunk.AudioFormat, chunk.BitsPerSample, currentVol);
+            _waveProvider.AddSamples(chunk.Data, 0, chunk.Data.Length);
         }
 
         private static void ApplyVolume(byte[] data, int audioFormat, int bitsPerSample, float volume)

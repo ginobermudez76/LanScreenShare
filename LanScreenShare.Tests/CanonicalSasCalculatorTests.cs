@@ -7,8 +7,11 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace LanScreenShare.Tests;
 
 [TestClass]
-public class CanonicalSasCalculatorTests
+public partial class CanonicalSasCalculatorTests
 {
+    [GeneratedRegex(@"^\d{3}-\d{3}$")]
+    private static partial Regex SasFormatRegex();
+
     private byte[] _dummyHostCert = null!;
     private byte[] _dummyViewerCert = null!;
     private byte[] _dummyHostNonce = null!;
@@ -37,7 +40,7 @@ public class CanonicalSasCalculatorTests
         Assert.AreEqual(code1, code2);
         Assert.AreEqual(str1, str2);
         Assert.IsTrue(code1 < 1_000_000);
-        Assert.IsTrue(Regex.IsMatch(str1, @"^\d{3}-\d{3}$"));
+        Assert.IsTrue(SasFormatRegex().IsMatch(str1));
     }
 
     [TestMethod]
@@ -72,19 +75,23 @@ public class CanonicalSasCalculatorTests
     }
 
     [TestMethod]
-    [ExpectedException(typeof(ArgumentException))]
     public void ComputeSas_InvalidHostNonceLength_ThrowsArgumentException()
     {
         byte[] invalidNonce = new byte[15];
-        var creds = new PairingCredentials(_dummyHostCert, _dummyViewerCert, invalidNonce, _dummyViewerNonce);
-        CanonicalSasCalculator.ComputeSas(CanonicalSasCalculator.CurrentProtocolVersion, in creds);
+        Assert.ThrowsException<ArgumentException>(() =>
+        {
+            var creds = new PairingCredentials(_dummyHostCert, _dummyViewerCert, invalidNonce, _dummyViewerNonce);
+            CanonicalSasCalculator.ComputeSas(CanonicalSasCalculator.CurrentProtocolVersion, in creds);
+        });
     }
 
     [TestMethod]
-    [ExpectedException(typeof(ArgumentException))]
     public void ComputeSas_EmptyCertificate_ThrowsArgumentException()
     {
-        var creds = new PairingCredentials(Array.Empty<byte>(), _dummyViewerCert, _dummyHostNonce, _dummyViewerNonce);
-        CanonicalSasCalculator.ComputeSas(CanonicalSasCalculator.CurrentProtocolVersion, in creds);
+        Assert.ThrowsException<ArgumentException>(() =>
+        {
+            var creds = new PairingCredentials(Array.Empty<byte>(), _dummyViewerCert, _dummyHostNonce, _dummyViewerNonce);
+            CanonicalSasCalculator.ComputeSas(CanonicalSasCalculator.CurrentProtocolVersion, in creds);
+        });
     }
 }

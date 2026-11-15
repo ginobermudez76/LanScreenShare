@@ -11,7 +11,7 @@ namespace LanScreenShare.Media
     [SupportedOSPlatform("windows")]
     public sealed class ProcessLoopbackAudioCapture : IDisposable
     {
-        public static Action<string>? OnLog;
+        public static Action<string>? OnLog { get; set; }
 
         private static void Log(string msg)
         {
@@ -66,7 +66,7 @@ namespace LanScreenShare.Media
             return (pProp, pParams);
         }
 
-        private async Task<IAudioClient?> ActivateProcessLoopbackClientAsync(uint targetPid, bool includeProcess, CancellationToken cancellationToken)
+        private static async Task<IAudioClient?> ActivateProcessLoopbackClientAsync(uint targetPid, bool includeProcess, CancellationToken cancellationToken)
         {
             var handler = new AudioInterfaceCompletionHandler();
             var (pProp, pParams) = CreateActivationPropVariant(targetPid, includeProcess);

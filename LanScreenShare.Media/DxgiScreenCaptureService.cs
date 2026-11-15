@@ -14,7 +14,7 @@ using Vortice.DXGI;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public class DxgiScreenCaptureService : IScreenCaptureService
+    public sealed class DxgiScreenCaptureService : IScreenCaptureService
     {
         private CancellationTokenSource? _cts;
         private Task? _captureTask;
@@ -133,7 +133,7 @@ namespace LanScreenShare.Media
         public string Codec
         {
             get => _codec;
-            set => _codec = value.ToLowerInvariant() == "h264" ? "h264" : "jpeg";
+            set => _codec = string.Equals(value, "h264", StringComparison.OrdinalIgnoreCase) ? "h264" : "jpeg";
         }
 
         public void UpdateSettings(CaptureProfile profile)
@@ -257,7 +257,7 @@ namespace LanScreenShare.Media
                     try
                     {
                         using var session = CreateDxgiSession();
-                        RunSessionCaptureLoop(session, token, stopwatch, fpsTracker);
+                        RunSessionCaptureLoop(session, stopwatch, fpsTracker, token);
                     }
                     catch (Exception ex)
                     {
@@ -293,9 +293,9 @@ namespace LanScreenShare.Media
 
         private void RunSessionCaptureLoop(
             DxgiSessionResources session,
-            CancellationToken token,
             Stopwatch stopwatch,
-            HostFpsTracker fpsTracker)
+            HostFpsTracker fpsTracker,
+            CancellationToken token)
         {
             bool hasCapturedAtLeastOneFrame = false;
             int lastCursorX = int.MinValue;
@@ -372,22 +372,37 @@ namespace LanScreenShare.Media
             return FrameAcquireStatus.NoFrame;
         }
 
+        private static bool HasCursorMoved(in POINT pos, int lastX, int lastY) =>
+            pos.x != lastX || pos.y != lastY;
+
+        private static bool TryGetVisibleCursorPosition(out POINT pos)
+        {
+            CURSORINFO curInfo = new() { cbSize = Marshal.SizeOf<CURSORINFO>() };
+            if (GetCursorInfo(ref curInfo) && curInfo.flags == CURSOR_SHOWING)
+            {
+                pos = curInfo.ptScreenPos;
+                return true;
+            }
+
+            pos = default;
+            return false;
+        }
+
         private static bool DetectCursorMovement(ref int lastCursorX, ref int lastCursorY)
         {
             try
             {
-                CURSORINFO curInfo = new() { cbSize = Marshal.SizeOf<CURSORINFO>() };
-                if (GetCursorInfo(out curInfo) && curInfo.flags == CURSOR_SHOWING)
+                if (TryGetVisibleCursorPosition(out var pos) && HasCursorMoved(pos, lastCursorX, lastCursorY))
                 {
-                    if (curInfo.ptScreenPos.x != lastCursorX || curInfo.ptScreenPos.y != lastCursorY)
-                    {
-                        lastCursorX = curInfo.ptScreenPos.x;
-                        lastCursorY = curInfo.ptScreenPos.y;
-                        return true;
-                    }
+                    lastCursorX = pos.x;
+                    lastCursorY = pos.y;
+                    return true;
                 }
             }
-            catch { }
+            catch
+            {
+                // Ignorar fallos de consulta de cursor
+            }
 
             return false;
         }
@@ -499,7 +514,7 @@ namespace LanScreenShare.Media
                 throw new InvalidOperationException("No se pudo crear IDXGIFactory1");
             }
 
-            FindTargetAdapterAndOutput(factory, _deviceName, _monitorIndex, out IDXGIAdapter1? adapter, out IDXGIOutput? output);
+            FindTargetAdapterAndOutput(factory, out IDXGIAdapter1? adapter, out IDXGIOutput? output);
             CreateD3D11Device(adapter, out ID3D11Device? device, out ID3D11DeviceContext? context);
             var output1 = output.QueryInterface<IDXGIOutput1>();
 
@@ -568,64 +583,72 @@ namespace LanScreenShare.Media
         private static bool IsDefaultAdapterAndOutput(IDXGIOutput? selected, uint aIdx, uint oIdx, int defaultIdx) =>
             selected == null && aIdx == 0 && oIdx == (uint)defaultIdx;
 
+        private bool MatchesOutputCriteria(IDXGIOutput curOutput, string? targetDev)
+        {
+            string devName = curOutput.Description.DeviceName.TrimEnd('\0');
+            if (!string.IsNullOrEmpty(targetDev) && string.Equals(devName, targetDev, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var coords = curOutput.Description.DesktopCoordinates;
+            return MatchesTargetSourceDimensions(coords.Left, coords.Top, coords.Right - coords.Left, coords.Bottom - coords.Top);
+        }
+
+        private IDXGIOutput? TrySelectAdapterOutput(IDXGIAdapter1 curAdapter, uint aIdx, string? targetDev, int matchOutputIdx)
+        {
+            IDXGIOutput? matchedOutput = null;
+            for (uint oIdx = 0; curAdapter.EnumOutputs(oIdx, out var curOutput).Success && curOutput != null; oIdx++)
+            {
+                bool match = MatchesOutputCriteria(curOutput, targetDev) ||
+                             IsDefaultAdapterAndOutput(matchedOutput, aIdx, oIdx, matchOutputIdx);
+
+                if (match && matchedOutput == null)
+                {
+                    matchedOutput = curOutput;
+                }
+                else
+                {
+                    curOutput.Dispose();
+                }
+            }
+            return matchedOutput;
+        }
+
+        private static (IDXGIAdapter1 adapter, IDXGIOutput output) GetFallbackPrimaryAdapterAndOutput(IDXGIFactory1 factory)
+        {
+            if (factory.EnumAdapters1(0, out var primaryAdapter).Failure || primaryAdapter == null)
+            {
+                throw new InvalidOperationException("No se pudo obtener el adaptador gráfico primario (GPU 0)");
+            }
+
+            if (primaryAdapter.EnumOutputs(0, out var primaryOutput).Failure || primaryOutput == null)
+            {
+                primaryAdapter.Dispose();
+                throw new InvalidOperationException("No se pudo obtener la salida de pantalla principal (Monitor 0)");
+            }
+
+            return (primaryAdapter, primaryOutput);
+        }
+
         private void FindTargetAdapterAndOutput(
             IDXGIFactory1 factory,
-            string? targetDev,
-            int matchOutputIdx,
             out IDXGIAdapter1 adapter,
             out IDXGIOutput output)
         {
-            IDXGIAdapter1? selectedAdapter = null;
-            IDXGIOutput? selectedOutput = null;
-
             for (uint aIdx = 0; factory.EnumAdapters1(aIdx, out var curAdapter).Success && curAdapter != null; aIdx++)
             {
-                for (uint oIdx = 0; curAdapter.EnumOutputs(oIdx, out var curOutput).Success && curOutput != null; oIdx++)
+                var matchedOutput = TrySelectAdapterOutput(curAdapter, aIdx, _deviceName, _monitorIndex);
+                if (matchedOutput != null)
                 {
-                    string devName = curOutput.Description.DeviceName.TrimEnd('\0');
-                    var coords = curOutput.Description.DesktopCoordinates;
-                    int oWidth = coords.Right - coords.Left;
-                    int oHeight = coords.Bottom - coords.Top;
-
-                    bool match = (!string.IsNullOrEmpty(targetDev) && string.Equals(devName, targetDev, StringComparison.OrdinalIgnoreCase)) ||
-                                 MatchesTargetSourceDimensions(coords.Left, coords.Top, oWidth, oHeight) ||
-                                 IsDefaultAdapterAndOutput(selectedOutput, aIdx, oIdx, matchOutputIdx);
-
-                    if (match && selectedOutput == null)
-                    {
-                        selectedAdapter = curAdapter;
-                        selectedOutput = curOutput;
-                    }
-                    else
-                    {
-                        curOutput.Dispose();
-                    }
+                    adapter = curAdapter;
+                    output = matchedOutput;
+                    return;
                 }
-
-                if (selectedOutput == null || selectedAdapter != curAdapter)
-                {
-                    curAdapter.Dispose();
-                }
+                curAdapter.Dispose();
             }
 
-            if (selectedAdapter == null || selectedOutput == null)
-            {
-                selectedOutput?.Dispose();
-                selectedAdapter?.Dispose();
-
-                if (factory.EnumAdapters1(0, out selectedAdapter).Failure || selectedAdapter == null)
-                {
-                    throw new InvalidOperationException("No se pudo obtener el adaptador gráfico primario (GPU 0)");
-                }
-
-                if (selectedAdapter.EnumOutputs(0, out selectedOutput).Failure || selectedOutput == null)
-                {
-                    throw new InvalidOperationException("No se pudo obtener la salida de pantalla principal (Monitor 0)");
-                }
-            }
-
-            adapter = selectedAdapter;
-            output = selectedOutput;
+            (adapter, output) = GetFallbackPrimaryAdapterAndOutput(factory);
         }
 
         private static void CreateD3D11Device(
@@ -783,7 +806,7 @@ namespace LanScreenShare.Media
             try
             {
                 CURSORINFO cursorInfo = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
-                if (GetCursorInfo(out cursorInfo) && cursorInfo.flags == CURSOR_SHOWING)
+                if (GetCursorInfo(ref cursorInfo) && cursorInfo.flags == CURSOR_SHOWING)
                 {
                     float x = (cursorInfo.ptScreenPos.x - options.ScreenLeft) * options.ScaleX;
                     float y = (cursorInfo.ptScreenPos.y - options.ScreenTop) * options.ScaleY;
@@ -847,7 +870,7 @@ namespace LanScreenShare.Media
         }
 
         [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool GetCursorInfo(out CURSORINFO pci);
+        private static extern bool GetCursorInfo(ref CURSORINFO pci);
 
         [DllImport("avrt.dll", SetLastError = true)]
         private static extern IntPtr AvSetMmThreadCharacteristics(string taskName, ref int taskIndex);

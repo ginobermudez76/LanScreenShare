@@ -10,7 +10,9 @@ namespace LanScreenShare.Tests
         [TestMethod]
         public void PacketSize_IsExactly32Bytes()
         {
-            Assert.AreEqual(32, StreamTelemetryPacket.PacketSize);
+            byte[] serialized = new StreamTelemetryPacket().ToByteArray();
+            Assert.AreEqual(32, serialized.Length);
+            Assert.AreEqual(StreamTelemetryPacket.PacketSize, serialized.Length);
         }
 
         [TestMethod]

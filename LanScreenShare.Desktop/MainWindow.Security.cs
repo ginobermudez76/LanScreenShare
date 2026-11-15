@@ -83,19 +83,19 @@ namespace LanScreenShare.Desktop
             return _remoteControlMode == "auto" || await RequestControlApprovalAsync(clientId);
         }
 
-        private bool OnProvisionalPairingRequested(string fingerprint, X509Certificate2 clientCert)
+        private static bool OnProvisionalPairingRequested(string fingerprint, X509Certificate2 clientCert)
         {
             // Permitir el establecimiento del canal TLS seguro.
             // La autorización interactiva y verificación SAS se ejecuta en el canal de aplicación en TcpStreamServer.
             return true;
         }
 
-        private bool OnClientProvisionalPairing(string fingerprint, X509Certificate2 hostCert)
+        private static bool OnClientProvisionalPairing(string fingerprint, X509Certificate2 hostCert)
         {
             return true;
         }
 
-        private async Task<bool> RequestPairingApprovalAsync(string deviceName, string fingerprint, string sasFormatted)
+        private async Task<bool> RequestPairingApprovalAsync(string deviceName, string sasFormatted)
         {
             _streamApprovalTcs?.TrySetResult(false);
             var tcs = new TaskCompletionSource<bool>();

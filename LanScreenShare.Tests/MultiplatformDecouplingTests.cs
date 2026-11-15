@@ -74,7 +74,8 @@ namespace LanScreenShare.Tests
         {
             using var simulator = new NullInputSimulatorService();
             simulator.SetTargetSource(new CaptureSource { Id = "test:0", Name = "Display" });
-            Assert.AreEqual("test:0", simulator.CurrentTargetSource?.Id);
+            Assert.IsNotNull(simulator.CurrentTargetSource);
+            Assert.AreEqual("test:0", simulator.CurrentTargetSource.Id);
 
             var input = new RemoteInputMessage
             {

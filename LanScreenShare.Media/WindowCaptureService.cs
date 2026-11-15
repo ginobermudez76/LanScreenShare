@@ -11,7 +11,7 @@ using SkiaSharp;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public class WindowCaptureService : IScreenCaptureService
+    public sealed class WindowCaptureService : IScreenCaptureService
     {
         private readonly IntPtr _hwnd;
         private CancellationTokenSource? _cts;
@@ -36,8 +36,6 @@ namespace LanScreenShare.Media
         public event EventHandler<CapturedFrame>? FrameCaptured;
         public event EventHandler<bool>? SecureDesktopChanged;
 
-        protected virtual void OnSecureDesktopChanged(bool isSecure) =>
-            SecureDesktopChanged?.Invoke(this, isSecure);
         public bool IsCapturing => _cts != null && !_cts.IsCancellationRequested;
         public string? ActiveEncoderDescription => _codec == "h264" ? _h264Encoder?.EncoderDescription : "JPEG";
         public bool IsHardwareAccelerated => _codec == "h264" && (_h264Encoder?.IsHardwareAccelerated ?? false);
@@ -92,7 +90,7 @@ namespace LanScreenShare.Media
         public string Codec
         {
             get => _codec;
-            set => _codec = value.ToLowerInvariant() == "h264" ? "h264" : "jpeg";
+            set => _codec = string.Equals(value, "h264", StringComparison.OrdinalIgnoreCase) ? "h264" : "jpeg";
         }
 
         public WindowCaptureService(IntPtr hwnd)
@@ -144,6 +142,7 @@ namespace LanScreenShare.Media
             _cts?.Dispose();
             _cts = null;
             _captureTask = null;
+            SecureDesktopChanged?.Invoke(this, false);
         }
 
         private sealed class WindowFpsTracker
@@ -449,7 +448,7 @@ namespace LanScreenShare.Media
             try
             {
                 CURSORINFO pci = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
-                if (GetCursorInfo(out pci) && IsCursorShowing(pci))
+                if (GetCursorInfo(ref pci) && IsCursorShowing(pci))
                 {
                     POINT pt = pci.ptScreenPos;
                     if (ScreenToClient(hwnd, ref pt) && IsInsideBounds(pt.x, pt.y, clientWidth, clientHeight))
@@ -558,7 +557,7 @@ namespace LanScreenShare.Media
         private static extern bool BitBlt(IntPtr hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hdcSrc, int nXSrc, int nYSrc, int dwRop);
 
         [DllImport("user32.dll")]
-        private static extern bool GetCursorInfo(out CURSORINFO pci);
+        private static extern bool GetCursorInfo(ref CURSORINFO pci);
 
         [DllImport("user32.dll")]
         private static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);

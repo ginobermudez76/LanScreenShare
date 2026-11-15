@@ -10,7 +10,7 @@ using LanScreenShare.Network.Security;
 
 namespace LanScreenShare.Network.Streaming
 {
-    public class TcpStreamClient : IStreamClient
+    public sealed class TcpStreamClient : IStreamClient
     {
         private TcpClient? _client;
         private Stream? _stream;

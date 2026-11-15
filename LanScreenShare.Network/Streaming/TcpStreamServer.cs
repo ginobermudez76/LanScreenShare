@@ -16,7 +16,7 @@ using LanScreenShare.Network.Security;
 
 namespace LanScreenShare.Network.Streaming
 {
-    public class TcpStreamServer : IStreamServer
+    public sealed class TcpStreamServer : IStreamServer
     {
         public const uint FrameHeaderMagicJpeg = VideoPacketProtocol.MagicJpeg;
         public const uint FrameHeaderMagicH264 = VideoPacketProtocol.MagicH264;
@@ -350,7 +350,7 @@ namespace LanScreenShare.Network.Streaming
             }
             catch (OperationCanceledException)
             {
-                return;
+                // Cancelación normal de lectura de telemetría
             }
             catch
             {
@@ -437,7 +437,7 @@ namespace LanScreenShare.Network.Streaming
             }
             catch (OperationCanceledException)
             {
-                return;
+                // Cancelación normal del envío de cuadros
             }
             catch
             {
@@ -461,14 +461,14 @@ namespace LanScreenShare.Network.Streaming
             CurrentTelemetry.HostFrameTimeMs = frame.HostFrameTimeMs;
 
             bool anyDropped = false;
-            foreach (var kvp in _clients)
+            foreach (var client in _clients.Values)
             {
-                if (kvp.Value.Channel.Reader.Count > 0)
+                if (client.Channel.Reader.Count > 0)
                 {
                     Interlocked.Increment(ref _droppedFramesCount);
                     anyDropped = true;
                 }
-                kvp.Value.Channel.Writer.TryWrite(frame);
+                client.Channel.Writer.TryWrite(frame);
             }
 
             if (anyDropped)
@@ -484,9 +484,9 @@ namespace LanScreenShare.Network.Streaming
         {
             if (_clients.TryRemove(clientId, out var ctx))
             {
-                try { ctx.Channel.Writer.Complete(); } catch { }
-                try { ctx.Stream.Dispose(); } catch { }
-                try { ctx.Client.Close(); } catch { }
+                try { ctx.Channel.Writer.Complete(); } catch { /* Ignorar canal ya completado */ }
+                try { ctx.Stream.Dispose(); } catch { /* Ignorar error al liberar stream */ }
+                try { ctx.Client.Close(); } catch { /* Ignorar error al cerrar socket */ }
 
                 if (ctx.SessionId != null && _sessionAuthority != null)
                 {
@@ -498,41 +498,53 @@ namespace LanScreenShare.Network.Streaming
             }
         }
 
-        public void Stop()
+        private void NotifyStreamEndToClients()
         {
             byte[] endHeader = VideoPacketProtocol.SerializeHeader(new VideoHeaderData(
                 VideoPacketProtocol.MagicEnd,
                 0, 0, 0, 0, 0, 0));
 
-            foreach (var kvp in _clients)
+            foreach (var client in _clients.Values)
             {
                 try
                 {
-                    kvp.Value.Stream.Write(endHeader, 0, endHeader.Length);
-                    kvp.Value.Stream.Flush();
+                    client.Stream.Write(endHeader, 0, endHeader.Length);
+                    client.Stream.Flush();
                 }
-                catch { }
-            }
-
-            Thread.Sleep(60);
-
-            _cts?.Cancel();
-            try { _listener?.Stop(); } catch { }
-            _listener = null;
-
-            foreach (var kvp in _clients)
-            {
-                try { kvp.Value.Channel.Writer.Complete(); } catch { }
-                try { kvp.Value.Client.Client.Shutdown(SocketShutdown.Both); } catch { }
-                try { kvp.Value.Stream.Dispose(); } catch { }
-                try { kvp.Value.Client.Close(); } catch { }
-
-                if (kvp.Value.SessionId != null && _sessionAuthority != null)
+                catch
                 {
-                    _sessionAuthority.CloseSession(kvp.Value.SessionId);
+                    // Ignorar si el socket ya fue cerrado por el receptor
+                }
+            }
+        }
+
+        private void DisconnectAndClearAllClients()
+        {
+            foreach (var client in _clients.Values)
+            {
+                try { client.Channel.Writer.Complete(); } catch { /* Ignorar canal ya completado */ }
+                try { client.Client.Client.Shutdown(SocketShutdown.Both); } catch { /* Ignorar socket ya desconectado */ }
+                try { client.Stream.Dispose(); } catch { /* Ignorar error al cerrar stream */ }
+                try { client.Client.Close(); } catch { /* Ignorar error al cerrar cliente TCP */ }
+
+                if (client.SessionId != null)
+                {
+                    _sessionAuthority?.CloseSession(client.SessionId);
                 }
             }
             _clients.Clear();
+        }
+
+        public void Stop()
+        {
+            NotifyStreamEndToClients();
+            Thread.Sleep(60);
+
+            _cts?.Cancel();
+            try { _listener?.Stop(); } catch { /* Ignorar error al detener listener */ }
+            _listener = null;
+
+            DisconnectAndClearAllClients();
 
             _cts?.Dispose();
             _cts = null;

@@ -207,7 +207,6 @@ namespace LanScreenShare.Network.Streaming
         }
 
         private async Task<Stream?> AuthenticateTlsAndChannelAsync(
-            TcpClient client,
             Stream stream,
             string clientId,
             CancellationToken token)
@@ -244,7 +243,7 @@ namespace LanScreenShare.Network.Streaming
                 }
                 ctx.SendLock.Dispose();
             }
-            try { client.Close(); } catch { }
+            try { client.Close(); } catch { /* Ignorar error al cerrar socket */ }
             ClientDisconnected?.Invoke(this, clientId);
         }
 
@@ -253,7 +252,7 @@ namespace LanScreenShare.Network.Streaming
             var clientId = client.Client.RemoteEndPoint?.ToString() ?? Guid.NewGuid().ToString();
             try
             {
-                Stream? stream = await AuthenticateTlsAndChannelAsync(client, client.GetStream(), clientId, token);
+                Stream? stream = await AuthenticateTlsAndChannelAsync(client.GetStream(), clientId, token);
                 if (stream == null)
                 {
                     client.Close();
