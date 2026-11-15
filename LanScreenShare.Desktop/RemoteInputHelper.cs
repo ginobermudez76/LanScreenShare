@@ -10,6 +10,7 @@ namespace LanScreenShare.Desktop
 {
     internal static class RemoteInputHelper
     {
+        internal readonly record struct NormalizedCoordinateInput(Point Position, Size ImageSize, Rect Bounds, Stretch Stretch);
         private readonly record struct ImageGeometry(Size ImageSize, Rect Bounds);
 
         internal static bool HasPositiveDimensions(Size s) => s.Width > 0 && s.Height > 0;
@@ -23,15 +24,27 @@ namespace LanScreenShare.Desktop
             if (!TryGetValidImageGeometry(screenImage, out var geom))
                 return false;
 
-            var pos = e.GetPosition(screenImage);
-            if (screenImage!.Stretch == Stretch.Fill)
+            var input = new NormalizedCoordinateInput(e.GetPosition(screenImage), geom.ImageSize, geom.Bounds, screenImage!.Stretch);
+            return TryGetNormalizedCoordinates(input, out normX, out normY);
+        }
+
+        internal static bool TryGetNormalizedCoordinates(in NormalizedCoordinateInput input, out float normX, out float normY)
+        {
+            normX = 0f;
+            normY = 0f;
+
+            if (!HasPositiveDimensions(input.ImageSize) || !HasPositiveDimensions(input.Bounds))
+                return false;
+
+            if (input.Stretch == Stretch.Fill)
             {
-                normX = (float)Math.Clamp(pos.X / geom.Bounds.Width, 0.0, 1.0);
-                normY = (float)Math.Clamp(pos.Y / geom.Bounds.Height, 0.0, 1.0);
+                normX = (float)Math.Clamp(input.Position.X / input.Bounds.Width, 0.0, 1.0);
+                normY = (float)Math.Clamp(input.Position.Y / input.Bounds.Height, 0.0, 1.0);
                 return true;
             }
 
-            return TryCalculateUniformCoordinates(pos, geom, out normX, out normY);
+            var geom = new ImageGeometry(input.ImageSize, input.Bounds);
+            return TryCalculateUniformCoordinates(input.Position, geom, out normX, out normY);
         }
 
         private static bool TryGetValidImageGeometry(Image? image, out ImageGeometry geom)

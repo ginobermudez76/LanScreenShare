@@ -289,5 +289,59 @@ namespace LanScreenShare.Tests
             Assert.AreEqual(12, controller.CurrentBitrateMbps);
             Assert.AreEqual(60, controller.TargetFps);
         }
+
+        [TestMethod]
+        public void PropertyBoundsAndThresholds_ClampAndNotifyAsExpected()
+        {
+            var controller = CreateTestController(initialBitrate: 15);
+            int? manualBitrate = null;
+            controller.BitrateChanged += (br, reason) =>
+            {
+                if (reason == "Manual")
+                {
+                    manualBitrate = br;
+                }
+            };
+
+            controller.CurrentBitrateMbps = 99;
+            Assert.AreEqual((25, 25), (controller.CurrentBitrateMbps, manualBitrate));
+
+            controller.MinBitrateMbps = 30;
+            Assert.AreEqual((30, 30, 30), (controller.MinBitrateMbps, controller.MaxBitrateMbps, controller.CurrentBitrateMbps));
+
+            controller.MaxBitrateMbps = 10;
+            Assert.AreEqual(30, controller.MaxBitrateMbps);
+
+            controller.MinBitrateMbps = 5;
+            controller.MaxBitrateMbps = 12;
+            Assert.AreEqual((5, 12, 12), (controller.MinBitrateMbps, controller.MaxBitrateMbps, controller.CurrentBitrateMbps));
+
+            controller.MinFps = 5;
+            controller.BaseFps = 45;
+            controller.BaseFps = 20;
+            Assert.AreEqual((15, 20, 20), (controller.MinFps, controller.BaseFps, controller.TargetFps));
+        }
+
+        [TestMethod]
+        public void RelativeRttSpikeAndNullTelemetry_TriggerModerateCongestionAndSafeNoOp()
+        {
+            var controller = CreateTestController(initialBitrate: 20);
+            controller.Thresholds = new AbrThresholds(OptimalMs: 25, CongestionMs: 80, SevereMs: 120);
+            controller.Cooldowns = new AbrCooldowns(IncreaseMs: 2000, DecreaseMs: 500);
+            Assert.AreEqual((25, 80, 500), (controller.RttThresholdOptimalMs, controller.RttThresholdCongestionMs, controller.DecreaseCooldownMs));
+
+            controller.RegisterTelemetry(null!);
+            Assert.AreEqual("Inicial", controller.LastAdjustmentReason);
+
+            AdvanceTime(600);
+            controller.RegisterTelemetry(CreateTelemetry(rttMs: 8));
+
+            AdvanceTime(600);
+            controller.RegisterTelemetry(CreateTelemetry(rttMs: 35));
+
+            Assert.AreEqual(AbrNetworkState.Congested, controller.CurrentState);
+            Assert.AreEqual(17, controller.CurrentBitrateMbps);
+            StringAssert.Contains(controller.LastAdjustmentReason, "RTT elevado");
+        }
     }
 }

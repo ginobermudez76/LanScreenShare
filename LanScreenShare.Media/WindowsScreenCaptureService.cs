@@ -11,31 +11,9 @@ using SkiaSharp;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public sealed partial class WindowsScreenCaptureService : IScreenCaptureService
+    public sealed partial class WindowsScreenCaptureService : ScreenCaptureServiceBase
     {
         public readonly record struct ScreenBounds(int X, int Y, int Width, int Height, bool AllScreens = false);
-
-        public event EventHandler<CapturedFrame>? FrameCaptured;
-        public event EventHandler<bool>? SecureDesktopChanged;
-
-        private CancellationTokenSource? _cts;
-        private Task? _captureTask;
-        private bool _disposed;
-
-        private volatile int _targetFps = 30;
-        private volatile int _quality = 70;
-        private volatile int _scalePercent = 100;
-        private volatile int _targetWidth = 0;
-        private volatile int _targetHeight = 0;
-        private volatile string _codec = "h264";
-        private volatile bool _forceKeyframeRequested = true;
-        private byte[]? _reusableBgraBytes;
-        private MediaFoundationH264EncoderService? _h264Encoder;
-
-        public void RequestKeyframe()
-        {
-            _forceKeyframeRequested = true;
-        }
 
         private volatile int _captureX = 0;
         private volatile int _captureY = 0;
@@ -43,9 +21,16 @@ namespace LanScreenShare.Media
         private volatile int _captureHeight = 0;
         private volatile bool _captureAllScreens = false;
 
-        public bool IsCapturing => _cts != null && !_cts.IsCancellationRequested;
-        public string? ActiveEncoderDescription => _codec == "h264" ? _h264Encoder?.EncoderDescription : "JPEG";
-        public bool IsHardwareAccelerated => _codec == "h264" && (_h264Encoder?.IsHardwareAccelerated ?? false);
+        protected override int StopWaitTimeoutMs => 500;
+        protected override string LogTag => "GDI";
+
+        public WindowsScreenCaptureService()
+            : base(defaultFps: 30, defaultQuality: 70, defaultCodec: "h264")
+        {
+        }
+
+        protected override Task RunCaptureLoopAsync(CancellationToken token) =>
+            CaptureLoopAsync(token);
 
         public int CaptureX
         {
@@ -84,87 +69,6 @@ namespace LanScreenShare.Media
             _captureWidth = Math.Max(0, bounds.Width);
             _captureHeight = Math.Max(0, bounds.Height);
             _captureAllScreens = bounds.AllScreens;
-        }
-
-        public int TargetFps
-        {
-            get => _targetFps;
-            set
-            {
-                _targetFps = Math.Clamp(value, 1, 120);
-                _h264Encoder?.UpdateFps(_targetFps);
-            }
-        }
-
-        public int Quality
-        {
-            get => _quality;
-            set => _quality = Math.Clamp(value, 10, 100);
-        }
-
-        private volatile int _bitrateMbps = 8;
-        public int BitrateMbps
-        {
-            get => _bitrateMbps;
-            set
-            {
-                _bitrateMbps = Math.Clamp(value, 1, 50);
-                _h264Encoder?.UpdateBitrate(_bitrateMbps * 1_000_000);
-            }
-        }
-
-        public double ResolutionScale
-        {
-            get => _scalePercent / 100.0;
-            set => _scalePercent = (int)Math.Round(Math.Clamp(value, 0.25, 1.0) * 100);
-        }
-
-        public int TargetWidth
-        {
-            get => _targetWidth;
-            set => _targetWidth = Math.Max(0, value);
-        }
-
-        public int TargetHeight
-        {
-            get => _targetHeight;
-            set => _targetHeight = Math.Max(0, value);
-        }
-
-        public string Codec
-        {
-            get => _codec;
-            set => _codec = string.Equals(value, "h264", StringComparison.OrdinalIgnoreCase) ? "h264" : "jpeg";
-        }
-
-        public void UpdateSettings(CaptureProfile profile)
-        {
-            TargetFps = profile.TargetFps;
-            Quality = profile.Quality;
-            BitrateMbps = profile.BitrateMbps;
-            ResolutionScale = profile.ResolutionScale;
-            Codec = profile.Codec;
-            TargetWidth = profile.TargetWidth;
-            TargetHeight = profile.TargetHeight;
-        }
-
-        public void StartCapture(CaptureProfile profile)
-        {
-            if (IsCapturing)
-                return;
-
-            _targetFps = Math.Clamp(profile.TargetFps, 1, 120);
-            _quality = Math.Clamp(profile.Quality, 10, 100);
-            _bitrateMbps = Math.Clamp(profile.BitrateMbps, 1, 50);
-            ResolutionScale = profile.ResolutionScale;
-            Codec = profile.Codec;
-            TargetWidth = profile.TargetWidth;
-            TargetHeight = profile.TargetHeight;
-
-            _cts = new CancellationTokenSource();
-            var token = _cts.Token;
-
-            _captureTask = Task.Run(() => CaptureLoopAsync(token), token);
         }
 
         private async Task CaptureLoopAsync(CancellationToken token)
@@ -220,30 +124,13 @@ namespace LanScreenShare.Media
                     frame.HostFrameTimeMs = (int)frameProcStopwatch.ElapsedMilliseconds;
                     frame.HostFps = fpsTracker.RecordFrameAndGetFps();
 
-                    FrameCaptured?.Invoke(this, frame);
+                    OnFrameCaptured(frame);
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[ScreenCapture] Error capturando frame: {ex.Message}");
             }
-        }
-
-        public void StopCapture()
-        {
-            _cts?.Cancel();
-            try
-            {
-                _captureTask?.Wait(500, CancellationToken.None);
-            }
-            catch
-            {
-                // Ignorar excepciones al esperar cancelación
-            }
-            _cts?.Dispose();
-            _cts = null;
-            _captureTask = null;
-            SecureDesktopChanged?.Invoke(this, false);
         }
 
         private sealed class HostFpsTracker
@@ -271,9 +158,6 @@ namespace LanScreenShare.Media
             int CustomTargetWidth = 0,
             int CustomTargetHeight = 0,
             bool ForceKeyframe = false);
-
-        private static bool NeedsResize(int targetW, int targetH, int width, int height) =>
-            targetW > 0 && targetH > 0 && (targetW != width || targetH != height);
 
         private bool ShouldCaptureVirtualScreen() =>
             _captureAllScreens || _captureWidth <= 0 || _captureHeight <= 0;
@@ -394,33 +278,14 @@ namespace LanScreenShare.Media
             private static partial IntPtr CreateDIBSection(IntPtr hdc, ref BitmapInfo pbmi, uint iUsage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
         }
 
-        private static int ComputeTargetDimension(int customTarget, int original, double scale)
-        {
-            if (customTarget > 0) return customTarget & ~1;
-            if (scale > 0.2 && scale < 0.99) return ((int)(original * scale)) & ~1;
-            return 0;
-        }
-
         private static (SKBitmap bitmapToEncode, SKBitmap? disposableBitmap, int finalWidth, int finalHeight) PrepareEncodingBitmap(
             SKBitmap skBitmap,
             int width,
             int height,
-            in ScreenCaptureOptions options)
-        {
-            int targetW = ComputeTargetDimension(options.CustomTargetWidth, width, options.Scale);
-            int targetH = ComputeTargetDimension(options.CustomTargetHeight, height, options.Scale);
-
-            if (NeedsResize(targetW, targetH, width, height))
-            {
-                var resized = skBitmap.Resize(new SKImageInfo(targetW, targetH), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
-                if (resized != null)
-                {
-                    return (resized, resized, targetW, targetH);
-                }
-            }
-
-            return (skBitmap, null, width, height);
-        }
+            in ScreenCaptureOptions options) =>
+            PrepareResizedBitmap(
+                skBitmap,
+                new BitmapResizeOptions(width, height, options.Scale, options.CustomTargetWidth, options.CustomTargetHeight));
 
         private CapturedFrame? EncodeCapturedBitmap(IntPtr pBits, int width, int height, in ScreenCaptureOptions options)
         {
@@ -437,7 +302,7 @@ namespace LanScreenShare.Media
 
                 if (currentCodec == "h264")
                 {
-                    encodedBytes = EncodeH264(bitmapToEncode, finalWidth, finalHeight, options.ForceKeyframe);
+                    encodedBytes = EncodeH264(bitmapToEncode, new H264FrameRequest(finalWidth, finalHeight, options.ForceKeyframe));
                 }
 
                 if (encodedBytes == null || encodedBytes.Length == 0)
@@ -476,37 +341,6 @@ namespace LanScreenShare.Media
             DrawMouseCursor(session.HdcDest, left, top);
 
             return EncodeCapturedBitmap(session.PBits, width, height, options);
-        }
-
-        private byte[]? EncodeH264(SKBitmap bitmap, int width, int height, bool forceKeyframe)
-        {
-            try
-            {
-                _h264Encoder ??= new MediaFoundationH264EncoderService(_targetFps, _bitrateMbps * 1_000_000);
-                int requiredBytes = width * height * 4;
-                if (_reusableBgraBytes == null || _reusableBgraBytes.Length != requiredBytes)
-                {
-                    _reusableBgraBytes = new byte[requiredBytes];
-                }
-                Marshal.Copy(bitmap.GetPixels(), _reusableBgraBytes, 0, requiredBytes);
-                return _h264Encoder.EncodeFrame(_reusableBgraBytes, width, height, forceKeyframe);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[GDI] H.264 error, fallback automático a JPEG: {ex.Message}");
-                return null;
-            }
-        }
-
-        private static byte[]? EncodeJpeg(SKBitmap bitmap, int quality)
-        {
-            using var image = SKImage.FromBitmap(bitmap);
-            if (image != null)
-            {
-                using var data = image.Encode(SKEncodedImageFormat.Jpeg, quality);
-                return data?.ToArray();
-            }
-            return null;
         }
 
         private static void DrawMouseCursor(IntPtr hdcDest, int screenLeft, int screenTop)
@@ -595,17 +429,5 @@ namespace LanScreenShare.Media
         }
 
         #endregion
-
-        public void Dispose()
-        {
-            if (_disposed)
-                return;
-
-            StopCapture();
-            _h264Encoder?.Dispose();
-            _h264Encoder = null;
-            _disposed = true;
-            GC.SuppressFinalize(this);
-        }
     }
 }

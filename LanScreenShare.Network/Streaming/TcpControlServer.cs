@@ -522,20 +522,8 @@ namespace LanScreenShare.Network.Streaming
             }
         }
 
-        private static async Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken token)
-        {
-            int totalBytesRead = 0;
-            int count = buffer.Length;
-            while (totalBytesRead < count)
-            {
-                int bytesRead = await stream.ReadAsync(buffer.Slice(totalBytesRead, count - totalBytesRead), token);
-                if (bytesRead == 0)
-                {
-                    throw new EndOfStreamException("Cliente desconectó canal de control.");
-                }
-                totalBytesRead += bytesRead;
-            }
-        }
+        private static Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken token) =>
+            StreamConnectionHelper.ReadExactBytesAsync(stream, buffer, token, "Cliente desconectó canal de control.");
 
         private void RemoveClient(string clientId)
         {

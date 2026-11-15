@@ -253,20 +253,8 @@ namespace LanScreenShare.Network.Streaming
             TelemetryUpdated?.Invoke(this, CurrentTelemetry);
         }
 
-        private static async Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken token)
-        {
-            int totalBytesRead = 0;
-            int count = buffer.Length;
-            while (totalBytesRead < count)
-            {
-                int bytesRead = await stream.ReadAsync(buffer.Slice(totalBytesRead, count - totalBytesRead), token);
-                if (bytesRead == 0)
-                {
-                    throw new EndOfStreamException("El servidor cerró la conexión.");
-                }
-                totalBytesRead += bytesRead;
-            }
-        }
+        private static Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken token) =>
+            StreamConnectionHelper.ReadExactBytesAsync(stream, buffer, token, "El servidor cerró la conexión.");
 
         private Task DisconnectInternalAsync(string reason)
         {

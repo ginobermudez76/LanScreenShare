@@ -14,40 +14,31 @@ using Vortice.DXGI;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public sealed partial class DxgiScreenCaptureService : IScreenCaptureService
+    public sealed partial class DxgiScreenCaptureService : ScreenCaptureServiceBase
     {
-        private CancellationTokenSource? _cts;
-        private Task? _captureTask;
-        private bool _disposed;
-
-        private volatile int _targetFps = 60;
-        private volatile int _quality = 75;
-        private volatile int _scalePercent = 100;
-        private volatile int _targetWidth = 0;
-        private volatile int _targetHeight = 0;
-        private volatile string _codec = "h264";
         private volatile int _monitorIndex = 0;
-        private volatile bool _forceKeyframeRequested = true;
-        private byte[]? _reusableBgraBytes;
-        private MediaFoundationH264EncoderService? _h264Encoder;
-
-        public void RequestKeyframe()
-        {
-            _forceKeyframeRequested = true;
-        }
-
         private volatile string? _deviceName;
         private volatile int _targetX = 0;
         private volatile int _targetY = 0;
         private volatile int _targetSourceWidth = 0;
         private volatile int _targetSourceHeight = 0;
 
-        public event EventHandler<CapturedFrame>? FrameCaptured;
         public event EventHandler<Exception>? CaptureFailed;
-        public event EventHandler<bool>? SecureDesktopChanged;
-        public bool IsCapturing => _cts != null && !_cts.IsCancellationRequested;
-        public string? ActiveEncoderDescription => _codec == "h264" ? _h264Encoder?.EncoderDescription : "JPEG";
-        public bool IsHardwareAccelerated => _codec == "h264" && (_h264Encoder?.IsHardwareAccelerated ?? false);
+
+        protected override int StopWaitTimeoutMs => 1000;
+        protected override bool ClearSecureDesktopOnStop => false;
+        protected override string LogTag => "DXGI";
+
+        public DxgiScreenCaptureService()
+            : base(defaultFps: 60, defaultQuality: 75, defaultCodec: "h264")
+        {
+        }
+
+        protected override Task RunCaptureLoopAsync(CancellationToken token)
+        {
+            CaptureLoop(token);
+            return Task.CompletedTask;
+        }
 
         public int MonitorIndex
         {
@@ -83,103 +74,6 @@ namespace LanScreenShare.Media
         {
             get => _targetSourceHeight;
             set => _targetSourceHeight = Math.Max(0, value);
-        }
-
-        public int TargetFps
-        {
-            get => _targetFps;
-            set
-            {
-                _targetFps = Math.Clamp(value, 1, 120);
-                _h264Encoder?.UpdateFps(_targetFps);
-            }
-        }
-
-        public int Quality
-        {
-            get => _quality;
-            set => _quality = Math.Clamp(value, 10, 100);
-        }
-
-        private volatile int _bitrateMbps = 8;
-        public int BitrateMbps
-        {
-            get => _bitrateMbps;
-            set
-            {
-                _bitrateMbps = Math.Clamp(value, 1, 50);
-                _h264Encoder?.UpdateBitrate(_bitrateMbps * 1_000_000);
-            }
-        }
-
-        public double ResolutionScale
-        {
-            get => _scalePercent / 100.0;
-            set => _scalePercent = (int)Math.Round(Math.Clamp(value, 0.25, 1.0) * 100);
-        }
-
-        public int TargetWidth
-        {
-            get => _targetWidth;
-            set => _targetWidth = Math.Max(0, value);
-        }
-
-        public int TargetHeight
-        {
-            get => _targetHeight;
-            set => _targetHeight = Math.Max(0, value);
-        }
-
-        public string Codec
-        {
-            get => _codec;
-            set => _codec = string.Equals(value, "h264", StringComparison.OrdinalIgnoreCase) ? "h264" : "jpeg";
-        }
-
-        public void UpdateSettings(CaptureProfile profile)
-        {
-            TargetFps = profile.TargetFps;
-            Quality = profile.Quality;
-            BitrateMbps = profile.BitrateMbps;
-            ResolutionScale = profile.ResolutionScale;
-            Codec = profile.Codec;
-            TargetWidth = profile.TargetWidth;
-            TargetHeight = profile.TargetHeight;
-        }
-
-        public void StartCapture(CaptureProfile profile)
-        {
-            if (IsCapturing)
-                return;
-
-            _targetFps = Math.Clamp(profile.TargetFps, 1, 120);
-            _quality = Math.Clamp(profile.Quality, 10, 100);
-            _bitrateMbps = Math.Clamp(profile.BitrateMbps, 1, 50);
-            ResolutionScale = profile.ResolutionScale;
-            Codec = profile.Codec;
-            TargetWidth = profile.TargetWidth;
-            TargetHeight = profile.TargetHeight;
-
-            _cts = new CancellationTokenSource();
-            var token = _cts.Token;
-
-            _captureTask = Task.Run(() => CaptureLoop(token), token);
-        }
-
-        public void StopCapture()
-        {
-            _cts?.Cancel();
-            try
-            {
-                _captureTask?.Wait(1000, CancellationToken.None);
-            }
-            catch
-            {
-                // Ignorar cancelación
-            }
-            _cts?.Dispose();
-            _cts = null;
-            _captureTask = null;
         }
 
         private static IntPtr ConfigureCaptureThreadPriority()
@@ -227,7 +121,7 @@ namespace LanScreenShare.Media
         private void WaitForSecureDesktopExit(CancellationToken token)
         {
             Console.WriteLine("[DXGI] Escritorio seguro (UAC / Winlogon) detectado. Pausando captura DXGI...");
-            SecureDesktopChanged?.Invoke(this, true);
+            OnSecureDesktopChanged(true);
 
             while (!token.IsCancellationRequested && WindowsDesktopManager.IsActiveDesktopSecure(out _))
             {
@@ -237,7 +131,7 @@ namespace LanScreenShare.Media
             if (!token.IsCancellationRequested)
             {
                 Console.WriteLine("[DXGI] Retorno al escritorio normal detectado. Reanudando captura DXGI...");
-                SecureDesktopChanged?.Invoke(this, false);
+                OnSecureDesktopChanged(false);
             }
         }
 
@@ -443,7 +337,7 @@ namespace LanScreenShare.Media
                     frame.HostFrameTimeMs = (int)frameProcStopwatch.ElapsedMilliseconds;
                     frame.HostFps = fpsTracker.RecordFrameAndGetFps();
 
-                    FrameCaptured?.Invoke(this, frame);
+                    OnFrameCaptured(frame);
                 }
             }
             finally
@@ -572,9 +466,6 @@ namespace LanScreenShare.Media
             float ScaleX = 1f,
             float ScaleY = 1f);
 
-        private static bool NeedsResize(int targetW, int targetH, int width, int height) =>
-            targetW > 0 && targetH > 0 && (targetW != width || targetH != height);
-
         private static bool IsInsideBitmap(float x, float y, int width, int height) =>
             x >= 0 && x < width && y >= 0 && y < height;
 
@@ -702,28 +593,18 @@ namespace LanScreenShare.Media
             }
         }
 
-        private static int ComputeTargetDimension(int customTarget, int original, double scale)
-        {
-            if (customTarget > 0) return customTarget & ~1;
-            if (scale > 0.2 && scale < 0.99) return ((int)(original * scale)) & ~1;
-            return 0;
-        }
-
         private static (SKBitmap bitmapToEncode, SKBitmap? disposableBitmap, int finalWidth, int finalHeight) PrepareEncodingBitmap(
             SKBitmap skBitmap,
             in RawFrameBuffer buffer,
             in FrameEncodingOptions options)
         {
-            int targetW = ComputeTargetDimension(options.CustomTargetWidth, buffer.Width, options.Scale);
-            int targetH = ComputeTargetDimension(options.CustomTargetHeight, buffer.Height, options.Scale);
+            var (bitmapToEncode, resizedBitmap, finalWidth, finalHeight) = PrepareResizedBitmap(
+                skBitmap,
+                new BitmapResizeOptions(buffer.Width, buffer.Height, options.Scale, options.CustomTargetWidth, options.CustomTargetHeight));
 
-            if (NeedsResize(targetW, targetH, buffer.Width, buffer.Height))
+            if (resizedBitmap != null)
             {
-                var resized = skBitmap.Resize(new SKImageInfo(targetW, targetH), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
-                if (resized != null)
-                {
-                    return (resized, resized, targetW, targetH);
-                }
+                return (bitmapToEncode, resizedBitmap, finalWidth, finalHeight);
             }
 
             var copied = skBitmap.Copy();
@@ -750,7 +631,7 @@ namespace LanScreenShare.Media
 
                     string currentCodec = _codec;
                     byte[]? encodedBytes = currentCodec == "h264"
-                        ? EncodeH264(bitmapToEncode, finalWidth, finalHeight, options.ForceKeyframe)
+                        ? EncodeH264(bitmapToEncode, new H264FrameRequest(finalWidth, finalHeight, options.ForceKeyframe))
                         : EncodeJpeg(bitmapToEncode, options.Quality);
 
                     if (encodedBytes == null || encodedBytes.Length == 0) return null;
@@ -774,34 +655,6 @@ namespace LanScreenShare.Media
                 Console.WriteLine($"[DXGI] Error codificando fotograma: {ex.Message}");
                 return null;
             }
-        }
-
-        private byte[]? EncodeH264(SKBitmap bitmap, int width, int height, bool forceKeyframe)
-        {
-            try
-            {
-                _h264Encoder ??= new MediaFoundationH264EncoderService(_targetFps, _bitrateMbps * 1_000_000);
-                int requiredBytes = width * height * 4;
-                if (_reusableBgraBytes == null || _reusableBgraBytes.Length != requiredBytes)
-                {
-                    _reusableBgraBytes = new byte[requiredBytes];
-                }
-
-                Marshal.Copy(bitmap.GetPixels(), _reusableBgraBytes, 0, requiredBytes);
-                return _h264Encoder.EncodeFrame(_reusableBgraBytes, width, height, forceKeyframe);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[DXGI] Error codificando H.264 por hardware: {ex.Message}");
-                return null;
-            }
-        }
-
-        private static byte[]? EncodeJpeg(SKBitmap bitmap, int quality)
-        {
-            using var image = SKImage.FromBitmap(bitmap);
-            using var data = image?.Encode(SKEncodedImageFormat.Jpeg, quality);
-            return data?.ToArray();
         }
 
         private static void DrawCursorOnBitmap(SKBitmap bitmap, in CursorDrawOptions options)
@@ -884,17 +737,5 @@ namespace LanScreenShare.Media
         private static partial bool AvRevertMmThreadCharacteristics(IntPtr avrtHandle);
 
         #endregion
-
-        public void Dispose()
-        {
-            if (_disposed)
-                return;
-
-            StopCapture();
-            _h264Encoder?.Dispose();
-            _h264Encoder = null;
-            _disposed = true;
-            GC.SuppressFinalize(this);
-        }
     }
 }

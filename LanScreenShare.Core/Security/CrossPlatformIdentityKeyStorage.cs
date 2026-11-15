@@ -121,7 +121,7 @@ namespace LanScreenShare.Core.Security
                     aesGcm.Decrypt(nonce, ciphertext, tag, pfxBytes);
                 }
 
-                return X509CertificateLoader.LoadPkcs12(pfxBytes, null, X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
+                return IdentityCertificateFactory.LoadExportableCertificate(pfxBytes);
             }
             catch (Exception ex) when (ex is CryptographicException or IOException)
             {
@@ -138,33 +138,8 @@ namespace LanScreenShare.Core.Security
                 SetUserOnlyPermissions(directory);
             }
 
-            // 1. Generación de par de claves ECDSA P-256
-            using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-            string machineName = Environment.MachineName.Replace(" ", "-");
-            var distinguishedName = new X500DistinguishedName($"CN=LanScreenShare-{machineName}");
-
-            var request = new CertificateRequest(distinguishedName, ecdsa, HashAlgorithmName.SHA256);
-
-            // 2. Extensiones X.509
-            request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
-            request.CertificateExtensions.Add(new X509KeyUsageExtension(
-                X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment,
-                critical: true));
-
-            var eku = new OidCollection
-            {
-                new Oid("1.3.6.1.5.5.7.3.1"), // Server Authentication
-                new Oid("1.3.6.1.5.5.7.3.2")  // Client Authentication
-            };
-            request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(eku, critical: true));
-
-            // 3. Certificado auto-firmado válido por 2 años
-            var notBefore = DateTimeOffset.UtcNow.AddMinutes(-5);
-            var notAfter = DateTimeOffset.UtcNow.AddYears(2);
-            using var cert = request.CreateSelfSigned(notBefore, notAfter);
-
-            // 4. Exportar a PFX
-            byte[] pfxBytes = cert.Export(X509ContentType.Pfx);
+            // 1-4. Generar par de claves ECDSA P-256, extensiones X.509, certificado auto-firmado y exportar PFX
+            byte[] pfxBytes = IdentityCertificateFactory.CreateSelfSignedIdentityPfx();
 
             // 5. Cifrado AES-256-GCM con clave protegida por permisos de usuario
             byte[] masterKey = new byte[32];
@@ -192,7 +167,7 @@ namespace LanScreenShare.Core.Security
             File.WriteAllBytes(_storagePath, encryptedFileBytes);
             SetUserOnlyPermissions(_storagePath);
 
-            return X509CertificateLoader.LoadPkcs12(pfxBytes, null, X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
+            return IdentityCertificateFactory.LoadExportableCertificate(pfxBytes);
         }
 
         private static void SetUserOnlyPermissions(string path)
