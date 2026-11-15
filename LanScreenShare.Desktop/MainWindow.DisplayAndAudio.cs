@@ -463,6 +463,12 @@ namespace LanScreenShare.Desktop
                 Title = $"Visor Remoto - {_currentConnectedDeviceName ?? "LanScreenShare"}"
             };
 
+            ApplyInitialPopoutStates(popout);
+            return popout;
+        }
+
+        private void ApplyInitialPopoutStates(StreamPopoutWindow popout)
+        {
             popout.ApplyPermissions(
                 _viewerPermissions.AllowRemoteControl,
                 _viewerPermissions.AllowSourceSwitch,
@@ -481,19 +487,15 @@ namespace LanScreenShare.Desktop
             popout.SetMicVolume(_micAudioPlayerService?.Volume ?? 1.0f, _micAudioPlayerService?.IsMuted ?? false);
             popout.SetStretchMode(_currentStretchMode);
 
-            var secureBanner = this.FindControl<Border>("SecureDesktopBanner");
-            if (secureBanner != null && secureBanner.IsVisible)
+            if (this.FindControl<Border>("SecureDesktopBanner")?.IsVisible == true)
             {
                 popout.SetSecureDesktopState(true);
             }
 
-            var screenImage = this.FindControl<Image>(ScreenImageControlName);
-            if (screenImage?.Source != null)
+            if (this.FindControl<Image>(ScreenImageControlName)?.Source is { } source)
             {
-                popout.UpdateFrame(screenImage.Source);
+                popout.UpdateFrame(source);
             }
-
-            return popout;
         }
 
         private void WirePopoutEvents(StreamPopoutWindow popout)
@@ -543,20 +545,17 @@ namespace LanScreenShare.Desktop
             var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
             if (!_viewerPermissions.AllowRemoteControl)
             {
-                _popoutWindow?.SetRemoteControlState(false);
-                if (remoteControlBtn != null) remoteControlBtn.IsChecked = false;
-                _remoteControlEnabled = false;
+                ResetPopoutAndMainControlToggle(remoteControlBtn);
                 return;
             }
 
             bool connected = await EnsureControlConnectedAsync();
             if (!connected)
             {
-                _popoutWindow?.SetRemoteControlState(false);
-                if (remoteControlBtn != null) remoteControlBtn.IsChecked = false;
-                _remoteControlEnabled = false;
+                ResetPopoutAndMainControlToggle(remoteControlBtn);
                 return;
             }
+
             _remoteControlEnabled = true;
             if (remoteControlBtn != null)
             {
@@ -564,6 +563,13 @@ namespace LanScreenShare.Desktop
                 remoteControlBtn.Background = new SolidColorBrush(Color.Parse("#2563EB"));
             }
             _popoutWindow?.SetRemoteControlState(true);
+        }
+
+        private void ResetPopoutAndMainControlToggle(ToggleButton? remoteControlBtn)
+        {
+            _popoutWindow?.SetRemoteControlState(false);
+            if (remoteControlBtn != null) remoteControlBtn.IsChecked = false;
+            _remoteControlEnabled = false;
         }
 
         private void DisablePopoutRemoteControl()

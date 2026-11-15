@@ -21,6 +21,8 @@ namespace LanScreenShare.Desktop
 {
     public partial class MainWindow
     {
+        private const string StatusWarningAmberHex = "#F59E0B";
+
         #region Discovery & Client Viewing Logic
 
         private void UpdateDevicesSectionUI()
@@ -130,7 +132,6 @@ namespace LanScreenShare.Desktop
                 };
                 if (capped != _viewerPermissions)
                 {
-                    _currentDeviceAllowsRemoteControl = false;
                     ApplyViewerPermissions(capped, isLiveUpdate: true);
                 }
             }
@@ -166,28 +167,8 @@ namespace LanScreenShare.Desktop
 
         private void ConfigureControlButtonsForPermissions(EffectiveSessionPermissions permissions)
         {
-            var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
-            if (remoteControlBtn != null)
-            {
-                remoteControlBtn.IsVisible = permissions.AllowRemoteControl;
-                remoteControlBtn.IsEnabled = true;
-                if (!permissions.AllowRemoteControl)
-                {
-                    remoteControlBtn.IsChecked = false;
-                }
-                ToolTip.SetTip(remoteControlBtn, "Habilitar interacción con mouse y teclado");
-            }
-
-            var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
-            if (gameModeBtn != null)
-            {
-                gameModeBtn.IsVisible = permissions.AllowRemoteControl;
-                gameModeBtn.IsEnabled = true;
-                if (!permissions.AllowRemoteControl)
-                {
-                    gameModeBtn.IsChecked = false;
-                }
-            }
+            ConfigurePermissionToggleButton("RemoteControlButton", permissions.AllowRemoteControl, "Habilitar interacción con mouse y teclado");
+            ConfigurePermissionToggleButton("GameModeButton", permissions.AllowRemoteControl);
 
             var switchMonitorBtn = this.FindControl<Button>("SwitchMonitorButton");
             if (switchMonitorBtn != null)
@@ -195,6 +176,17 @@ namespace LanScreenShare.Desktop
                 switchMonitorBtn.IsVisible = permissions.AllowSourceSwitch;
                 switchMonitorBtn.IsEnabled = true;
             }
+        }
+
+        private void ConfigurePermissionToggleButton(string controlName, bool allowed, string? tooltip = null)
+        {
+            var btn = this.FindControl<ToggleButton>(controlName);
+            if (btn == null) return;
+
+            btn.IsVisible = allowed;
+            btn.IsEnabled = true;
+            if (!allowed) btn.IsChecked = false;
+            if (tooltip != null) ToolTip.SetTip(btn, tooltip);
         }
 
         private void RevokeViewerRemoteControlUi()
@@ -236,7 +228,7 @@ namespace LanScreenShare.Desktop
         {
             if (WasAnyPermissionRevoked(previous, current))
             {
-                UpdateStatus("El anfitrión actualizó o revocó permisos de esta sesión", "#F59E0B");
+                UpdateStatus("El anfitrión actualizó o revocó permisos de esta sesión", StatusWarningAmberHex);
             }
         }
 
@@ -263,7 +255,6 @@ namespace LanScreenShare.Desktop
                 if (!_isViewing || !_streamClient.IsConnected)
                     return;
 
-                _currentDeviceAllowsRemoteControl = permissions.AllowRemoteControl;
                 ApplyViewerPermissions(permissions, isLiveUpdate: true);
                 if (permissions.AllowFileTransfer && !_fileTransferClient.IsConnected)
                 {
@@ -385,13 +376,14 @@ namespace LanScreenShare.Desktop
             StopDeviceSearch();
             _currentConnectedDeviceName = device.Name;
             _currentConnectedDeviceIp = device.IPAddress;
-            _currentDeviceAllowsRemoteControl = device.IsRemoteControlAllowed;
-            _viewerPermissions = new EffectiveSessionPermissions(
-                AllowRemoteControl: device.IsRemoteControlAllowed,
-                AllowSourceSwitch: device.IsRemoteControlAllowed,
-                AllowFileTransfer: true,
-                AllowClipboardSync: device.IsRemoteControlAllowed);
-            UpdateStatus($"Conectando a {device.Name} ({device.IPAddress}:5001)...", "#F59E0B");
+            _viewerPermissions = new EffectiveSessionPermissions
+            {
+                AllowRemoteControl = device.IsRemoteControlAllowed,
+                AllowSourceSwitch = device.IsRemoteControlAllowed,
+                AllowFileTransfer = true,
+                AllowClipboardSync = device.IsRemoteControlAllowed
+            };
+            UpdateStatus($"Conectando a {device.Name} ({device.IPAddress}:5001)...", StatusWarningAmberHex);
             ResetMetrics();
             SetConnectingPlaceholder(device.Name, device.IPAddress);
 
@@ -406,7 +398,6 @@ namespace LanScreenShare.Desktop
                 if (handshake != null)
                 {
                     _viewerPermissions = handshake.GetEffectivePermissions();
-                    _currentDeviceAllowsRemoteControl = _viewerPermissions.AllowRemoteControl;
                 }
 
                 ShowViewerControls(device);
@@ -560,7 +551,7 @@ namespace LanScreenShare.Desktop
             {
                 if (status.StartsWith("Conectando", StringComparison.OrdinalIgnoreCase))
                 {
-                    UpdateStatus(status, "#F59E0B");
+                    UpdateStatus(status, StatusWarningAmberHex);
                     return;
                 }
 
@@ -628,7 +619,7 @@ namespace LanScreenShare.Desktop
                     "Transmisión Finalizada",
                     "El anfitrión ha finalizado la transmisión.\nPuedes iniciar tu propia transmisión o conectarte a otro equipo.",
                     "El anfitrión ha finalizado la transmisión",
-                    "#F59E0B");
+                    StatusWarningAmberHex);
             }
             if (IsDisconnectFailure(reason))
             {
@@ -664,7 +655,6 @@ namespace LanScreenShare.Desktop
             ClosePopoutWindow();
             SetFullscreen(false);
             StopDeviceSearch();
-            _currentDeviceAllowsRemoteControl = false;
             _currentConnectedDeviceIp = null;
             _currentConnectedDeviceName = null;
             UpdateDevicesViewingState();

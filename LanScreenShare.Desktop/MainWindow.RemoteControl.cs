@@ -19,11 +19,13 @@ namespace LanScreenShare.Desktop
         private bool CanHostSyncClipboard() => _isHosting && _allowRemoteControl && _allowClipboardSync;
         private bool CanViewerSyncClipboard() => _isViewing && _allowClipboardSync && _viewerPermissions.AllowClipboardSync;
 
-        private EffectiveSessionPermissions GetHostGlobalPermissions() => new(
-            AllowRemoteControl: _allowRemoteControl,
-            AllowSourceSwitch: _allowRemoteControl,
-            AllowFileTransfer: true,
-            AllowClipboardSync: _allowRemoteControl && _allowClipboardSync);
+        private EffectiveSessionPermissions GetHostGlobalPermissions() => new()
+        {
+            AllowRemoteControl = _allowRemoteControl,
+            AllowSourceSwitch = _allowRemoteControl,
+            AllowFileTransfer = true,
+            AllowClipboardSync = _allowRemoteControl && _allowClipboardSync
+        };
 
         private void UpdateHostControlServerState()
         {
@@ -172,23 +174,27 @@ namespace LanScreenShare.Desktop
         private bool TryHandleShortcutKeys(KeyEventArgs e)
         {
             bool hasCtrlAlt = e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.KeyModifiers.HasFlag(KeyModifiers.Alt);
-            if (hasCtrlAlt)
-            {
-                if (e.Key == Key.L)
-                {
-                    if (_isViewing && _viewerPermissions.AllowRemoteControl) _ = ToggleGameModeAsync();
-                    return true;
-                }
-                if (e.Key == Key.M)
-                {
-                    if (_isViewing && _viewerPermissions.AllowSourceSwitch) _ = RequestRemoteMonitorSwitchAsync();
-                    return true;
-                }
-            }
+            if (hasCtrlAlt && TryHandleControlAltShortcut(e.Key))
+                return true;
 
             if (e.Key == Key.F11) { ToggleFullscreen(); return true; }
             if (e.Key == Key.Escape && _isFullscreen) { SetFullscreen(false); return true; }
 
+            return false;
+        }
+
+        private bool TryHandleControlAltShortcut(Key key)
+        {
+            if (key == Key.L)
+            {
+                if (_isViewing && _viewerPermissions.AllowRemoteControl) _ = ToggleGameModeAsync();
+                return true;
+            }
+            if (key == Key.M)
+            {
+                if (_isViewing && _viewerPermissions.AllowSourceSwitch) _ = RequestRemoteMonitorSwitchAsync();
+                return true;
+            }
             return false;
         }
 
@@ -198,18 +204,35 @@ namespace LanScreenShare.Desktop
             return hasCtrlAlt && (e.Key == Key.L || e.Key == Key.M);
         }
 
+        private bool HasAnyChannel5003Feature() =>
+            _viewerPermissions.AllowRemoteControl || _viewerPermissions.AllowSourceSwitch || _viewerPermissions.AllowClipboardSync;
+
+        private void ApplyControlConnectedUi()
+        {
+            if (_viewerPermissions.AllowRemoteControl)
+            {
+                _remoteControlEnabled = true;
+                var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
+                if (remoteControlBtn != null)
+                {
+                    remoteControlBtn.IsChecked = true;
+                    remoteControlBtn.Background = new SolidColorBrush(Color.Parse("#2563EB"));
+                }
+                _popoutWindow?.SetRemoteControlState(true);
+                UpdateStatus($"Conectado a {_currentConnectedDeviceName} • Control remoto activo", "#22C55E");
+            }
+            if (_viewerPermissions.AllowSourceSwitch)
+            {
+                _ = _controlClient.RequestSourceCatalogAsync();
+            }
+        }
+
         private async Task<bool> EnsureControlConnectedAsync()
         {
             if (_controlClient.IsConnected)
                 return true;
 
-            if (string.IsNullOrEmpty(_currentConnectedDeviceIp))
-                return false;
-
-            bool hasAnyChannelFeature = _viewerPermissions.AllowRemoteControl
-                || _viewerPermissions.AllowSourceSwitch
-                || _viewerPermissions.AllowClipboardSync;
-            if (!hasAnyChannelFeature)
+            if (string.IsNullOrEmpty(_currentConnectedDeviceIp) || !HasAnyChannel5003Feature())
                 return false;
 
             UpdateStatus("Solicitando acceso de control remoto al anfitrión...", "#F59E0B");
@@ -219,22 +242,7 @@ namespace LanScreenShare.Desktop
                 var handshake = _streamClient.ActiveSessionHandshake;
                 await _controlClient.ConnectAsync(new ControlClientConnectionOptions(_currentConnectedDeviceIp, 5003, _sslClientOptions, handshake?.SessionId, handshake?.ControlToken), CancellationToken.None);
                 Console.WriteLine($"[ControlViewer] Conectado a canal de control remoto en {_currentConnectedDeviceIp}:5003");
-                if (_viewerPermissions.AllowRemoteControl)
-                {
-                    _remoteControlEnabled = true;
-                    var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
-                    if (remoteControlBtn != null && remoteControlBtn.IsChecked != true)
-                    {
-                        remoteControlBtn.IsChecked = true;
-                        remoteControlBtn.Background = new SolidColorBrush(Color.Parse("#2563EB"));
-                    }
-                    _popoutWindow?.SetRemoteControlState(true);
-                    UpdateStatus($"Conectado a {_currentConnectedDeviceName} • Control remoto activo", "#22C55E");
-                }
-                if (_viewerPermissions.AllowSourceSwitch)
-                {
-                    _ = _controlClient.RequestSourceCatalogAsync();
-                }
+                ApplyControlConnectedUi();
                 return true;
             }
             catch (Exception ex)

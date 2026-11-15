@@ -30,8 +30,13 @@ public sealed class SessionHandshakeMessage
     public bool AllowFileTransfer { get; set; } = true;
     public bool AllowClipboardSync { get; set; } = true;
 
-    public EffectiveSessionPermissions GetEffectivePermissions() =>
-        new(AllowRemoteControl, AllowSourceSwitch, AllowFileTransfer, AllowClipboardSync);
+    public EffectiveSessionPermissions GetEffectivePermissions() => new()
+    {
+        AllowRemoteControl = AllowRemoteControl,
+        AllowSourceSwitch = AllowSourceSwitch,
+        AllowFileTransfer = AllowFileTransfer,
+        AllowClipboardSync = AllowClipboardSync
+    };
 
     public void ApplyEffectivePermissions(EffectiveSessionPermissions permissions)
     {

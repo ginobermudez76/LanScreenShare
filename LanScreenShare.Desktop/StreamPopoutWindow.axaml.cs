@@ -302,24 +302,22 @@ namespace LanScreenShare.Desktop
         public void SetRemoteControlAllowed(bool allowed)
         {
             _allowRemoteControl = allowed;
-            var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
-            var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
-            if (remoteControlBtn != null)
-            {
-                remoteControlBtn.IsVisible = allowed;
-                if (!allowed) remoteControlBtn.IsChecked = false;
-            }
-            if (gameModeBtn != null)
-            {
-                gameModeBtn.IsVisible = allowed;
-                if (!allowed) gameModeBtn.IsChecked = false;
-            }
+            ConfigurePermissionToggle("RemoteControlButton", allowed);
+            ConfigurePermissionToggle("GameModeButton", allowed);
 
             if (!allowed)
             {
                 SetRemoteControlState(false);
                 if (_isGameMode) ExitGameModeSilently();
             }
+        }
+
+        private void ConfigurePermissionToggle(string name, bool allowed)
+        {
+            var btn = this.FindControl<ToggleButton>(name);
+            if (btn == null) return;
+            btn.IsVisible = allowed;
+            if (!allowed) btn.IsChecked = false;
         }
 
         public void SetSourceSwitchAllowed(bool allowed)

@@ -90,7 +90,6 @@ namespace LanScreenShare.Desktop
         private bool _isViewing;
         private string? _currentConnectedDeviceName;
         private string? _currentConnectedDeviceIp;
-        private bool _currentDeviceAllowsRemoteControl;
         private EffectiveSessionPermissions _viewerPermissions = EffectiveSessionPermissions.AllAllowed;
 
         // Pantalla completa y barra superior auto-ocultable

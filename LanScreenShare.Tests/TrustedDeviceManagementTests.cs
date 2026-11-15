@@ -457,17 +457,22 @@ public class TrustedDeviceManagementTests
 
             var store = new JsonPairedDeviceStore(storePath);
             var loaded = await store.GetPairedDeviceAsync(FingerprintA);
-            var roundTripped = EffectiveSessionPermissions.FromBitmask(
-                new EffectiveSessionPermissions(false, true, false, true).ToBitmask());
-            var intersected = new EffectiveSessionPermissions(true, true, true, true)
-                .IntersectWith(new EffectiveSessionPermissions(false, true, false, true));
+            var restrictedExpected = new EffectiveSessionPermissions
+            {
+                AllowRemoteControl = false,
+                AllowSourceSwitch = true,
+                AllowFileTransfer = false,
+                AllowClipboardSync = true
+            };
+            var roundTripped = EffectiveSessionPermissions.FromBitmask(restrictedExpected.ToBitmask());
+            var intersected = EffectiveSessionPermissions.AllAllowed.IntersectWith(restrictedExpected);
 
             Assert.AreEqual((false, true, true, false), (
                 loaded!.EffectivePermissions.AllowRemoteControl,
                 loaded.EffectivePermissions.AllowSourceSwitch,
                 loaded.EffectivePermissions.AllowClipboardSync,
                 loaded.EffectivePermissions.AllowFileTransfer));
-            Assert.AreEqual((roundTripped, roundTripped), (new EffectiveSessionPermissions(false, true, false, true), intersected));
+            Assert.AreEqual((roundTripped, roundTripped), (restrictedExpected, intersected));
         }
         finally
         {
@@ -502,8 +507,8 @@ public class TrustedDeviceManagementTests
 
         var updatedSnapshot = (lastChanged.Permissions, authority.RequestRemoteControl(session.SessionId));
 
-        Assert.AreEqual((new EffectiveSessionPermissions(false, true, true, true), RemoteControlState.Revoked), revokedSnapshot);
-        Assert.AreEqual((new EffectiveSessionPermissions(true, false, false, false), RemoteControlState.Granted), updatedSnapshot);
+        Assert.AreEqual((new EffectiveSessionPermissions { AllowRemoteControl = false }, RemoteControlState.Revoked), revokedSnapshot);
+        Assert.AreEqual((new EffectiveSessionPermissions { AllowSourceSwitch = false, AllowFileTransfer = false, AllowClipboardSync = false }, RemoteControlState.Granted), updatedSnapshot);
     }
 
     [TestMethod]
@@ -521,7 +526,7 @@ public class TrustedDeviceManagementTests
 
         bool allowGlobalClipboard = false;
         harness.StreamServer.GlobalPermissionsProvider = () =>
-            new EffectiveSessionPermissions(true, true, true, allowGlobalClipboard);
+            new EffectiveSessionPermissions { AllowClipboardSync = allowGlobalClipboard };
 
         int switchCount = 0;
         harness.ControlServer.SwitchMonitorRequested += (_, _) => Interlocked.Increment(ref switchCount);
@@ -552,9 +557,9 @@ public class TrustedDeviceManagementTests
         });
 
         var pushed = await liveUpdateTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
-        Assert.AreEqual(new EffectiveSessionPermissions(false, true, false, false), initialEffective);
+        Assert.AreEqual(new EffectiveSessionPermissions { AllowRemoteControl = false, AllowFileTransfer = false, AllowClipboardSync = false }, initialEffective);
         Assert.AreEqual((1, 0), (switchCount, harness.Simulator.SimulatedCount));
-        Assert.AreEqual(new EffectiveSessionPermissions(true, false, true, true), pushed);
+        Assert.AreEqual(new EffectiveSessionPermissions { AllowSourceSwitch = false }, pushed);
     }
 
     [TestMethod]

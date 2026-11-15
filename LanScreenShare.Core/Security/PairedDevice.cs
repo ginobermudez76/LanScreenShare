@@ -20,19 +20,22 @@ namespace LanScreenShare.Core.Security
         public static readonly DevicePermissions Default = new();
     }
 
-    public readonly record struct EffectiveSessionPermissions(
-        bool AllowRemoteControl = true,
-        bool AllowSourceSwitch = true,
-        bool AllowFileTransfer = true,
-        bool AllowClipboardSync = true)
+    public readonly record struct EffectiveSessionPermissions()
     {
-        public static EffectiveSessionPermissions AllAllowed => new(true, true, true, true);
+        public bool AllowRemoteControl { get; init; } = true;
+        public bool AllowSourceSwitch { get; init; } = true;
+        public bool AllowFileTransfer { get; init; } = true;
+        public bool AllowClipboardSync { get; init; } = true;
 
-        public EffectiveSessionPermissions IntersectWith(EffectiveSessionPermissions hostGlobals) => new(
-            AllowRemoteControl && hostGlobals.AllowRemoteControl,
-            AllowSourceSwitch && hostGlobals.AllowSourceSwitch,
-            AllowFileTransfer && hostGlobals.AllowFileTransfer,
-            AllowClipboardSync && hostGlobals.AllowClipboardSync);
+        public static EffectiveSessionPermissions AllAllowed => new();
+
+        public EffectiveSessionPermissions IntersectWith(EffectiveSessionPermissions hostGlobals) => new()
+        {
+            AllowRemoteControl = AllowRemoteControl && hostGlobals.AllowRemoteControl,
+            AllowSourceSwitch = AllowSourceSwitch && hostGlobals.AllowSourceSwitch,
+            AllowFileTransfer = AllowFileTransfer && hostGlobals.AllowFileTransfer,
+            AllowClipboardSync = AllowClipboardSync && hostGlobals.AllowClipboardSync
+        };
 
         public int ToBitmask() =>
             (AllowRemoteControl ? 1 : 0)
@@ -40,11 +43,13 @@ namespace LanScreenShare.Core.Security
             | (AllowFileTransfer ? 4 : 0)
             | (AllowClipboardSync ? 8 : 0);
 
-        public static EffectiveSessionPermissions FromBitmask(int bitmask) => new(
-            (bitmask & 1) != 0,
-            (bitmask & 2) != 0,
-            (bitmask & 4) != 0,
-            (bitmask & 8) != 0);
+        public static EffectiveSessionPermissions FromBitmask(int bitmask) => new()
+        {
+            AllowRemoteControl = (bitmask & 1) != 0,
+            AllowSourceSwitch = (bitmask & 2) != 0,
+            AllowFileTransfer = (bitmask & 4) != 0,
+            AllowClipboardSync = (bitmask & 8) != 0
+        };
     }
 
     public sealed record PairedDevice

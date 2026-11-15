@@ -15,9 +15,16 @@ namespace LanScreenShare.Desktop
     {
         #region Game Mode & Cursor Centering
 
+        private bool CanToggleGameModeOn()
+        {
+            if (_isGameMode) return true;
+            if (!_isViewing) return false;
+            return _viewerPermissions.AllowRemoteControl;
+        }
+
         private async Task ToggleGameModeAsync()
         {
-            if (!_isGameMode && (!_isViewing || !_viewerPermissions.AllowRemoteControl))
+            if (!CanToggleGameModeOn())
                 return;
 
             if (!_isGameMode)
