@@ -18,8 +18,17 @@ namespace LanScreenShare.Desktop
     {
         private void InitializeFileTransferSubsystem()
         {
-            _fileTransferServer = new TcpFileTransferServer(_sessionAuthority, _sslServerOptions);
-            _fileTransferClient = new TcpFileTransferClient();
+            string initialDownloadDir = TcpFileTransferServer.ResolveWritableDownloadDirectory(_appSettings.DownloadDirectory);
+            _appSettings.DownloadDirectory = initialDownloadDir;
+
+            _fileTransferServer = new TcpFileTransferServer(_sessionAuthority, _sslServerOptions)
+            {
+                DownloadDirectory = initialDownloadDir
+            };
+            _fileTransferClient = new TcpFileTransferClient
+            {
+                DownloadDirectory = initialDownloadDir
+            };
 
             _fileTransferServer.TransferProgress += (s, p) => Dispatcher.UIThread.Post(() => ShowFileTransferProgress(p));
             _fileTransferServer.TransferCompleted += (s, c) => Dispatcher.UIThread.Post(() => ShowFileTransferCompleted(c));
@@ -29,20 +38,71 @@ namespace LanScreenShare.Desktop
             _fileTransferClient.TransferCompleted += (s, c) => Dispatcher.UIThread.Post(() => ShowFileTransferCompleted(c));
             _fileTransferClient.TransferError += (s, err) => Dispatcher.UIThread.Post(() => ShowFileTransferError(err));
 
-            if (this.FindControl<Button>("SendFileButton") is { } sendFileBtn)
-                sendFileBtn.Click += async (s, e) => await PickAndSendFilesAsync();
-
-            if (this.FindControl<Button>("FileTransferCancelButton") is { } cancelTransferBtn)
-                cancelTransferBtn.Click += (s, e) => CancelActiveFileTransfer();
-
-            if (this.FindControl<Button>("FileTransferOpenFolderButton") is { } openFolderBtn)
-                openFolderBtn.Click += (s, e) => OpenDownloadsFolder();
-
-            if (this.FindControl<Button>("FileTransferDismissButton") is { } dismissBannerBtn)
-                dismissBannerBtn.Click += (s, e) => HideFileTransferBanner();
+            WireFileTransferButtons();
+            UpdateDownloadFolderUI(initialDownloadDir);
 
             this.AddHandler(DragDrop.DropEvent, MainWindow_Drop);
             this.AddHandler(DragDrop.DragOverEvent, MainWindow_DragOver);
+        }
+
+        private void WireFileTransferButtons()
+        {
+            WireButtonClick("SendFileButton", async (s, e) => await PickAndSendFilesAsync());
+            WireButtonClick("FileTransferCancelButton", (s, e) => CancelActiveFileTransfer());
+            WireButtonClick("FileTransferOpenFolderButton", (s, e) => OpenDownloadsFolder());
+            WireButtonClick("FileTransferDismissButton", (s, e) => HideFileTransferBanner());
+            WireButtonClick("ChangeDownloadFolderButton", async (s, e) => await PickDownloadFolderAsync());
+            WireButtonClick("OpenDownloadFolderSettingsButton", (s, e) => OpenConfiguredDownloadFolder());
+        }
+
+        private void UpdateDownloadFolderUI(string folderPath)
+        {
+            var pathText = this.FindControl<TextBlock>("DownloadFolderPathText");
+            if (pathText == null)
+                return;
+
+            pathText.Text = folderPath;
+            ToolTip.SetTip(pathText, folderPath);
+        }
+
+        private void ApplyDownloadDirectory(string folderPath)
+        {
+            string effectiveDir = TcpFileTransferServer.ResolveWritableDownloadDirectory(folderPath);
+            _appSettings.DownloadDirectory = effectiveDir;
+            _fileTransferServer.DownloadDirectory = effectiveDir;
+            _fileTransferClient.DownloadDirectory = effectiveDir;
+
+            UpdateDownloadFolderUI(effectiveDir);
+            SaveCurrentSettings();
+        }
+
+        private async Task PickDownloadFolderAsync()
+        {
+            try
+            {
+                var topLevel = TopLevel.GetTopLevel(this);
+                if (topLevel?.StorageProvider == null)
+                    return;
+
+                var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                {
+                    Title = "Seleccionar carpeta para archivos recibidos",
+                    AllowMultiple = false
+                });
+
+                if (folders != null && folders.Count > 0)
+                {
+                    string? selectedPath = folders[0].TryGetLocalPath() ?? folders[0].Path.LocalPath;
+                    if (!string.IsNullOrWhiteSpace(selectedPath))
+                    {
+                        ApplyDownloadDirectory(selectedPath);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FileTransfer] Error seleccionando carpeta de destino: {ex.Message}");
+            }
         }
 
         private bool CanTransferFiles =>
@@ -294,7 +354,7 @@ namespace LanScreenShare.Desktop
                 if (TryOpenTargetFile(_lastReceivedFilePath))
                     return;
 
-                TryOpenDefaultDownloadsDirectory();
+                OpenConfiguredDownloadFolder();
             }
             catch (Exception ex)
             {
@@ -323,12 +383,19 @@ namespace LanScreenShare.Desktop
             return false;
         }
 
-        private static void TryOpenDefaultDownloadsDirectory()
+        private void OpenConfiguredDownloadFolder()
         {
-            string downloads = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "LanScreenShare");
-            if (Directory.Exists(downloads))
+            try
             {
-                Process.Start(new ProcessStartInfo { FileName = downloads, UseShellExecute = true });
+                string targetDir = TcpFileTransferServer.ResolveWritableDownloadDirectory(_appSettings.DownloadDirectory);
+                if (Directory.Exists(targetDir))
+                {
+                    Process.Start(new ProcessStartInfo { FileName = targetDir, UseShellExecute = true });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FileTransfer] Error abriendo carpeta configurada: {ex.Message}");
             }
         }
     }

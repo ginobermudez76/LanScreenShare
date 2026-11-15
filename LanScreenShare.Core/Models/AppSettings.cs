@@ -27,5 +27,6 @@ namespace LanScreenShare.Core.Models
         public bool EnableAdaptiveBitrate { get; set; } = true;
         public int MinAdaptiveBitrateMbps { get; set; } = 2;
         public int MaxAdaptiveBitrateMbps { get; set; } = 25;
+        public string DownloadDirectory { get; set; } = string.Empty;
     }
 }

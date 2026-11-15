@@ -214,5 +214,32 @@ namespace LanScreenShare.Tests
 
             try { Directory.Delete(testDir, true); } catch { }
         }
+
+        [TestMethod]
+        public void ResolveWritableDownloadDirectory_RecreatesDeletedFolder_AndFallsBackOnInvalidPath()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "LssDeletedFolder_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Assert.IsFalse(Directory.Exists(tempDir));
+
+                string resolved = TcpFileTransferServer.ResolveWritableDownloadDirectory(tempDir);
+                Assert.AreEqual(Path.GetFullPath(tempDir), resolved);
+                Assert.IsTrue(Directory.Exists(resolved), "Debe recrear automáticamente la carpeta si fue eliminada externamente.");
+
+                string fallbackFromEmpty = TcpFileTransferServer.ResolveWritableDownloadDirectory("");
+                Assert.AreEqual(TcpFileTransferServer.GetDefaultDownloadDirectory(), fallbackFromEmpty);
+
+                string fallbackFromInvalid = TcpFileTransferServer.ResolveWritableDownloadDirectory("invalid\0path");
+                Assert.AreEqual(TcpFileTransferServer.GetDefaultDownloadDirectory(), fallbackFromInvalid);
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    try { Directory.Delete(tempDir, true); } catch { }
+                }
+            }
+        }
     }
 }
