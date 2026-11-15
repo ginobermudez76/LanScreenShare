@@ -211,30 +211,6 @@ namespace LanScreenShare.Media
             throw new InvalidOperationException("No se pudo inicializar ningún codificador H.264 (hardware ni software).");
         }
 
-        private static void TrySetAttribute(IMFAttributes attrs, Guid key, int value)
-        {
-            try
-            {
-                attrs.Set(key, value);
-            }
-            catch
-            {
-                // Ignore unsupported MFT attribute
-            }
-        }
-
-        private static void TrySetAttribute(IMFAttributes attrs, Guid key, uint value)
-        {
-            try
-            {
-                attrs.Set(key, value);
-            }
-            catch
-            {
-                // Ignore unsupported MFT attribute
-            }
-        }
-
         private static void ApplyEncoderAttributes(IMFTransform encoder, int fps)
         {
             try
@@ -242,11 +218,20 @@ namespace LanScreenShare.Media
                 using var attrs = encoder.Attributes;
                 if (attrs == null) return;
 
-                TrySetAttribute(attrs, CODECAPI_AVLowLatencyMode, 1);
-                TrySetAttribute(attrs, CODECAPI_AVEncMPVDefaultBPictureCount, 0);
-                TrySetAttribute(attrs, CODECAPI_AVEncCommonRealTime, 1);
-                TrySetAttribute(attrs, CODECAPI_AVEncCommonQualityVsSpeed, 0);
-                TrySetAttribute(attrs, CODECAPI_AVEncMPVGOPSize, (uint)fps);
+                (Guid Key, int Value)[] intAttributes =
+                [
+                    (CODECAPI_AVLowLatencyMode, 1),
+                    (CODECAPI_AVEncMPVDefaultBPictureCount, 0),
+                    (CODECAPI_AVEncCommonRealTime, 1),
+                    (CODECAPI_AVEncCommonQualityVsSpeed, 0)
+                ];
+
+                foreach (var (key, value) in intAttributes)
+                {
+                    try { attrs.Set(key, value); } catch { /* Atributo MFT opcional no soportado */ }
+                }
+
+                try { attrs.Set(CODECAPI_AVEncMPVGOPSize, (uint)fps); } catch { /* Atributo MFT opcional no soportado */ }
             }
             catch
             {
@@ -254,37 +239,34 @@ namespace LanScreenShare.Media
             }
         }
 
-        private static void TrySetCodecValue(ICodecAPI codecApi, Guid key, object value)
-        {
-            try
-            {
-                codecApi.SetValue(key, ref value);
-            }
-            catch
-            {
-                // Ignore unsupported ICodecAPI property
-            }
-        }
-
-        private static void TrySetCodecValueWithFallback(ICodecAPI codecApi, Guid key, object primary, object fallback)
-        {
-            try
-            {
-                codecApi.SetValue(key, ref primary);
-            }
-            catch
-            {
-                TrySetCodecValue(codecApi, key, fallback);
-            }
-        }
-
         private static void ApplyCodecApiValues(ICodecAPI codecApi, int fps)
         {
-            TrySetCodecValueWithFallback(codecApi, CODECAPI_AVLowLatencyMode, true, (uint)1);
-            TrySetCodecValue(codecApi, CODECAPI_AVEncMPVDefaultBPictureCount, (uint)0);
-            TrySetCodecValueWithFallback(codecApi, CODECAPI_AVEncCommonRealTime, true, (uint)1);
-            TrySetCodecValue(codecApi, CODECAPI_AVEncCommonQualityVsSpeed, (uint)0);
-            TrySetCodecValue(codecApi, CODECAPI_AVEncMPVGOPSize, (uint)fps);
+            (Guid Key, object Primary, object? Fallback)[] properties =
+            [
+                (CODECAPI_AVLowLatencyMode, true, (uint)1),
+                (CODECAPI_AVEncMPVDefaultBPictureCount, (uint)0, null),
+                (CODECAPI_AVEncCommonRealTime, true, (uint)1),
+                (CODECAPI_AVEncCommonQualityVsSpeed, (uint)0, null),
+                (CODECAPI_AVEncMPVGOPSize, (uint)fps, null)
+            ];
+
+            foreach (var (key, primary, fallback) in properties)
+            {
+                object val = primary;
+                try
+                {
+                    codecApi.SetValue(key, ref val);
+                }
+                catch when (fallback != null)
+                {
+                    object fb = fallback;
+                    try { codecApi.SetValue(key, ref fb); } catch { /* Propiedad ICodecAPI opcional no soportada */ }
+                }
+                catch
+                {
+                    // Propiedad ICodecAPI opcional no soportada
+                }
+            }
         }
 
         private static void ConfigureCodecApi(IMFTransform encoder, int fps)

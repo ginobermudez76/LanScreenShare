@@ -881,25 +881,25 @@ namespace LanScreenShare.Desktop
             return kbPerSec >= 1024 ? $"{(kbPerSec / 1024.0):F1} MB/s" : $"{kbPerSec:F0} KB/s";
         }
 
+        private int GetActiveRttMs()
+        {
+            if (_isHosting)
+                return _streamServer.CurrentRttMs;
+
+            return _streamClient?.IsConnected == true ? _streamClient.CurrentTelemetry.RttMs : 0;
+        }
+
+        private static string GetQualityColorForRtt(int rtt)
+        {
+            if (rtt < 30) return "#10B981";
+            if (rtt < 60) return "#3B82F6";
+            return rtt < 90 ? "#F59E0B" : "#EF4444";
+        }
+
         private void GetActiveRttAndQualityColor(out int rtt, out string qualityColor)
         {
-            rtt = 0;
-            if (_isHosting)
-            {
-                rtt = _streamServer.CurrentRttMs;
-            }
-            else if (_streamClient != null && _streamClient.IsConnected)
-            {
-                rtt = _streamClient.CurrentTelemetry.RttMs;
-            }
-
-            qualityColor = rtt switch
-            {
-                < 30 => "#10B981",
-                < 60 => "#3B82F6",
-                < 90 => "#F59E0B",
-                _ => "#EF4444"
-            };
+            rtt = GetActiveRttMs();
+            qualityColor = GetQualityColorForRtt(rtt);
         }
 
         private string FormatFpsInfo(long frames)
