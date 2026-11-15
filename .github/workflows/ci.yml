@@ -25,7 +25,7 @@ jobs:
         run: dotnet format --verify-no-changes --verbosity normal
 
   build-and-test:
-    name: Build & Unit Tests (102 Tests)
+    name: Build App & Unit Tests
     runs-on: windows-latest
     needs: format-and-lint
 
@@ -40,11 +40,21 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Build Solution (Release)
+      - name: Build Solution & Desktop App (Release)
         run: dotnet build --configuration Release
 
       - name: Run Unit Tests with TRX Logger
         run: dotnet test --configuration Release --no-build --logger "trx;LogFileName=test-results.trx"
+
+      - name: Publish Desktop App (Release)
+        run: dotnet publish LanScreenShare.Desktop/LanScreenShare.Desktop.csproj --configuration Release --no-build --output publish/LanScreenShare.Desktop
+
+      - name: Verify Desktop Executable
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "publish/LanScreenShare.Desktop/LanScreenShare.Desktop.exe")) {
+            throw "Desktop executable was not generated."
+          }
 
       - name: Upload Test Results Artifact
         uses: actions/upload-artifact@v4
@@ -53,3 +63,9 @@ jobs:
           name: unit-test-results
           path: "**/test-results.trx"
 
+      - name: Upload Desktop App Build
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: desktop-app-release
+          path: publish/LanScreenShare.Desktop/**
