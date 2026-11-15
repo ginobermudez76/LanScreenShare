@@ -130,7 +130,7 @@ namespace LanScreenShare.Network
             }, token);
         }
 
-        private void ProcessIncomingDatagram(UdpReceiveResult result)
+        internal void ProcessIncomingDatagram(UdpReceiveResult result)
         {
             var message = Encoding.UTF8.GetString(result.Buffer);
             var parts = message.Split('|');
@@ -160,7 +160,7 @@ namespace LanScreenShare.Network
             });
         }
 
-        private static string ResolveFinalIp(string reportedIp, string remoteIp)
+        internal static string ResolveFinalIp(string reportedIp, string remoteIp)
         {
             bool isReportedValid = !string.IsNullOrWhiteSpace(reportedIp) &&
                                    reportedIp != "127.0.0.1" &&
@@ -176,7 +176,7 @@ namespace LanScreenShare.Network
             _listenCts = null;
         }
 
-        private static bool IsSelfMessage(string senderName, string reportedIp, string remoteIp)
+        internal static bool IsSelfMessage(string senderName, string reportedIp, string remoteIp)
         {
             if (!string.Equals(senderName, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
                 return false;
@@ -244,23 +244,23 @@ namespace LanScreenShare.Network
             return true;
         }
 
-        private static bool IsEligibleIpv4(IPAddress ip)
+        internal static bool IsEligibleIpv4(IPAddress ip)
         {
             if (ip.AddressFamily != AddressFamily.InterNetwork) return false;
             if (IPAddress.IsLoopback(ip)) return false;
             return !ip.ToString().StartsWith("169.254.");
         }
 
-        private static IPAddress NormalizeMask(IPAddress? mask) =>
+        internal static IPAddress NormalizeMask(IPAddress? mask) =>
             IsValidSubnetMask(mask) ? mask! : DefaultSubnetMask;
 
-        private static bool IsValidSubnetMask(IPAddress? mask)
+        internal static bool IsValidSubnetMask(IPAddress? mask)
         {
             if (mask == null) return false;
             return !mask.Equals(IPAddress.Any) && !mask.Equals(IPAddress.None);
         }
 
-        private static IPAddress CalculateBroadcastAddress(IPAddress address, IPAddress mask)
+        internal static IPAddress CalculateBroadcastAddress(IPAddress address, IPAddress mask)
         {
             byte[] ipBytes = address.GetAddressBytes();
             byte[] maskBytes = mask.GetAddressBytes();

@@ -27,4 +27,7 @@
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanScreenShare.Tests" />
+  </ItemGroup>
 </Project>

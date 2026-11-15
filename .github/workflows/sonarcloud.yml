@@ -7,6 +7,10 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   analyze:
     name: Build, Test and Analyze
@@ -44,7 +48,118 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          dotnet-sonarscanner begin /k:"ginobermudez76_local_streaming" /o:"ginobermudez76" /d:sonar.token="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.cs.vstest.reportsPaths="**/*.trx"
+          dotnet-sonarscanner begin `
+            /k:"ginobermudez76_local_streaming" `
+            /o:"ginobermudez76" `
+            /d:sonar.token="${{ secrets.SONAR_TOKEN }}" `
+            /d:sonar.host.url="https://sonarcloud.io" `
+            /d:sonar.cs.vstest.reportsPaths="**/*.trx" `
+            /d:sonar.cs.vscoveragexml.reportsPaths="**/TestResults/**/*.xml" `
+            /d:sonar.coverage.exclusions="**/obj/**,scripts/**,LanScreenShare.Desktop/**/*Window*.cs,LanScreenShare.Desktop/App.axaml.cs,LanScreenShare.Desktop/Program.cs,LanScreenShare.Media/DxgiScreenCaptureService.cs,LanScreenShare.Media/WindowsScreenCaptureService.cs,LanScreenShare.Media/WindowCaptureService.cs,LanScreenShare.Media/CaptureSourceDiscoveryService.cs,LanScreenShare.Media/ProcessLoopbackAudioCapture.cs,LanScreenShare.Media/WasapiAudioCaptureService.cs,LanScreenShare.Media/WasapiAudioPlayerService.cs,LanScreenShare.Media/WasapiMicrophoneCaptureService.cs,LanScreenShare.Media/WindowsInputSimulatorService.cs,LanScreenShare.Media/MediaFoundationH264EncoderService.cs,LanScreenShare.Media/MediaFoundationH264DecoderService.cs,LanScreenShare.Media/HardwareMftEncoderDiscovery.cs,LanScreenShare.Media/WindowsDesktopManager.cs"
           dotnet build --configuration Release
-          dotnet test --configuration Release --no-build --logger trx
+          dotnet test --configuration Release --no-build --logger trx --collect:"Code Coverage;Format=xml" --results-directory TestResults
           dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
+
+      - name: Report SonarCloud PR Issues & Coverage
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SONAR_TOKEN)) {
+            Write-Host "SONAR_TOKEN no disponible en este contexto; omitiendo reporte."
+            exit 0
+          }
+          $projectKey = "ginobermudez76_local_streaming"
+          $headers = @{ Authorization = "Bearer $env:SONAR_TOKEN" }
+
+          $reportTask = Get-ChildItem -Path ".sonarqube" -Recurse -Filter "report-task.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($reportTask) {
+            $ceLine = Get-Content $reportTask.FullName | Where-Object { $_ -like "ceTaskId=*" } | Select-Object -First 1
+            if ($ceLine) {
+              $ceTaskId = $ceLine.Split("=", 2)[1].Trim()
+              for ($i = 0; $i -lt 30; $i++) {
+                try {
+                  $ceResp = Invoke-RestMethod -Uri "https://sonarcloud.io/api/ce/task?id=$ceTaskId" -Headers $headers
+                  $status = $ceResp.task.status
+                  if ($status -eq "SUCCESS" -or $status -eq "FAILED" -or $status -eq "CANCELED") { break }
+                } catch { }
+                Start-Sleep -Seconds 4
+              }
+            }
+          }
+
+          $scopeParam = if ($env:PR_NUMBER) { "pullRequest=$($env:PR_NUMBER)" } else { "branch=$($env:GITHUB_REF_NAME)" }
+          $qg = Invoke-RestMethod -Uri "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$projectKey&$scopeParam" -Headers $headers
+          $metrics = Invoke-RestMethod -Uri "https://sonarcloud.io/api/measures/component?component=$projectKey&$scopeParam&metricKeys=coverage,new_coverage,duplicated_lines_density,new_duplicated_lines_density,violations,new_violations,tests" -Headers $headers
+          $issuesResp = Invoke-RestMethod -Uri "https://sonarcloud.io/api/issues/search?componentKeys=$projectKey&$scopeParam&resolved=false&ps=50" -Headers $headers
+
+          $m = @{}
+          foreach ($item in $metrics.component.measures) {
+            if ($item.PSObject.Properties['value']) { $m[$item.metric] = $item.value }
+            elseif ($item.periods) { $m[$item.metric] = ($item.periods | Select-Object -First 1).value }
+          }
+
+          $qgStatus = $qg.projectStatus.status
+          $qgIcon = if ($qgStatus -eq "OK") { "✅ PASSED" } else { "❌ FAILED ($qgStatus)" }
+          $covVal = if ($env:PR_NUMBER) { $m['new_coverage'] } else { $m['coverage'] }
+          $dupVal = if ($env:PR_NUMBER) { $m['new_duplicated_lines_density'] } else { $m['duplicated_lines_density'] }
+          $dashboardUrl = if ($env:PR_NUMBER) {
+            "https://sonarcloud.io/summary/new_code?id=$projectKey&pullRequest=$($env:PR_NUMBER)"
+          } else {
+            "https://sonarcloud.io/summary/new_code?id=$projectKey"
+          }
+
+          $marker = "<!-- sonarcloud-pr-report -->"
+          $sb = [System.Text.StringBuilder]::new()
+          [void]$sb.AppendLine($marker)
+          [void]$sb.AppendLine("## SonarQube Cloud Report — $qgIcon")
+          [void]$sb.AppendLine("")
+          [void]$sb.AppendLine("| Metric | Value |")
+          [void]$sb.AppendLine("| --- | --- |")
+          [void]$sb.AppendLine("| Quality Gate | **$qgStatus** |")
+          [void]$sb.AppendLine("| Coverage | $(if ($covVal) { "$covVal%" } else { "N/A" }) |")
+          [void]$sb.AppendLine("| Duplications | $(if ($dupVal) { "$dupVal%" } else { "N/A" }) |")
+          [void]$sb.AppendLine("| Open Issues | **$($issuesResp.total)** |")
+          [void]$sb.AppendLine("| Unit Tests | $($m['tests']) |")
+          [void]$sb.AppendLine("")
+
+          if ($issuesResp.total -gt 0) {
+            [void]$sb.AppendLine("### Issues Found ($($issuesResp.total))")
+            [void]$sb.AppendLine("| Severity | Type | Rule | File | Message |")
+            [void]$sb.AppendLine("| --- | --- | --- | --- | --- |")
+            foreach ($issue in $issuesResp.issues) {
+              $file = ($issue.component -replace "^${projectKey}:", "")
+              $loc = if ($issue.line) { "${file}:$($issue.line)" } else { $file }
+              $msg = ($issue.message -replace "\|", "\|" -replace "`r?`n", " ")
+              [void]$sb.AppendLine("| $($issue.severity) | $($issue.type) | ``$($issue.rule)`` | ``$loc`` | $msg |")
+            }
+          } else {
+            [void]$sb.AppendLine("✅ **0 issues abiertos reportados por SonarQube Cloud.**")
+          }
+
+          [void]$sb.AppendLine("")
+          [void]$sb.AppendLine("[Ver análisis completo en SonarQube Cloud]($dashboardUrl)")
+
+          $body = $sb.ToString()
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $body
+
+          if ($env:PR_NUMBER -and ($env:HEAD_REPO -eq $env:GITHUB_REPOSITORY)) {
+            $ghHeaders = @{
+              Authorization = "Bearer $env:GITHUB_TOKEN"
+              Accept = "application/vnd.github+json"
+              "User-Agent" = "sonarcloud-pr-report"
+            }
+            $commentsUri = "https://api.github.com/repos/$($env:GITHUB_REPOSITORY)/issues/$($env:PR_NUMBER)/comments?per_page=50"
+            $existing = Invoke-RestMethod -Uri $commentsUri -Headers $ghHeaders
+            $target = $existing | Where-Object { $_.body -like "*$marker*" } | Select-Object -First 1
+            $payload = @{ body = $body } | ConvertTo-Json -Depth 3
+            if ($target) {
+              Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/$($env:GITHUB_REPOSITORY)/issues/comments/$($target.id)" -Headers $ghHeaders -Body $payload -ContentType "application/json" | Out-Null
+            } else {
+              Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$($env:GITHUB_REPOSITORY)/issues/$($env:PR_NUMBER)/comments" -Headers $ghHeaders -Body $payload -ContentType "application/json" | Out-Null
+            }
+          }
