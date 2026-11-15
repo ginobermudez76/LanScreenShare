@@ -210,19 +210,28 @@ namespace LanScreenShare.Media
             throw new InvalidOperationException("No se pudo inicializar ningún codificador H.264 (hardware ni software).");
         }
 
+        private static void TrySetAttribute(IMFAttributes attrs, Guid key, int value)
+        {
+            try { attrs.Set(key, value); } catch { }
+        }
+
+        private static void TrySetAttribute(IMFAttributes attrs, Guid key, uint value)
+        {
+            try { attrs.Set(key, value); } catch { }
+        }
+
         private static void ApplyEncoderAttributes(IMFTransform encoder, int fps)
         {
             try
             {
                 using var attrs = encoder.Attributes;
-                if (attrs != null)
-                {
-                    try { attrs.Set(CODECAPI_AVLowLatencyMode, 1); } catch { }
-                    try { attrs.Set(CODECAPI_AVEncMPVDefaultBPictureCount, 0); } catch { }
-                    try { attrs.Set(CODECAPI_AVEncCommonRealTime, 1); } catch { }
-                    try { attrs.Set(CODECAPI_AVEncCommonQualityVsSpeed, 0); } catch { }
-                    try { attrs.Set(CODECAPI_AVEncMPVGOPSize, (uint)fps); } catch { }
-                }
+                if (attrs == null) return;
+
+                TrySetAttribute(attrs, CODECAPI_AVLowLatencyMode, 1);
+                TrySetAttribute(attrs, CODECAPI_AVEncMPVDefaultBPictureCount, 0);
+                TrySetAttribute(attrs, CODECAPI_AVEncCommonRealTime, 1);
+                TrySetAttribute(attrs, CODECAPI_AVEncCommonQualityVsSpeed, 0);
+                TrySetAttribute(attrs, CODECAPI_AVEncMPVGOPSize, (uint)fps);
             }
             catch
             {
@@ -230,32 +239,30 @@ namespace LanScreenShare.Media
             }
         }
 
+        private static void TrySetCodecValue(ICodecAPI codecApi, Guid key, object value)
+        {
+            try { codecApi.SetValue(key, ref value); } catch { }
+        }
+
+        private static void TrySetCodecValueWithFallback(ICodecAPI codecApi, Guid key, object primary, object fallback)
+        {
+            try
+            {
+                codecApi.SetValue(key, ref primary);
+            }
+            catch
+            {
+                TrySetCodecValue(codecApi, key, fallback);
+            }
+        }
+
         private static void ApplyCodecApiValues(ICodecAPI codecApi, int fps)
         {
-            object lowLatencyBool = true;
-            try { codecApi.SetValue(CODECAPI_AVLowLatencyMode, ref lowLatencyBool); }
-            catch
-            {
-                object lowLatencyUint = (uint)1;
-                try { codecApi.SetValue(CODECAPI_AVLowLatencyMode, ref lowLatencyUint); } catch { }
-            }
-
-            object bFrames = (uint)0;
-            try { codecApi.SetValue(CODECAPI_AVEncMPVDefaultBPictureCount, ref bFrames); } catch { }
-
-            object realTimeBool = true;
-            try { codecApi.SetValue(CODECAPI_AVEncCommonRealTime, ref realTimeBool); }
-            catch
-            {
-                object realTimeUint = (uint)1;
-                try { codecApi.SetValue(CODECAPI_AVEncCommonRealTime, ref realTimeUint); } catch { }
-            }
-
-            object qualityVsSpeed = (uint)0;
-            try { codecApi.SetValue(CODECAPI_AVEncCommonQualityVsSpeed, ref qualityVsSpeed); } catch { }
-
-            object gopSize = (uint)fps;
-            try { codecApi.SetValue(CODECAPI_AVEncMPVGOPSize, ref gopSize); } catch { }
+            TrySetCodecValueWithFallback(codecApi, CODECAPI_AVLowLatencyMode, true, (uint)1);
+            TrySetCodecValue(codecApi, CODECAPI_AVEncMPVDefaultBPictureCount, (uint)0);
+            TrySetCodecValueWithFallback(codecApi, CODECAPI_AVEncCommonRealTime, true, (uint)1);
+            TrySetCodecValue(codecApi, CODECAPI_AVEncCommonQualityVsSpeed, (uint)0);
+            TrySetCodecValue(codecApi, CODECAPI_AVEncMPVGOPSize, (uint)fps);
         }
 
         private static void ConfigureCodecApi(IMFTransform encoder, int fps)
