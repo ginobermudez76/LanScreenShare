@@ -76,37 +76,45 @@ jobs:
           $projectKey = "ginobermudez76_local_streaming"
           $headers = @{ Authorization = "Bearer $env:SONAR_TOKEN" }
 
+          $trxFiles = Get-ChildItem -Path "TestResults" -Recurse -Filter "*.trx" -ErrorAction SilentlyContinue
+          $testTotal = 0
+          $testPassed = 0
+          foreach ($trx in $trxFiles) {
+            try {
+              [xml]$trxXml = Get-Content $trx.FullName
+              $counters = $trxXml.TestRun.ResultSummary.Counters
+              if ($counters) {
+                $testTotal += [int]$counters.total
+                $testPassed += [int]$counters.passed
+              }
+            } catch { }
+          }
+          $unitTestsDisplay = if ($testTotal -gt 0) { "$testPassed / $testTotal passed" } else { "N/A" }
+
+          $taskStatus = "MISSING_REPORT"
           $reportTask = Get-ChildItem -Path ".sonarqube" -Recurse -Filter "report-task.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($reportTask) {
             $ceLine = Get-Content $reportTask.FullName | Where-Object { $_ -like "ceTaskId=*" } | Select-Object -First 1
             if ($ceLine) {
               $ceTaskId = $ceLine.Split("=", 2)[1].Trim()
+              $taskStatus = "TIMEOUT"
               for ($i = 0; $i -lt 30; $i++) {
                 try {
                   $ceResp = Invoke-RestMethod -Uri "https://sonarcloud.io/api/ce/task?id=$ceTaskId" -Headers $headers
                   $status = $ceResp.task.status
-                  if ($status -eq "SUCCESS" -or $status -eq "FAILED" -or $status -eq "CANCELED") { break }
+                  if ($status -eq "SUCCESS" -or $status -eq "FAILED" -or $status -eq "CANCELED") {
+                    $taskStatus = $status
+                    break
+                  }
                 } catch { }
                 Start-Sleep -Seconds 4
               }
+            } else {
+              $taskStatus = "MISSING_TASK_ID"
             }
           }
 
           $scopeParam = if ($env:PR_NUMBER) { "pullRequest=$($env:PR_NUMBER)" } else { "branch=$($env:GITHUB_REF_NAME)" }
-          $qg = Invoke-RestMethod -Uri "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$projectKey&$scopeParam" -Headers $headers
-          $metrics = Invoke-RestMethod -Uri "https://sonarcloud.io/api/measures/component?component=$projectKey&$scopeParam&metricKeys=coverage,new_coverage,duplicated_lines_density,new_duplicated_lines_density,violations,new_violations,tests" -Headers $headers
-          $issuesResp = Invoke-RestMethod -Uri "https://sonarcloud.io/api/issues/search?componentKeys=$projectKey&$scopeParam&resolved=false&ps=50" -Headers $headers
-
-          $m = @{}
-          foreach ($item in $metrics.component.measures) {
-            if ($item.PSObject.Properties['value']) { $m[$item.metric] = $item.value }
-            elseif ($item.periods) { $m[$item.metric] = ($item.periods | Select-Object -First 1).value }
-          }
-
-          $qgStatus = $qg.projectStatus.status
-          $qgIcon = if ($qgStatus -eq "OK") { "✅ PASSED" } else { "❌ FAILED ($qgStatus)" }
-          $covVal = if ($env:PR_NUMBER) { $m['new_coverage'] } else { $m['coverage'] }
-          $dupVal = if ($env:PR_NUMBER) { $m['new_duplicated_lines_density'] } else { $m['duplicated_lines_density'] }
           $dashboardUrl = if ($env:PR_NUMBER) {
             "https://sonarcloud.io/summary/new_code?id=$projectKey&pullRequest=$($env:PR_NUMBER)"
           } else {
@@ -116,29 +124,56 @@ jobs:
           $marker = "<!-- sonarcloud-pr-report -->"
           $sb = [System.Text.StringBuilder]::new()
           [void]$sb.AppendLine($marker)
-          [void]$sb.AppendLine("## SonarQube Cloud Report — $qgIcon")
-          [void]$sb.AppendLine("")
-          [void]$sb.AppendLine("| Metric | Value |")
-          [void]$sb.AppendLine("| --- | --- |")
-          [void]$sb.AppendLine("| Quality Gate | **$qgStatus** |")
-          [void]$sb.AppendLine("| Coverage | $(if ($covVal) { "$covVal%" } else { "N/A" }) |")
-          [void]$sb.AppendLine("| Duplications | $(if ($dupVal) { "$dupVal%" } else { "N/A" }) |")
-          [void]$sb.AppendLine("| Open Issues | **$($issuesResp.total)** |")
-          [void]$sb.AppendLine("| Unit Tests | $($m['tests']) |")
-          [void]$sb.AppendLine("")
 
-          if ($issuesResp.total -gt 0) {
-            [void]$sb.AppendLine("### Issues Found ($($issuesResp.total))")
-            [void]$sb.AppendLine("| Severity | Type | Rule | File | Message |")
-            [void]$sb.AppendLine("| --- | --- | --- | --- | --- |")
-            foreach ($issue in $issuesResp.issues) {
-              $file = ($issue.component -replace "^${projectKey}:", "")
-              $loc = if ($issue.line) { "${file}:$($issue.line)" } else { $file }
-              $msg = ($issue.message -replace "\|", "\|" -replace "`r?`n", " ")
-              [void]$sb.AppendLine("| $($issue.severity) | $($issue.type) | ``$($issue.rule)`` | ``$loc`` | $msg |")
-            }
+          if ($taskStatus -ne "SUCCESS") {
+            [void]$sb.AppendLine("## SonarQube Cloud Report — ⚠️ Analysis Incomplete ($taskStatus)")
+            [void]$sb.AppendLine("")
+            [void]$sb.AppendLine("No se pudo confirmar la finalización exitosa de esta tarea en SonarQube Cloud (`$taskStatus`). No se muestran métricas previas para evitar falsos positivos.")
+            [void]$sb.AppendLine("")
+            [void]$sb.AppendLine("| Metric | Value |")
+            [void]$sb.AppendLine("| --- | --- |")
+            [void]$sb.AppendLine("| Unit Tests | $unitTestsDisplay |")
           } else {
-            [void]$sb.AppendLine("✅ **0 issues abiertos reportados por SonarQube Cloud.**")
+            $qg = Invoke-RestMethod -Uri "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$projectKey&$scopeParam" -Headers $headers
+            $metrics = Invoke-RestMethod -Uri "https://sonarcloud.io/api/measures/component?component=$projectKey&$scopeParam&metricKeys=coverage,new_coverage,duplicated_lines_density,new_duplicated_lines_density,violations,new_violations" -Headers $headers
+            $issuesResp = Invoke-RestMethod -Uri "https://sonarcloud.io/api/issues/search?componentKeys=$projectKey&$scopeParam&resolved=false&ps=50" -Headers $headers
+
+            $m = @{}
+            foreach ($item in $metrics.component.measures) {
+              if ($item.PSObject.Properties['value']) { $m[$item.metric] = $item.value }
+              elseif ($item.period) { $m[$item.metric] = $item.period.value }
+              elseif ($item.periods) { $m[$item.metric] = ($item.periods | Select-Object -First 1).value }
+            }
+
+            $qgStatus = $qg.projectStatus.status
+            $qgIcon = if ($qgStatus -eq "OK") { "✅ PASSED" } else { "❌ FAILED ($qgStatus)" }
+            $covVal = if ($env:PR_NUMBER) { $m['new_coverage'] } else { $m['coverage'] }
+            $dupVal = if ($env:PR_NUMBER) { $m['new_duplicated_lines_density'] } else { $m['duplicated_lines_density'] }
+
+            [void]$sb.AppendLine("## SonarQube Cloud Report — $qgIcon")
+            [void]$sb.AppendLine("")
+            [void]$sb.AppendLine("| Metric | Value |")
+            [void]$sb.AppendLine("| --- | --- |")
+            [void]$sb.AppendLine("| Quality Gate | **$qgStatus** |")
+            [void]$sb.AppendLine("| Coverage | $(if ($covVal) { "$covVal%" } else { "N/A" }) |")
+            [void]$sb.AppendLine("| Duplications | $(if ($dupVal) { "$dupVal%" } else { "N/A" }) |")
+            [void]$sb.AppendLine("| Open Issues | **$($issuesResp.total)** |")
+            [void]$sb.AppendLine("| Unit Tests | $unitTestsDisplay |")
+            [void]$sb.AppendLine("")
+
+            if ($issuesResp.total -gt 0) {
+              [void]$sb.AppendLine("### Issues Found ($($issuesResp.total))")
+              [void]$sb.AppendLine("| Severity | Type | Rule | File | Message |")
+              [void]$sb.AppendLine("| --- | --- | --- | --- | --- |")
+              foreach ($issue in $issuesResp.issues) {
+                $file = ($issue.component -replace "^${projectKey}:", "")
+                $loc = if ($issue.line) { "${file}:$($issue.line)" } else { $file }
+                $msg = ($issue.message -replace "\|", "\|" -replace "`r?`n", " ")
+                [void]$sb.AppendLine("| $($issue.severity) | $($issue.type) | ``$($issue.rule)`` | ``$loc`` | $msg |")
+              }
+            } else {
+              [void]$sb.AppendLine("✅ **0 issues abiertos reportados por SonarQube Cloud.**")
+            }
           }
 
           [void]$sb.AppendLine("")

@@ -21,15 +21,16 @@ namespace LanScreenShare.Desktop
 
         private static readonly Lock FileLock = new();
 
-        public static AppSettings Load()
+        public static AppSettings Load(string? filePath = null)
         {
+            string targetPath = string.IsNullOrWhiteSpace(filePath) ? SettingsFilePath : filePath;
             lock (FileLock)
             {
                 try
                 {
-                    if (File.Exists(SettingsFilePath))
+                    if (File.Exists(targetPath))
                     {
-                        string json = File.ReadAllText(SettingsFilePath);
+                        string json = File.ReadAllText(targetPath);
                         var settings = JsonSerializer.Deserialize<AppSettings>(json);
                         if (settings != null)
                             return settings;
@@ -44,19 +45,21 @@ namespace LanScreenShare.Desktop
             }
         }
 
-        public static void Save(AppSettings settings)
+        public static void Save(AppSettings settings, string? filePath = null)
         {
+            string targetPath = string.IsNullOrWhiteSpace(filePath) ? SettingsFilePath : filePath;
             lock (FileLock)
             {
                 try
                 {
-                    if (!Directory.Exists(SettingsDirectory))
+                    string? targetDir = Path.GetDirectoryName(targetPath);
+                    if (!string.IsNullOrEmpty(targetDir) && !Directory.Exists(targetDir))
                     {
-                        Directory.CreateDirectory(SettingsDirectory);
+                        Directory.CreateDirectory(targetDir);
                     }
 
                     string json = JsonSerializer.Serialize(settings, JsonOptions);
-                    File.WriteAllText(SettingsFilePath, json);
+                    File.WriteAllText(targetPath, json);
                 }
                 catch (Exception ex)
                 {

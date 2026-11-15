@@ -15,12 +15,20 @@ namespace LanScreenShare.Network
 
     public class DiscoveryService
     {
-        private const int DiscoveryPort = 5000;
+        private const int DefaultDiscoveryPort = 5000;
         private const string BroadcastMessagePrefix = "LAN_SCREEN_SHARE_HOST";
         private static readonly IPAddress DefaultSubnetMask = new([255, 255, 255, 0]);
 
+        private readonly int _discoveryPort;
         private CancellationTokenSource? _hostCts;
         private CancellationTokenSource? _listenCts;
+        internal Task? HostTask { get; private set; }
+        internal Task? ListenerTask { get; private set; }
+
+        public DiscoveryService(int discoveryPort = DefaultDiscoveryPort)
+        {
+            _discoveryPort = discoveryPort;
+        }
 
         public event EventHandler<DeviceInfo>? OnDeviceDiscovered;
         public Func<bool>? IsRemoteControlAllowedProvider { get; set; }
@@ -33,7 +41,7 @@ namespace LanScreenShare.Network
             _hostCts = new CancellationTokenSource();
             var token = _hostCts.Token;
 
-            Task.Run(async () =>
+            HostTask = Task.Run(async () =>
             {
                 var pcName = Environment.MachineName;
 
@@ -72,12 +80,12 @@ namespace LanScreenShare.Network
                 var bytes = Encoding.UTF8.GetBytes(message);
 
                 // 1. Broadcast dirigido a la subred de esta interfaz física
-                await udpClient.SendAsync(bytes, bytes.Length, new IPEndPoint(target.BroadcastIp, DiscoveryPort));
+                await udpClient.SendAsync(bytes, bytes.Length, new IPEndPoint(target.BroadcastIp, _discoveryPort));
 
                 // 2. Broadcast global (255.255.255.255) como respaldo
                 if (!target.BroadcastIp.Equals(IPAddress.Broadcast))
                 {
-                    await udpClient.SendAsync(bytes, bytes.Length, new IPEndPoint(IPAddress.Broadcast, DiscoveryPort));
+                    await udpClient.SendAsync(bytes, bytes.Length, new IPEndPoint(IPAddress.Broadcast, _discoveryPort));
                 }
             }
             catch (Exception ex)
@@ -101,11 +109,11 @@ namespace LanScreenShare.Network
             _listenCts = new CancellationTokenSource();
             var token = _listenCts.Token;
 
-            Task.Run(async () =>
+            HostTask = Task.Run(async () =>
             {
                 using var udpClient = new UdpClient();
                 udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, DiscoveryPort));
+                udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, _discoveryPort));
 
                 while (!token.IsCancellationRequested)
                 {
