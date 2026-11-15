@@ -17,7 +17,7 @@ using LanScreenShare.Network.Security;
 
 namespace LanScreenShare.Network.Streaming
 {
-    public class TcpControlServer : IDisposable
+    public sealed class TcpControlServer : IDisposable
     {
         private readonly ISessionAuthority? _sessionAuthority;
         private readonly IInputSimulatorService? _inputSimulator;
@@ -339,7 +339,7 @@ namespace LanScreenShare.Network.Streaming
             return true;
         }
 
-        private async Task<string?> TryReadTextPayloadAsync(Stream stream, int payloadLength, string clientId, CancellationToken token)
+        private static async Task<string?> TryReadTextPayloadAsync(Stream stream, int payloadLength, string clientId, CancellationToken token)
         {
             if (payloadLength <= 0 || payloadLength > Lsi2ControlPacket.MaxClipboardPayloadBytes)
             {
@@ -489,21 +489,13 @@ namespace LanScreenShare.Network.Streaming
             await Task.WhenAll(tasks);
         }
 
-        private bool IsActiveController(string? sessionId)
-        {
-            if (_sessionAuthority == null || sessionId == null)
-                return true;
-
-            return _sessionAuthority.ActiveControllerSessionId == sessionId;
-        }
-
         private async Task SendPayloadToClientAsync(
             string clientId,
             (Stream Stream, TcpClient Client, string? SessionId, SemaphoreSlim SendLock) ctx,
             byte[] packet,
             InputEventType payloadType)
         {
-            if (!IsActiveController(ctx.SessionId))
+            if (!IsAuthorizedSession(ctx.SessionId))
             {
                 return;
             }
@@ -568,14 +560,14 @@ namespace LanScreenShare.Network.Streaming
             _cts?.Cancel();
             try { _listener?.Stop(); } catch { }
 
-            foreach (var kvp in _clients)
+            foreach (var client in _clients.Values)
             {
-                try { kvp.Value.Stream.Dispose(); } catch { }
-                try { kvp.Value.Client.Dispose(); } catch { }
+                try { client.Stream.Dispose(); } catch { /* Ignorar error al liberar stream */ }
+                try { client.Client.Dispose(); } catch { /* Ignorar error al liberar cliente */ }
 
-                if (_sessionAuthority != null && kvp.Value.SessionId != null)
+                if (_sessionAuthority != null && client.SessionId != null)
                 {
-                    _sessionAuthority.ReleaseRemoteControl(kvp.Value.SessionId);
+                    _sessionAuthority.ReleaseRemoteControl(client.SessionId);
                 }
             }
             _clients.Clear();

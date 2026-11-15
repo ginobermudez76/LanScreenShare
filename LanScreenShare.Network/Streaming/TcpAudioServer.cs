@@ -14,7 +14,7 @@ using LanScreenShare.Network.Security;
 
 namespace LanScreenShare.Network.Streaming
 {
-    public class TcpAudioServer : IDisposable
+    public sealed class TcpAudioServer : IDisposable
     {
         private sealed class AudioClientContext : IDisposable
         {
@@ -65,7 +65,7 @@ namespace LanScreenShare.Network.Streaming
             {
                 if (kvp.Value.SessionId == sessionId)
                 {
-                    RemoveClient(kvp.Key, kvp.Value.Client);
+                    RemoveClient(kvp.Key);
                 }
             }
         }
@@ -131,7 +131,7 @@ namespace LanScreenShare.Network.Streaming
 
                 if (_sslServerOptions != null)
                 {
-                    var tlsResult = await AuthenticateClientAsync(client, stream, clientId, token);
+                    var tlsResult = await AuthenticateClientAsync(stream, clientId, token);
                     if (tlsResult == null)
                     {
                         client.Close();
@@ -148,14 +148,13 @@ namespace LanScreenShare.Network.Streaming
             catch (Exception ex)
             {
                 Console.WriteLine($"[AudioServer] Error inicializando cliente de audio {clientId}: {ex.Message}");
-                RemoveClient(clientId, client);
+                RemoveClient(clientId);
             }
         }
 
         private readonly record struct TlsHandshakeResult(Stream Stream, string? SessionId);
 
         private async Task<TlsHandshakeResult?> AuthenticateClientAsync(
-            TcpClient client,
             Stream rawStream,
             string clientId,
             CancellationToken token)
@@ -259,7 +258,7 @@ namespace LanScreenShare.Network.Streaming
             }
             finally
             {
-                RemoveClient(clientId, client);
+                RemoveClient(clientId);
             }
         }
 
@@ -315,13 +314,13 @@ namespace LanScreenShare.Network.Streaming
             }
             catch
             {
-                RemoveClient(clientId, clientCtx.Client);
+                RemoveClient(clientId);
             }
             finally
             {
                 if (lockTaken)
                 {
-                    try { clientCtx.SendLock.Release(); } catch (ObjectDisposedException) { }
+                    try { clientCtx.SendLock.Release(); } catch (ObjectDisposedException) { /* Ignorar semáforo ya liberado */ }
                 }
             }
         }
@@ -341,7 +340,7 @@ namespace LanScreenShare.Network.Streaming
             }
         }
 
-        private void RemoveClient(string clientId, TcpClient? client)
+        private void RemoveClient(string clientId)
         {
             if (_clients.TryRemove(clientId, out var ctx))
             {

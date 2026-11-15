@@ -11,15 +11,13 @@ using SkiaSharp;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public class WindowsScreenCaptureService : IScreenCaptureService
+    public sealed class WindowsScreenCaptureService : IScreenCaptureService
     {
         public readonly record struct ScreenBounds(int X, int Y, int Width, int Height, bool AllScreens = false);
 
         public event EventHandler<CapturedFrame>? FrameCaptured;
         public event EventHandler<bool>? SecureDesktopChanged;
 
-        protected virtual void OnSecureDesktopChanged(bool isSecure) =>
-            SecureDesktopChanged?.Invoke(this, isSecure);
         private CancellationTokenSource? _cts;
         private Task? _captureTask;
         private bool _disposed;
@@ -136,7 +134,7 @@ namespace LanScreenShare.Media
         public string Codec
         {
             get => _codec;
-            set => _codec = value.ToLowerInvariant() == "h264" ? "h264" : "jpeg";
+            set => _codec = string.Equals(value, "h264", StringComparison.OrdinalIgnoreCase) ? "h264" : "jpeg";
         }
 
         public void UpdateSettings(CaptureProfile profile)
@@ -242,6 +240,7 @@ namespace LanScreenShare.Media
             _cts?.Dispose();
             _cts = null;
             _captureTask = null;
+            SecureDesktopChanged?.Invoke(this, false);
         }
 
         private sealed class HostFpsTracker
@@ -481,7 +480,7 @@ namespace LanScreenShare.Media
             try
             {
                 CURSORINFO cursorInfo = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
-                if (GetCursorInfo(out cursorInfo) && cursorInfo.flags == CURSOR_SHOWING)
+                if (GetCursorInfo(ref cursorInfo) && cursorInfo.flags == CURSOR_SHOWING)
                 {
                     DrawIcon(hdcDest, cursorInfo.ptScreenPos.x - screenLeft, cursorInfo.ptScreenPos.y - screenTop, cursorInfo.hCursor);
                 }
@@ -538,7 +537,7 @@ namespace LanScreenShare.Media
         private static extern bool DrawIcon(IntPtr hDC, int X, int Y, IntPtr hIcon);
 
         [DllImport("user32.dll")]
-        private static extern bool GetCursorInfo(out CURSORINFO pci);
+        private static extern bool GetCursorInfo(ref CURSORINFO pci);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct BITMAPINFOHEADER

@@ -221,7 +221,7 @@ namespace LanScreenShare.Media
 
             try
             {
-                uint currentProcessId = (uint)Process.GetCurrentProcess().Id;
+                uint currentProcessId = (uint)Environment.ProcessId;
                 EnumWindows((hWnd, _) =>
                 {
                     if (TryCreateWindowSource(hWnd, currentProcessId, out var source) && source != null)

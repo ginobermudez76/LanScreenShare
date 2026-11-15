@@ -282,7 +282,7 @@ namespace LanScreenShare.Desktop
                 UpdateDevicesViewingState();
 
                 ShowViewerControls(device);
-                var handshake = (_streamClient as TcpStreamClient)?.ActiveSessionHandshake;
+                var handshake = _streamClient.ActiveSessionHandshake;
                 StartViewerAuxiliaryChannels(device.IPAddress, handshake);
             }
             catch (Exception ex)
@@ -493,7 +493,7 @@ namespace LanScreenShare.Desktop
 
         private readonly record struct PlaceholderInfo(string Title, string Subtitle, string StatusMsg, string StatusColor);
 
-        private PlaceholderInfo DeterminePlaceholderInfo(string reason)
+        private static PlaceholderInfo DeterminePlaceholderInfo(string reason)
         {
             if (reason.Contains("finaliz", StringComparison.OrdinalIgnoreCase))
             {

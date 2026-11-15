@@ -47,7 +47,7 @@ namespace LanScreenShare.Desktop
             return CreateDefaultScreenSource();
         }
 
-        private static MediaFoundationH264DecoderService? TryCreateH264Decoder()
+        private static IVideoDecoderService? TryCreateH264Decoder()
         {
             if (!OperatingSystem.IsWindows()) return null;
             try
@@ -89,7 +89,7 @@ namespace LanScreenShare.Desktop
         private void InitializeStreamingSubsystem()
         {
             _streamServer = new TcpStreamServer(_sessionAuthority, _sslServerOptions, _pairedDeviceStore);
-            _streamServer.PairingApprovalCallback = (fingerprint, deviceName, sasFormatted) => RequestPairingApprovalAsync(deviceName, fingerprint, sasFormatted);
+            _streamServer.PairingApprovalCallback = (_, deviceName, sasFormatted) => RequestPairingApprovalAsync(deviceName, sasFormatted);
             _streamServer.ClientConnected += StreamServer_ClientConnected;
             _streamServer.ClientDisconnected += StreamServer_ClientDisconnected;
             _streamServer.FrameDropped += (s, e) =>
@@ -108,7 +108,7 @@ namespace LanScreenShare.Desktop
                 {
                     if (ShouldApplyAbrBitrate(newBitrate))
                     {
-                        _screenCaptureService!.BitrateMbps = newBitrate;
+                        _screenCaptureService.BitrateMbps = newBitrate;
                     }
                     UpdateAbrUI();
                 });
@@ -120,7 +120,7 @@ namespace LanScreenShare.Desktop
                 {
                     if (ShouldApplyAbrFps(newFps))
                     {
-                        _screenCaptureService!.TargetFps = newFps;
+                        _screenCaptureService.TargetFps = newFps;
                     }
                 });
             };

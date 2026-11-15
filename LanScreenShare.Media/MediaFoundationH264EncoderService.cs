@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Threading;
 using System.Threading.Tasks;
 using LanScreenShare.Core.Interfaces;
 using Vortice.MediaFoundation;
@@ -9,7 +10,7 @@ using Vortice.MediaFoundation;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public class MediaFoundationH264EncoderService : IVideoEncoderService
+    public sealed class MediaFoundationH264EncoderService : IVideoEncoderService
     {
         // Official Windows SDK GUIDs (codecapi.h / mfapi.h / icodecapi.h)
         private static readonly Guid CODECAPI_AVLowLatencyMode = new("9c27891a-ed7a-40e1-88e8-b22727a024ee");
@@ -30,11 +31,11 @@ namespace LanScreenShare.Media
 
         private int _width;
         private int _height;
-        private int _fps = 60;
-        private int _bitrate = 8_000_000;
+        private int _fps;
+        private int _bitrate;
         private long _sampleTime;
         private byte[]? _nv12Buffer;
-        private readonly object _lock = new();
+        private readonly Lock _lock = new();
         private bool _pendingReinit;
         private bool _disposed;
 

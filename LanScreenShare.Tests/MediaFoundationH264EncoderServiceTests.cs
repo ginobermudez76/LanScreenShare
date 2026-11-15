@@ -197,7 +197,7 @@ namespace LanScreenShare.Tests
 
             // Seguir codificando sin errores
             byte[] encoded = encoder.EncodeFrame(dummyBgra, width, height);
-            Assert.IsNotNull(encoded);
+            Assert.AreNotSame(dummyBgra, encoded);
         }
 
         private readonly record struct FrameBuffer(byte[] Bgra, int Width, int Height);
@@ -270,7 +270,7 @@ namespace LanScreenShare.Tests
             for (int i = 0; i < 5; i++)
             {
                 byte[] encoded = encoder.EncodeFrame(bgra, oddWidth, oddHeight, forceKeyframe: i == 0);
-                Assert.IsNotNull(encoded);
+                Assert.AreNotSame(bgra, encoded);
             }
         }
     }

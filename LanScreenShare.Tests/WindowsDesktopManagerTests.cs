@@ -36,8 +36,7 @@ public class WindowsDesktopManagerTests
 
         bool isSecure = WindowsDesktopManager.IsActiveDesktopSecure(out string desktopName);
 
-        Assert.IsNotNull(desktopName);
-        Assert.IsTrue(desktopName.Length > 0);
+        Assert.IsFalse(string.IsNullOrEmpty(desktopName));
 
         if (string.Equals(desktopName, WindowsDesktopManager.DesktopWinlogon, StringComparison.OrdinalIgnoreCase))
         {
@@ -58,9 +57,9 @@ public class WindowsDesktopManagerTests
             return;
         }
 
-        bool attached = WindowsDesktopManager.TryAttachThreadToInputDesktop(out string desktopName, out bool isSecure);
+        _ = WindowsDesktopManager.TryAttachThreadToInputDesktop(out string desktopName, out bool isSecure);
 
-        Assert.IsNotNull(desktopName);
-        Assert.IsTrue(desktopName.Length > 0);
+        Assert.IsFalse(string.IsNullOrEmpty(desktopName));
+        Assert.AreEqual(WindowsDesktopManager.IsSecureDesktopName(desktopName), isSecure);
     }
 }

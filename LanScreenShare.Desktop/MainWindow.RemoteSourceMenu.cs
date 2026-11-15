@@ -190,11 +190,11 @@ namespace LanScreenShare.Desktop
             }
         }
 
-        private bool TryParseMonitorCatalog(string payload, out string activeName)
+        private void TryParseMonitorCatalog(string payload, out string activeName)
         {
             activeName = payload;
-            if (!payload.TrimStart().StartsWith("{", StringComparison.Ordinal))
-                return false;
+            if (!payload.TrimStart().StartsWith('{'))
+                return;
 
             try
             {
@@ -206,14 +206,12 @@ namespace LanScreenShare.Desktop
                     {
                         activeName = catalog.ActiveSourceName;
                     }
-                    return true;
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[ControlViewer] Error parseando catálogo de monitores: {ex.Message}");
             }
-            return false;
         }
 
         private void ApplyRemoteMonitorInfo(string monitorPayload)

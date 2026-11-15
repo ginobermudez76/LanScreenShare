@@ -222,7 +222,7 @@ namespace LanScreenShare.Desktop
             this.Closing += PopoutWindow_Closing;
         }
 
-        private void Popout_DragOver(object? sender, DragEventArgs e)
+        private static void Popout_DragOver(object? sender, DragEventArgs e)
         {
             if (e.DataTransfer.Contains(DataFormat.File))
             {

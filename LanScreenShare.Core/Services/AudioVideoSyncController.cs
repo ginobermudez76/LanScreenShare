@@ -21,7 +21,7 @@ namespace LanScreenShare.Core.Services
         private long _latestVideoReceiveTime;
         private long _latestAudioTimestamp;
         private int _smoothedDriftMs;
-        private readonly object _lock = new();
+        private readonly Lock _lock = new();
 
         /// <summary>
         /// Umbral máximo en ms para considerar que el audio está retrasado respecto al video.

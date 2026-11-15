@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using LanScreenShare.Core.Models;
 
 namespace LanScreenShare.Core.Security;
@@ -13,7 +14,7 @@ namespace LanScreenShare.Core.Security;
 /// </summary>
 public class InjectedInputTracker
 {
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     private readonly HashSet<int> _pressedKeys = new();
     private readonly HashSet<RemoteMouseButton> _pressedMouseButtons = new();
 
@@ -91,7 +92,7 @@ public class InjectedInputTracker
     }
 
     /// <summary>
-    /// Limpia todo el registro interno de teclas y botones inyectados.
+    /// Limpia el registro interno completo de teclas y botones inyectados.
     /// </summary>
     public void Reset()
     {

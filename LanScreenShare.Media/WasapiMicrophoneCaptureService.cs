@@ -11,7 +11,7 @@ using NAudio.Wave;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public class WasapiMicrophoneCaptureService : IAudioCaptureService
+    public sealed class WasapiMicrophoneCaptureService : IAudioCaptureService
     {
         private WasapiCapture? _capture;
         private bool _disposed;
@@ -20,6 +20,68 @@ namespace LanScreenShare.Media
         public bool IsCapturing => _capture != null;
 
         public void StartCapture(int processId) => StartCapture();
+
+        private static WasapiCapture CreateDefaultCaptureInstance()
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            try
+            {
+                var defaultDevice = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia)
+                                 ?? enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
+                if (defaultDevice != null)
+                {
+                    return new WasapiCapture(defaultDevice);
+                }
+            }
+            catch
+            {
+                // Fallback a constructor por defecto
+            }
+
+            return new WasapiCapture();
+        }
+
+        private void AttachCaptureHandlers(WasapiCapture captureInstance, WaveFormat waveFormat, short formatEncoding)
+        {
+            captureInstance.DataAvailable += (_, e) =>
+            {
+                if (e.BytesRecorded <= 0)
+                    return;
+
+                byte[] buffer = new byte[e.BytesRecorded];
+                Buffer.BlockCopy(e.Buffer, 0, buffer, 0, e.BytesRecorded);
+
+                var chunk = new CapturedAudioChunk
+                {
+                    Data = buffer,
+                    SampleRate = waveFormat.SampleRate,
+                    Channels = waveFormat.Channels,
+                    BitsPerSample = waveFormat.BitsPerSample,
+                    AudioFormat = formatEncoding,
+                    Source = AudioSourceType.Microphone,
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                };
+
+                AudioCaptured?.Invoke(this, chunk);
+            };
+
+            captureInstance.RecordingStopped += (_, _) =>
+            {
+                try
+                {
+                    captureInstance.Dispose();
+                }
+                catch
+                {
+                    // Ignorar error al liberar instancia detenida
+                }
+
+                if (ReferenceEquals(_capture, captureInstance))
+                {
+                    _capture = null;
+                }
+            };
+        }
 
         public void StartCapture()
         {
@@ -30,54 +92,11 @@ namespace LanScreenShare.Media
             {
                 Task.Run(() =>
                 {
-                    // Obtener el dispositivo de captura de audio predeterminado (micrófono)
-                    // Preferir Role.Multimedia para evitar que Windows active "Communications Ducking" (atenuación del audio del sistema)
-                    using var enumerator = new MMDeviceEnumerator();
-                    MMDevice? defaultDevice = null;
-                    try
-                    {
-                        defaultDevice = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia)
-                                      ?? enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
-                    }
-                    catch
-                    {
-                        // Fallback a constructor por defecto
-                    }
-
-                    var captureInstance = defaultDevice != null ? new WasapiCapture(defaultDevice) : new WasapiCapture();
+                    var captureInstance = CreateDefaultCaptureInstance();
                     var waveFormat = captureInstance.WaveFormat;
                     short formatEncoding = (short)(waveFormat.BitsPerSample == 32 ? 3 : (short)waveFormat.Encoding);
 
-                    captureInstance.DataAvailable += (sender, e) =>
-                    {
-                        if (e.BytesRecorded <= 0)
-                            return;
-
-                        byte[] buffer = new byte[e.BytesRecorded];
-                        Buffer.BlockCopy(e.Buffer, 0, buffer, 0, e.BytesRecorded);
-
-                        var chunk = new CapturedAudioChunk
-                        {
-                            Data = buffer,
-                            SampleRate = waveFormat.SampleRate,
-                            Channels = waveFormat.Channels,
-                            BitsPerSample = waveFormat.BitsPerSample,
-                            AudioFormat = formatEncoding,
-                            Source = AudioSourceType.Microphone,
-                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                        };
-
-                        AudioCaptured?.Invoke(this, chunk);
-                    };
-
-                    captureInstance.RecordingStopped += (sender, e) =>
-                    {
-                        try { captureInstance.Dispose(); } catch { }
-                        if (ReferenceEquals(_capture, captureInstance))
-                        {
-                            _capture = null;
-                        }
-                    };
+                    AttachCaptureHandlers(captureInstance, waveFormat, formatEncoding);
 
                     _capture = captureInstance;
                     captureInstance.StartRecording();

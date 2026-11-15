@@ -10,7 +10,7 @@ using LanScreenShare.Network.Security;
 
 namespace LanScreenShare.Network.Streaming
 {
-    public class TcpAudioClient : IDisposable
+    public sealed class TcpAudioClient : IDisposable
     {
         private TcpClient? _client;
         private Stream? _stream;

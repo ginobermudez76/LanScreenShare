@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace LanScreenShare.Core.Security
@@ -12,7 +13,7 @@ namespace LanScreenShare.Core.Security
         private readonly ConcurrentDictionary<string, ActiveSession> _sessions = new();
         private readonly ConcurrentDictionary<string, ChannelAttachmentToken> _attachmentTokens = new();
         private readonly ConcurrentDictionary<string, (int Failures, DateTime WindowStart)> _pairingRateLimits = new();
-        private readonly object _controlLock = new();
+        private readonly Lock _controlLock = new();
         private string? _activeControllerSessionId;
 
         public SessionAuthority(IPairedDeviceStore? deviceStore = null)

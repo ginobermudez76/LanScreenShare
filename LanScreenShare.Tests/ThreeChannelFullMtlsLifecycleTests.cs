@@ -15,7 +15,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace LanScreenShare.Tests;
 
-public class MockInputSimulatorService : IInputSimulatorService
+public sealed class MockInputSimulatorService : IInputSimulatorService
 {
     public RemoteInputMessage? LastInput { get; private set; }
     public bool InjectedInputsReleased { get; private set; }
@@ -25,7 +25,10 @@ public class MockInputSimulatorService : IInputSimulatorService
         LastInput = input;
     }
 
-    public void SetTargetSource(CaptureSource source) { }
+    public void SetTargetSource(CaptureSource source)
+    {
+        // No-op en el simulador mock de pruebas
+    }
 
     public void ReleaseInjectedInputs()
     {

@@ -194,12 +194,9 @@ namespace LanScreenShare.Network
 
             try
             {
-                foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+                foreach (var ni in NetworkInterface.GetAllNetworkInterfaces().Where(IsEligibleInterface))
                 {
-                    if (IsEligibleInterface(ni))
-                    {
-                        CollectInterfaceTargets(ni, targets);
-                    }
+                    CollectInterfaceTargets(ni, targets);
                 }
             }
             catch (Exception ex)

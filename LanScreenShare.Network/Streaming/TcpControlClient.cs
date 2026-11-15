@@ -12,7 +12,7 @@ using LanScreenShare.Network.Security;
 
 namespace LanScreenShare.Network.Streaming
 {
-    public class TcpControlClient : IDisposable
+    public sealed class TcpControlClient : IDisposable
     {
         private TcpClient? _client;
         private Stream? _stream;
@@ -61,7 +61,7 @@ namespace LanScreenShare.Network.Streaming
 
             _stream = stream;
             _sequenceNumber = 0;
-            _ = Task.Run(() => ReceiveServerMessagesLoopAsync(stream, sessionToken));
+            _ = Task.Run(() => ReceiveServerMessagesLoopAsync(stream, sessionToken), CancellationToken.None);
             StatusChanged?.Invoke(this, $"Control remoto LSI2 conectado a {options.HostIp}:{options.Port}");
         }
 

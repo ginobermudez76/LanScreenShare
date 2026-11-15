@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Threading;
 using LanScreenShare.Core.Interfaces;
 using LanScreenShare.Core.Models;
 using LanScreenShare.Core.Security;
@@ -8,9 +9,9 @@ using LanScreenShare.Core.Security;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public class WindowsInputSimulatorService : IInputSimulatorService
+    public sealed class WindowsInputSimulatorService : IInputSimulatorService
     {
-        private readonly object _inputLock = new();
+        private readonly Lock _inputLock = new();
         private readonly InjectedInputTracker _tracker = new();
         private bool _disposed;
         private CaptureSource? _currentTargetSource;
