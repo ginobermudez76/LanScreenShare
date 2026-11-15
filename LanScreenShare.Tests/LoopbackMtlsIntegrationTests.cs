@@ -61,8 +61,8 @@ public class LoopbackMtlsIntegrationTests
         string viewerFingerprint = TlsConfigurationHelper.ComputeFingerprint(viewerCert);
 
         var deviceStore = new InMemoryPairedDeviceStore();
-        await deviceStore.AddPairedDeviceAsync(new PairedDevice("d1", "HostDev", hostFingerprint, DateTime.UtcNow, DateTime.UtcNow, false));
-        await deviceStore.AddPairedDeviceAsync(new PairedDevice("d2", "ViewerDev", viewerFingerprint, DateTime.UtcNow, DateTime.UtcNow, false));
+        await deviceStore.AddPairedDeviceAsync(PairedDevice.Create("d1", "HostDev", hostFingerprint));
+        await deviceStore.AddPairedDeviceAsync(PairedDevice.Create("d2", "ViewerDev", viewerFingerprint));
 
         var sessionAuthority = new SessionAuthority(deviceStore);
 

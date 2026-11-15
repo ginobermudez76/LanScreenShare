@@ -228,8 +228,8 @@ public class FileTransferEdgeTests
         using var viewerCert = CreateEcdsaCert("FileViewerReject", TlsConfigurationHelper.ClientAuthOid);
 
         var store = new InMemoryPairedDeviceStore();
-        await store.AddPairedDeviceAsync(new PairedDevice("h1", "Host", TlsConfigurationHelper.ComputeFingerprint(hostCert), DateTime.UtcNow, DateTime.UtcNow, false));
-        await store.AddPairedDeviceAsync(new PairedDevice("v1", "Viewer", TlsConfigurationHelper.ComputeFingerprint(viewerCert), DateTime.UtcNow, DateTime.UtcNow, false));
+        await store.AddPairedDeviceAsync(PairedDevice.Create("h1", "Host", TlsConfigurationHelper.ComputeFingerprint(hostCert)));
+        await store.AddPairedDeviceAsync(PairedDevice.Create("v1", "Viewer", TlsConfigurationHelper.ComputeFingerprint(viewerCert)));
 
         var authority = new SessionAuthority(store);
         var (_, session, _) = await authority.TryCreateSessionAsync(TlsConfigurationHelper.ComputeFingerprint(viewerCert));

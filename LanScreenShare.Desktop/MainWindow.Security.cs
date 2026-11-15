@@ -18,17 +18,65 @@ namespace LanScreenShare.Desktop
             _identityKeyStorage = IdentityKeyStorageFactory.Create();
             _pairedDeviceStore = new JsonPairedDeviceStore();
             _sessionAuthority = new SessionAuthority(_pairedDeviceStore);
+            _trustedDeviceManager = new TrustedDeviceManager(
+                _pairedDeviceStore,
+                _sessionAuthority,
+                _identityKeyStorage,
+                () => _inputSimulatorService);
 
             try
             {
                 _identityCertificate = _identityKeyStorage.GetOrCreateIdentityCertificateAsync().GetAwaiter().GetResult();
-                _sslServerOptions = TlsConfigurationHelper.CreateServerOptions(_identityCertificate, _pairedDeviceStore, OnProvisionalPairingRequested);
-                _sslClientOptions = TlsConfigurationHelper.CreateClientOptions(_identityCertificate, "LanScreenShareHost", _pairedDeviceStore, OnClientProvisionalPairing);
+                RebuildSslAuthenticationOptions(_identityCertificate);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[Security] Error inicializando identidad mTLS: {ex.Message}");
             }
+        }
+
+        private void RebuildSslAuthenticationOptions(X509Certificate2 certificate)
+        {
+            _sslServerOptions = TlsConfigurationHelper.CreateServerOptions(certificate, _pairedDeviceStore, OnProvisionalPairingRequested);
+            _sslClientOptions = TlsConfigurationHelper.CreateClientOptions(certificate, "LanScreenShareHost", _pairedDeviceStore, OnClientProvisionalPairing);
+        }
+
+        private void ApplyRegeneratedIdentity(X509Certificate2 newCertificate)
+        {
+            _identityCertificate = newCertificate;
+            RebuildSslAuthenticationOptions(newCertificate);
+
+            _streamServer?.UpdateSslServerOptions(_sslServerOptions);
+            _audioServer?.UpdateSslServerOptions(_sslServerOptions);
+            _controlServer?.UpdateSslServerOptions(_sslServerOptions);
+            _fileTransferServer?.UpdateSslServerOptions(_sslServerOptions);
+        }
+
+        private async Task RefreshTrustedDevicesCountAsync()
+        {
+            try
+            {
+                int count = await _trustedDeviceManager.GetTrustedDeviceCountAsync();
+                Dispatcher.UIThread.Post(() =>
+                {
+                    var badge = this.FindControl<TextBlock>("TrustedDevicesCountText");
+                    if (badge != null)
+                    {
+                        badge.Text = count.ToString();
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Security] Error actualizando contador de dispositivos: {ex.Message}");
+            }
+        }
+
+        private async Task OpenTrustedDevicesModalAsync()
+        {
+            var dialog = new TrustedDevicesWindow(_trustedDeviceManager, ApplyRegeneratedIdentity);
+            await dialog.ShowDialog(this);
+            await RefreshTrustedDevicesCountAsync();
         }
 
         private void ConfigureAccessModeComboBox(string comboName, string currentSetting, Action<string> onModeChanged)
@@ -64,6 +112,8 @@ namespace LanScreenShare.Desktop
             });
             _controlServer.ClientApprovalCallback = CheckControlClientApproval;
             WireApprovalButtons("ApproveControlButton", "RejectControlButton", () => _controlApprovalTcs);
+            WireButtonClick("ManageTrustedDevicesButton", async (s, e) => await OpenTrustedDevicesModalAsync());
+            _ = RefreshTrustedDevicesCountAsync();
         }
 
         private void WireApprovalButtons(string approveButton, string rejectButton, Func<TaskCompletionSource<bool>?> getTcs)

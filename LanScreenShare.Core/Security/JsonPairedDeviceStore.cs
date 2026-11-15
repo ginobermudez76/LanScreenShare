@@ -35,15 +35,21 @@ public class JsonPairedDeviceStore : IPairedDeviceStore
         }
     }
 
+    private static bool MatchesFingerprint(PairedDevice device, DeviceFingerprint fingerprint) =>
+        string.Equals(device.PublicKeyFingerprint, fingerprint.Value, StringComparison.OrdinalIgnoreCase);
+
     public Task<bool> IsDevicePairedAsync(DeviceFingerprint fingerprint) =>
-        QueryDevicesAsync(devices => devices.Any(d => string.Equals(d.PublicKeyFingerprint, fingerprint.Value, StringComparison.OrdinalIgnoreCase)));
+        QueryDevicesAsync(devices => devices.Any(d => MatchesFingerprint(d, fingerprint)));
 
     public Task<bool> IsDeviceRevokedAsync(DeviceFingerprint fingerprint) =>
         QueryDevicesAsync(devices =>
         {
-            var device = devices.FirstOrDefault(d => string.Equals(d.PublicKeyFingerprint, fingerprint.Value, StringComparison.OrdinalIgnoreCase));
+            var device = devices.FirstOrDefault(d => MatchesFingerprint(d, fingerprint));
             return device != null && device.IsRevoked;
         });
+
+    public Task<PairedDevice?> GetPairedDeviceAsync(DeviceFingerprint fingerprint) =>
+        QueryDevicesAsync(devices => devices.FirstOrDefault(d => MatchesFingerprint(d, fingerprint)));
 
     public Task<IReadOnlyList<PairedDevice>> GetAllPairedDevicesAsync() =>
         QueryDevicesAsync<IReadOnlyList<PairedDevice>>(devices => devices.ToList());
@@ -56,7 +62,21 @@ public class JsonPairedDeviceStore : IPairedDeviceStore
         });
 
     public Task RevokeDeviceAsync(DeviceFingerprint fingerprint) =>
-        MutateDevicesAsync(devices => MarkDeviceRevoked(devices, fingerprint));
+        MutateDevicesAsync(devices => UpdateDeviceEntry(devices, fingerprint, d => d with { IsRevoked = true }));
+
+    public Task UnrevokeDeviceAsync(DeviceFingerprint fingerprint) =>
+        MutateDevicesAsync(devices => UpdateDeviceEntry(devices, fingerprint, d => d with { IsRevoked = false }));
+
+    public Task UpdateLastSeenAsync(DeviceFingerprint fingerprint, DateTime? seenAt = null) =>
+        MutateDevicesAsync(devices => UpdateDeviceEntry(devices, fingerprint, d => d with { LastSeenAt = seenAt ?? DateTime.UtcNow }));
+
+    public Task UpdateDeviceSettingsAsync(DeviceFingerprint fingerprint, string? alias, DevicePermissions permissions)
+    {
+        ArgumentNullException.ThrowIfNull(permissions);
+        string? normalizedAlias = string.IsNullOrWhiteSpace(alias) ? null : alias.Trim();
+        return MutateDevicesAsync(devices =>
+            UpdateDeviceEntry(devices, fingerprint, d => d with { Alias = normalizedAlias, Permissions = permissions }));
+    }
 
     private static void UpsertDevice(List<PairedDevice> devices, PairedDevice device)
     {
@@ -69,20 +89,31 @@ public class JsonPairedDeviceStore : IPairedDeviceStore
         devices[idx] = device;
     }
 
-    private static bool MarkDeviceRevoked(List<PairedDevice> devices, DeviceFingerprint fingerprint)
+    private static bool UpdateDeviceEntry(
+        List<PairedDevice> devices,
+        DeviceFingerprint fingerprint,
+        Func<PairedDevice, PairedDevice> transform)
     {
         int idx = FindDeviceIndex(devices, fingerprint);
         if (idx < 0) return false;
-        devices[idx] = devices[idx] with { IsRevoked = true };
+        devices[idx] = transform(devices[idx]);
         return true;
     }
 
     private static int FindDeviceIndex(List<PairedDevice> devices, DeviceFingerprint fingerprint) =>
-        devices.FindIndex(d => string.Equals(d.PublicKeyFingerprint, fingerprint.Value, StringComparison.OrdinalIgnoreCase));
+        devices.FindIndex(d => MatchesFingerprint(d, fingerprint));
 
     public Task RemoveDeviceAsync(DeviceFingerprint fingerprint) =>
         MutateDevicesAsync(devices =>
-            devices.RemoveAll(d => string.Equals(d.PublicKeyFingerprint, fingerprint.Value, StringComparison.OrdinalIgnoreCase)) > 0);
+            devices.RemoveAll(d => MatchesFingerprint(d, fingerprint)) > 0);
+
+    public Task ClearAllDevicesAsync() =>
+        MutateDevicesAsync(devices =>
+        {
+            bool hadAny = devices.Count > 0;
+            devices.Clear();
+            return hadAny;
+        });
 
     private async Task<T> QueryDevicesAsync<T>(Func<List<PairedDevice>, T> query)
     {

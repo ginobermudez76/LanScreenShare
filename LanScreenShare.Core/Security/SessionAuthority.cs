@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -53,23 +54,39 @@ namespace LanScreenShare.Core.Security
             if (peerFingerprint.IsEmpty)
                 return (false, null, "Peer fingerprint cannot be null or empty.");
 
+            PairedDevice? pairedDevice = null;
             if (_deviceStore != null)
             {
-                bool isPaired = await _deviceStore.IsDevicePairedAsync(peerFingerprint);
-                if (!isPaired)
+                pairedDevice = await _deviceStore.GetPairedDeviceAsync(peerFingerprint);
+                if (pairedDevice == null)
                 {
                     return (false, null, "El dispositivo no está emparejado.");
                 }
 
-                bool isRevoked = await _deviceStore.IsDeviceRevokedAsync(peerFingerprint);
-                if (isRevoked)
+                if (pairedDevice.IsRevoked)
                 {
                     return (false, null, "El dispositivo ha sido revocado.");
                 }
             }
 
-            var session = CreateSession(peerFingerprint, peerName.IsEmpty ? new DeviceName("RemotePeer") : peerName, ttl);
+            var effectiveName = peerName.IsEmpty
+                ? new DeviceName(pairedDevice?.DisplayName ?? "RemotePeer")
+                : peerName;
+
+            var session = CreateSession(peerFingerprint, effectiveName, ttl);
+            if (pairedDevice != null)
+            {
+                ApplyPermissionsToSession(session, pairedDevice.EffectivePermissions);
+            }
+
             return (true, session, null);
+        }
+
+        private static void ApplyPermissionsToSession(ActiveSession session, DevicePermissions permissions)
+        {
+            session.ControlPermissionAllowed = permissions.AllowRemoteControl;
+            session.ClipboardAuthorized = permissions.AllowClipboardSync;
+            session.FileTransferAuthorized = permissions.AllowFileTransfer;
         }
 
         public ActiveSession? GetSession(SessionId sessionId)
@@ -85,6 +102,14 @@ namespace LanScreenShare.Core.Security
                 return session;
             }
             return null;
+        }
+
+        public IReadOnlyList<ActiveSession> GetActiveSessions()
+        {
+            PruneExpired();
+            return _sessions.Values
+                .Where(s => s.State == SessionState.Active && !s.IsExpired)
+                .ToList();
         }
 
         public ChannelAttachmentToken IssueChannelToken(SessionId sessionId, ChannelType channel, TimeSpan? validFor = null)
@@ -190,6 +215,11 @@ namespace LanScreenShare.Core.Security
                     return RemoteControlState.Disabled;
                 }
 
+                if (!session.ControlPermissionAllowed)
+                {
+                    return RemoteControlState.Revoked;
+                }
+
                 _activeControllerSessionId = sessionId.Value;
                 session.ControlState = RemoteControlState.Granted;
                 return RemoteControlState.Granted;
@@ -285,6 +315,49 @@ namespace LanScreenShare.Core.Security
             }
 
             SessionTerminated?.Invoke(this, sessionId.Value);
+        }
+
+        public void TerminateSessionsForDevice(DeviceFingerprint fingerprint)
+        {
+            if (fingerprint.IsEmpty) return;
+
+            var matchingIds = _sessions.Values
+                .Where(s => string.Equals(s.PeerFingerprint.Value, fingerprint.Value, StringComparison.OrdinalIgnoreCase))
+                .Select(s => s.SessionId)
+                .ToList();
+
+            foreach (var sessionId in matchingIds)
+            {
+                TerminateSession(sessionId);
+            }
+        }
+
+        public void TerminateAllSessions()
+        {
+            var allIds = _sessions.Keys.ToList();
+            foreach (string key in allIds)
+            {
+                TerminateSession(new SessionId(key));
+            }
+        }
+
+        public void UpdateDevicePermissions(DeviceFingerprint fingerprint, DevicePermissions permissions)
+        {
+            ArgumentNullException.ThrowIfNull(permissions);
+            if (fingerprint.IsEmpty) return;
+
+            var matching = _sessions.Values
+                .Where(s => string.Equals(s.PeerFingerprint.Value, fingerprint.Value, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var session in matching)
+            {
+                ApplyPermissionsToSession(session, permissions);
+                if (!permissions.AllowRemoteControl)
+                {
+                    RevokeControl(session.SessionId);
+                }
+            }
         }
 
         public void PruneExpired()

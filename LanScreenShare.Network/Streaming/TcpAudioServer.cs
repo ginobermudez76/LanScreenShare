@@ -32,7 +32,7 @@ namespace LanScreenShare.Network.Streaming
         }
 
         private readonly ISessionAuthority? _sessionAuthority;
-        private readonly SslServerAuthenticationOptions? _sslServerOptions;
+        private SslServerAuthenticationOptions? _sslServerOptions;
 
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
@@ -59,32 +59,19 @@ namespace LanScreenShare.Network.Streaming
             }
         }
 
-        private void OnSessionTerminated(object? sender, string sessionId)
-        {
-            foreach (var kvp in _clients)
-            {
-                if (kvp.Value.SessionId == sessionId)
-                {
-                    RemoveClient(kvp.Key);
-                }
-            }
-        }
+        public void UpdateSslServerOptions(SslServerAuthenticationOptions? sslServerOptions) =>
+            _sslServerOptions = sslServerOptions;
+
+        private void OnSessionTerminated(object? sender, string sessionId) =>
+            StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, sessionId, RemoveClient);
 
         public Task StartAsync(int port = 5002, CancellationToken cancellationToken = default)
         {
             if (IsRunning)
                 return Task.CompletedTask;
 
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var token = _cts.Token;
-
-            _listener = new TcpListener(IPAddress.Any, port);
-            _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _listener.Start();
-
+            (_cts, _listener) = StreamConnectionHelper.StartAcceptLoop(port, AcceptClientsLoopAsync, cancellationToken);
             Console.WriteLine($"[AudioServer] Escuchando en TCP port {port}...");
-
-            _ = Task.Run(() => AcceptClientsLoopAsync(_listener, token), token);
             return Task.CompletedTask;
         }
 

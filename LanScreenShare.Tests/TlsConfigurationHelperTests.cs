@@ -47,7 +47,7 @@ public class TlsConfigurationHelperTests
         string fingerprint = TlsConfigurationHelper.ComputeFingerprint(cert);
 
         var store = new InMemoryPairedDeviceStore();
-        await store.AddPairedDeviceAsync(new PairedDevice("d1", "Test", fingerprint, DateTime.UtcNow, DateTime.UtcNow, false));
+        await store.AddPairedDeviceAsync(PairedDevice.Create("d1", "Test", fingerprint));
 
         bool isValid = TlsConfigurationHelper.ValidateCertificate(
             cert,
@@ -83,7 +83,7 @@ public class TlsConfigurationHelperTests
         string fingerprint = TlsConfigurationHelper.ComputeFingerprint(cert);
 
         var store = new InMemoryPairedDeviceStore();
-        await store.AddPairedDeviceAsync(new PairedDevice("d1", "Test", fingerprint, DateTime.UtcNow, DateTime.UtcNow, false));
+        await store.AddPairedDeviceAsync(PairedDevice.Create("d1", "Test", fingerprint));
 
         bool isValid = TlsConfigurationHelper.ValidateCertificate(
             cert,

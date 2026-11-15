@@ -243,6 +243,7 @@ namespace LanScreenShare.Desktop
                 }
                 UpdateStatus($"Transmitiendo pantalla · {count} espectador(es) conectado(s)", StatusActiveGreenHex);
             });
+            _ = RefreshTrustedDevicesCountAsync();
         }
 
         private void StreamServer_ClientDisconnected(object? sender, string clientId)

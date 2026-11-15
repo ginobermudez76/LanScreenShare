@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +11,40 @@ namespace LanScreenShare.Network.Streaming
 {
     internal static class StreamConnectionHelper
     {
+        internal static TcpListener CreateStartedTcpListener(int port)
+        {
+            var listener = new TcpListener(IPAddress.Any, port);
+            listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            listener.Start();
+            return listener;
+        }
+
+        internal static (CancellationTokenSource Cts, TcpListener Listener) StartAcceptLoop(
+            int port,
+            Func<TcpListener, CancellationToken, Task> acceptLoop,
+            CancellationToken cancellationToken = default)
+        {
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var listener = CreateStartedTcpListener(port);
+            var token = cts.Token;
+            _ = Task.Run(() => acceptLoop(listener, token), token);
+            return (cts, listener);
+        }
+
+        internal static void TerminateMatchingSessions<T>(
+            ConcurrentDictionary<string, T> clients,
+            Func<T, string?> getSessionId,
+            string terminatedSessionId,
+            Action<string> removeClient)
+        {
+            var matches = clients.Where(kvp =>
+                string.Equals(getSessionId(kvp.Value), terminatedSessionId, StringComparison.Ordinal));
+
+            foreach (var kvp in matches)
+            {
+                removeClient(kvp.Key);
+            }
+        }
         internal static async Task ReadExactBytesAsync(
             Stream stream,
             Memory<byte> buffer,

@@ -36,7 +36,7 @@ namespace LanScreenShare.Network.Streaming
         }
 
         private readonly ISessionAuthority? _sessionAuthority;
-        private readonly SslServerAuthenticationOptions? _sslServerOptions;
+        private SslServerAuthenticationOptions? _sslServerOptions;
         private readonly IPairedDeviceStore? _pairedDeviceStore;
 
         private TcpListener? _listener;
@@ -53,6 +53,7 @@ namespace LanScreenShare.Network.Streaming
 
         public Func<string, string, string, Task<bool>>? PairingApprovalCallback { get; set; }
         public Func<string, Task<bool>>? ClientApprovalCallback { get; set; }
+        public Func<string, Task<bool>>? ExplicitApprovalCallback { get; set; }
 
         public bool IsRunning => _listener != null && _cts != null && !_cts.IsCancellationRequested;
         public int ConnectedClientsCount => _clients.Count;
@@ -68,23 +69,26 @@ namespace LanScreenShare.Network.Streaming
             _sessionAuthority = sessionAuthority;
             _sslServerOptions = sslServerOptions;
             _pairedDeviceStore = pairedDeviceStore;
+
+            if (_sessionAuthority != null)
+            {
+                _sessionAuthority.SessionTerminated += OnSessionTerminated;
+            }
         }
+
+        public void UpdateSslServerOptions(SslServerAuthenticationOptions? sslServerOptions) =>
+            _sslServerOptions = sslServerOptions;
+
+        private void OnSessionTerminated(object? sender, string sessionId) =>
+            StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, sessionId, RemoveClient);
 
         public Task StartAsync(int port = 5001, CancellationToken cancellationToken = default)
         {
             if (IsRunning)
                 return Task.CompletedTask;
 
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var token = _cts.Token;
-
-            _listener = new TcpListener(IPAddress.Any, port);
-            _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _listener.Start();
-
+            (_cts, _listener) = StreamConnectionHelper.StartAcceptLoop(port, AcceptLoopAsync, cancellationToken);
             Console.WriteLine($"[StreamServer] Escuchando en TCP port {port}...");
-
-            _ = Task.Run(() => AcceptLoopAsync(_listener, token), token);
             return Task.CompletedTask;
         }
 
@@ -119,7 +123,7 @@ namespace LanScreenShare.Network.Streaming
             client.LingerState = new LingerOption(true, 2);
         }
 
-        private readonly record struct HandshakeResult(Stream Stream, string? SessionId);
+        private readonly record struct HandshakeResult(Stream Stream, string? SessionId, string? PeerFingerprint, bool RequireExplicitApproval);
         private readonly record struct PeerEndpointInfo(string ClientId, string Fingerprint, string DeviceName);
 
         private async Task HandleIncomingClientAsync(TcpClient client, CancellationToken token)
@@ -130,6 +134,8 @@ namespace LanScreenShare.Network.Streaming
             {
                 Stream stream = client.GetStream();
                 string? assignedSessionId = null;
+                string? peerFingerprint = null;
+                bool requireExplicitApproval = false;
 
                 if (_sslServerOptions != null)
                 {
@@ -139,10 +145,14 @@ namespace LanScreenShare.Network.Streaming
 
                     stream = handshake.Value.Stream;
                     assignedSessionId = handshake.Value.SessionId;
+                    peerFingerprint = handshake.Value.PeerFingerprint;
+                    requireExplicitApproval = handshake.Value.RequireExplicitApproval;
                 }
 
-                if (!await IsClientApprovedAsync(client, clientId))
+                if (!await IsClientApprovedAsync(client, clientId, assignedSessionId, requireExplicitApproval))
                     return;
+
+                await UpdateDeviceLastSeenSafeAsync(peerFingerprint);
 
                 var ctx = CreateClientContext(client, stream, assignedSessionId);
                 _clients[clientId] = ctx;
@@ -175,15 +185,23 @@ namespace LanScreenShare.Network.Streaming
             };
         }
 
-        private async Task<bool> IsClientApprovedAsync(TcpClient client, string clientId)
+        private async Task<bool> IsClientApprovedAsync(
+            TcpClient client,
+            string clientId,
+            string? assignedSessionId,
+            bool requireExplicitApproval)
         {
-            if (ClientApprovalCallback == null)
+            var callback = requireExplicitApproval
+                ? ExplicitApprovalCallback ?? ClientApprovalCallback
+                : ClientApprovalCallback;
+
+            if (callback == null)
                 return true;
 
             bool approved;
             try
             {
-                approved = await ClientApprovalCallback(clientId);
+                approved = await callback(clientId);
             }
             catch (Exception ex)
             {
@@ -194,11 +212,39 @@ namespace LanScreenShare.Network.Streaming
             if (!approved)
             {
                 Console.WriteLine($"[StreamServer] Conexión rechazada por el anfitrión para: {clientId}");
+                if (assignedSessionId != null)
+                {
+                    _sessionAuthority?.CloseSession(assignedSessionId);
+                }
                 try { client.Close(); } catch { /* Ignore client close error */ }
                 return false;
             }
 
             return true;
+        }
+
+        private async Task UpdateDeviceLastSeenSafeAsync(string? peerFingerprint)
+        {
+            if (_pairedDeviceStore == null || string.IsNullOrWhiteSpace(peerFingerprint))
+                return;
+
+            try
+            {
+                await _pairedDeviceStore.UpdateLastSeenAsync(peerFingerprint);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[StreamServer] Advertencia actualizando LastSeenAt: {ex.Message}");
+            }
+        }
+
+        private async Task<bool> RequiresExplicitApprovalAsync(string peerFingerprint)
+        {
+            if (_pairedDeviceStore == null || string.IsNullOrWhiteSpace(peerFingerprint))
+                return false;
+
+            var pairedDevice = await _pairedDeviceStore.GetPairedDeviceAsync(peerFingerprint);
+            return pairedDevice != null && pairedDevice.EffectivePermissions.AccessMode == DeviceAccessMode.AskEveryTime;
         }
 
         private async Task<HandshakeResult?> PerformTlsHandshakeAsync(
@@ -225,6 +271,8 @@ namespace LanScreenShare.Network.Streaming
             string peerDeviceName = peerCert.GetNameInfo(X509NameType.SimpleName, false) ?? "RemotePeer";
             var peer = new PeerEndpointInfo(clientId, peerFingerprint, peerDeviceName);
 
+            bool requireExplicitApproval = await RequiresExplicitApprovalAsync(peerFingerprint);
+
             if (!await EnsureDevicePairedAsync(sslStream, peerCert, peer, linkedCts.Token))
             {
                 client.Close();
@@ -242,7 +290,7 @@ namespace LanScreenShare.Network.Streaming
                 }
             }
 
-            return new HandshakeResult(sslStream, assignedSessionId);
+            return new HandshakeResult(sslStream, assignedSessionId, peerFingerprint, requireExplicitApproval);
         }
 
         private async Task<bool> EnsureDevicePairedAsync(
@@ -284,13 +332,14 @@ namespace LanScreenShare.Network.Streaming
                 return false;
             }
 
-            await _pairedDeviceStore.AddPairedDeviceAsync(new PairedDevice(
-                Guid.NewGuid().ToString("D"),
-                peer.DeviceName,
-                peer.Fingerprint,
-                DateTime.UtcNow,
-                DateTime.UtcNow,
-                false));
+            await _pairedDeviceStore.AddPairedDeviceAsync(new PairedDevice
+            {
+                DeviceId = Guid.NewGuid().ToString("D"),
+                DeviceName = peer.DeviceName,
+                PublicKeyFingerprint = peer.Fingerprint,
+                PairedAt = DateTime.UtcNow,
+                LastSeenAt = DateTime.UtcNow
+            });
 
             return true;
         }
@@ -488,7 +537,7 @@ namespace LanScreenShare.Network.Streaming
                 try { ctx.Stream.Dispose(); } catch { /* Ignorar error al liberar stream */ }
                 try { ctx.Client.Close(); } catch { /* Ignorar error al cerrar socket */ }
 
-                if (ctx.SessionId != null && _sessionAuthority != null)
+                if (ctx.SessionId != null && _sessionAuthority?.GetSession(ctx.SessionId) != null)
                 {
                     _sessionAuthority.CloseSession(ctx.SessionId);
                 }
@@ -554,6 +603,11 @@ namespace LanScreenShare.Network.Streaming
         {
             if (_disposed)
                 return;
+
+            if (_sessionAuthority != null)
+            {
+                _sessionAuthority.SessionTerminated -= OnSessionTerminated;
+            }
 
             Stop();
             _disposed = true;

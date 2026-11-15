@@ -1,0 +1,185 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="760" d:DesignHeight="640"
+        x:Class="LanScreenShare.Desktop.TrustedDevicesWindow"
+        Title="Dispositivos de confianza y accesos"
+        Width="760" Height="640"
+        MinWidth="680" MinHeight="520"
+        CanResize="True"
+        WindowDecorations="None"
+        TransparencyLevelHint="Transparent"
+        Background="Transparent"
+        WindowStartupLocation="CenterOwner">
+
+    <Border Background="#121822"
+            BorderBrush="#222C3C"
+            BorderThickness="1"
+            CornerRadius="16"
+            ClipToBounds="True">
+        <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+            <!-- ROW 0: Header -->
+            <Grid x:Name="HeaderDragGrid"
+                  Grid.Row="0"
+                  ColumnDefinitions="Auto,*,Auto,Auto"
+                  Margin="24,20,24,12"
+                  Background="Transparent">
+                <Border Grid.Column="0"
+                        Width="40" Height="40"
+                        CornerRadius="10"
+                        Background="#1C2B45"
+                        BorderBrush="#293F63"
+                        BorderThickness="1"
+                        VerticalAlignment="Center"
+                        Margin="0,0,14,0">
+                    <PathIcon Data="{StaticResource IconShield}"
+                              Width="18" Height="18"
+                              Foreground="#60A5FA"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Center"/>
+                </Border>
+
+                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                    <TextBlock Text="Dispositivos de confianza y accesos"
+                               FontSize="19"
+                               FontWeight="Bold"
+                               Foreground="#F8FAFC"/>
+                    <TextBlock Text="Administra equipos emparejados, permisos granulares y revocación mTLS en caliente."
+                               FontSize="12.5"
+                               Foreground="#7C8B9E"/>
+                </StackPanel>
+
+                <Button Grid.Column="2"
+                        x:Name="RefreshDevicesButton"
+                        Background="#1D2532"
+                        BorderBrush="#2A3446"
+                        BorderThickness="1"
+                        Width="34" Height="34"
+                        CornerRadius="8"
+                        Margin="0,0,8,0"
+                        Cursor="Hand"
+                        ToolTip.Tip="Actualizar lista y estado de sesiones activas">
+                    <PathIcon Data="{StaticResource IconRefresh}"
+                              Width="14" Height="14"
+                              Foreground="#CBD5E1"/>
+                </Button>
+
+                <Button Grid.Column="3"
+                        x:Name="CloseWindowButton"
+                        Background="#1D2532"
+                        BorderBrush="#2A3446"
+                        BorderThickness="1"
+                        Width="34" Height="34"
+                        CornerRadius="8"
+                        Cursor="Hand"
+                        ToolTip.Tip="Cerrar (Esc)">
+                    <PathIcon Data="{StaticResource IconClose}"
+                              Width="13" Height="13"
+                              Foreground="#CBD5E1"/>
+                </Button>
+            </Grid>
+
+            <!-- ROW 1: Feedback / Confirmation Banner -->
+            <Border Grid.Row="1"
+                    x:Name="FeedbackBanner"
+                    IsVisible="False"
+                    Margin="24,0,24,10"
+                    Padding="12,9"
+                    CornerRadius="10"
+                    Background="#17253D"
+                    BorderBrush="#2C4975"
+                    BorderThickness="1">
+                <TextBlock x:Name="FeedbackBannerText"
+                           FontSize="12.5"
+                           Foreground="#E2E8F0"
+                           TextWrapping="Wrap"/>
+            </Border>
+
+            <!-- ROW 2: Device Cards List -->
+            <Panel Grid.Row="2" Margin="24,0,24,12">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="DevicesStackPanel" Spacing="12" Margin="0,2,4,6"/>
+                </ScrollViewer>
+
+                <Border x:Name="EmptyStatePanel"
+                        IsVisible="False"
+                        Background="#171E2B"
+                        BorderBrush="#253042"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="28"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center">
+                    <StackPanel Spacing="8" HorizontalAlignment="Center" MaxWidth="420">
+                        <PathIcon Data="{StaticResource IconDevices}"
+                                  Width="28" Height="28"
+                                  Foreground="#64748B"
+                                  HorizontalAlignment="Center"/>
+                        <TextBlock Text="No hay dispositivos emparejados registrados"
+                                   FontSize="15"
+                                   FontWeight="SemiBold"
+                                   Foreground="#F8FAFC"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock Text="Cuando autorices una conexión mediante código SAS mTLS, aparecerá aquí con su historial y permisos."
+                                   FontSize="12.5"
+                                   Foreground="#8B9BB0"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+            </Panel>
+
+            <!-- ROW 3: Global Security Actions & Close Footer -->
+            <Border Grid.Row="3"
+                    Background="#0E131B"
+                    BorderBrush="#1E2736"
+                    BorderThickness="0,1,0,0"
+                    Padding="24,14">
+                <Grid ColumnDefinitions="Auto,Auto,*,Auto" VerticalAlignment="Center">
+                    <Button Grid.Column="0"
+                            x:Name="RevokeAllButton"
+                            Background="#2A161B"
+                            BorderBrush="#7F1D1D"
+                            BorderThickness="1"
+                            Foreground="#FCA5A5"
+                            Padding="12,8"
+                            CornerRadius="8"
+                            FontSize="12"
+                            FontWeight="SemiBold"
+                            Margin="0,0,10,0"
+                            Cursor="Hand"
+                            Content="Revocar todos los dispositivos"/>
+
+                    <Button Grid.Column="1"
+                            x:Name="RegenerateIdentityButton"
+                            Background="#261E14"
+                            BorderBrush="#78350F"
+                            BorderThickness="1"
+                            Foreground="#FCD34D"
+                            Padding="12,8"
+                            CornerRadius="8"
+                            FontSize="12"
+                            FontWeight="SemiBold"
+                            Cursor="Hand"
+                            Content="Regenerar mi identidad mTLS"/>
+
+                    <Button Grid.Column="3"
+                            x:Name="FooterCloseButton"
+                            Background="#243044"
+                            BorderBrush="#334155"
+                            BorderThickness="1"
+                            Foreground="#F8FAFC"
+                            Padding="18,8"
+                            CornerRadius="8"
+                            FontSize="12.5"
+                            FontWeight="SemiBold"
+                            Cursor="Hand"
+                            Content="Cerrar"/>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

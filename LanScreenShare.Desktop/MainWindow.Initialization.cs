@@ -93,6 +93,7 @@ namespace LanScreenShare.Desktop
         {
             _streamServer = new TcpStreamServer(_sessionAuthority, _sslServerOptions, _pairedDeviceStore);
             _streamServer.PairingApprovalCallback = (_, deviceName, sasFormatted) => RequestPairingApprovalAsync(deviceName, sasFormatted);
+            _streamServer.ExplicitApprovalCallback = RequestStreamApprovalAsync;
             _streamServer.ClientConnected += StreamServer_ClientConnected;
             _streamServer.ClientDisconnected += StreamServer_ClientDisconnected;
             _streamServer.FrameDropped += (s, e) =>

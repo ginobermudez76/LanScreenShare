@@ -8,10 +8,14 @@ namespace LanScreenShare.Core.Security
     {
         Task<bool> IsDevicePairedAsync(DeviceFingerprint fingerprint);
         Task<bool> IsDeviceRevokedAsync(DeviceFingerprint fingerprint);
+        Task<PairedDevice?> GetPairedDeviceAsync(DeviceFingerprint fingerprint);
         Task<IReadOnlyList<PairedDevice>> GetAllPairedDevicesAsync();
         Task AddPairedDeviceAsync(PairedDevice device);
         Task RevokeDeviceAsync(DeviceFingerprint fingerprint);
+        Task UnrevokeDeviceAsync(DeviceFingerprint fingerprint);
+        Task UpdateLastSeenAsync(DeviceFingerprint fingerprint, DateTime? seenAt = null);
+        Task UpdateDeviceSettingsAsync(DeviceFingerprint fingerprint, string? alias, DevicePermissions permissions);
         Task RemoveDeviceAsync(DeviceFingerprint fingerprint);
+        Task ClearAllDevicesAsync();
     }
 }
-

@@ -21,7 +21,7 @@ namespace LanScreenShare.Network.Streaming
     {
         private readonly ISessionAuthority? _sessionAuthority;
         private readonly IInputSimulatorService? _inputSimulator;
-        private readonly SslServerAuthenticationOptions? _sslServerOptions;
+        private SslServerAuthenticationOptions? _sslServerOptions;
 
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
@@ -55,16 +55,11 @@ namespace LanScreenShare.Network.Streaming
             }
         }
 
-        private void OnSessionTerminated(object? sender, string sessionId)
-        {
-            foreach (var kvp in _clients)
-            {
-                if (kvp.Value.SessionId == sessionId)
-                {
-                    RemoveClient(kvp.Key);
-                }
-            }
-        }
+        public void UpdateSslServerOptions(SslServerAuthenticationOptions? sslServerOptions) =>
+            _sslServerOptions = sslServerOptions;
+
+        private void OnSessionTerminated(object? sender, string sessionId) =>
+            StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, sessionId, RemoveClient);
 
         private sealed record ControlClientContext(string ClientId, TcpClient Client, Stream Stream, string? SessionId);
 
@@ -76,9 +71,7 @@ namespace LanScreenShare.Network.Streaming
             _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var token = _cts.Token;
 
-            _listener = new TcpListener(IPAddress.Any, port);
-            _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _listener.Start();
+            _listener = StreamConnectionHelper.CreateStartedTcpListener(port);
 
             Console.WriteLine($"[ControlServer] Servidor de control remoto (LSI2) escuchando en puerto {port}...");
 
@@ -273,6 +266,18 @@ namespace LanScreenShare.Network.Streaming
             return _sessionAuthority.ActiveControllerSessionId == sessionId;
         }
 
+        private bool IsClipboardAuthorized(string? sessionId)
+        {
+            if (!IsAuthorizedSession(sessionId))
+                return false;
+
+            if (_sessionAuthority == null || sessionId == null)
+                return true;
+
+            var session = _sessionAuthority.GetSession(new SessionId(sessionId));
+            return session == null || session.ClipboardAuthorized;
+        }
+
         private async Task ProcessClientInputAsync(ControlClientContext ctx, CancellationToken token)
         {
             byte[] packetBuffer = new byte[Lsi2ControlPacket.PacketSize];
@@ -358,7 +363,7 @@ namespace LanScreenShare.Network.Streaming
             if (text == null)
                 return false;
 
-            if (!IsAuthorizedSession(ctx.SessionId))
+            if (!IsClipboardAuthorized(ctx.SessionId))
                 return true;
 
             input.ClipboardText = text;
@@ -495,7 +500,11 @@ namespace LanScreenShare.Network.Streaming
             byte[] packet,
             InputEventType payloadType)
         {
-            if (!IsAuthorizedSession(ctx.SessionId))
+            bool authorized = payloadType == InputEventType.ClipboardText
+                ? IsClipboardAuthorized(ctx.SessionId)
+                : IsAuthorizedSession(ctx.SessionId);
+
+            if (!authorized)
             {
                 return;
             }

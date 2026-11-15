@@ -131,7 +131,7 @@ public class NetworkProtocolEdgeTests
 
         string fp = TlsConfigurationHelper.ComputeFingerprint(validCert);
         var store = new InMemoryPairedDeviceStore();
-        await store.AddPairedDeviceAsync(new PairedDevice("id1", "Dev", fp, DateTime.UtcNow, DateTime.UtcNow, true));
+        await store.AddPairedDeviceAsync(PairedDevice.Create("id1", "Dev", fp, isRevoked: true));
 
         var serverOpts = TlsConfigurationHelper.CreateServerOptions(validCert, store, (_, _) => false);
         Assert.IsFalse(serverOpts.RemoteCertificateValidationCallback!(this, null, null, SslPolicyErrors.None));
