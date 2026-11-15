@@ -199,19 +199,34 @@ namespace LanScreenShare.Media
             return width >= 120 && height >= 120;
         }
 
+        private static bool TryGetWindowProcessId(IntPtr hWnd, out uint processId)
+        {
+            uint threadId = GetWindowThreadProcessId(hWnd, out processId);
+            return threadId != 0 && processId != 0;
+        }
+
+        private static bool IsCapturableWindow(IntPtr hWnd, out string title, out NativeRect rect)
+        {
+            title = string.Empty;
+            rect = default;
+            if (!IsWindowVisible(hWnd) || IsWindowCloaked(hWnd)) return false;
+            if (!TryGetWindowStrings(hWnd, out title, out string className)) return false;
+            if (IsSystemWindowClass(className, title)) return false;
+            return TryGetWindowDimensions(hWnd, out rect, out _, out _);
+        }
+
         private static bool TryCreateWindowSource(IntPtr hWnd, uint currentProcessId, out CaptureSource? source)
         {
             source = null;
-            if (!IsWindowVisible(hWnd) || IsWindowCloaked(hWnd)) return false;
-            if (!TryGetWindowStrings(hWnd, out string title, out string className)) return false;
-            if (IsSystemWindowClass(className, title)) return false;
-            if (!TryGetWindowDimensions(hWnd, out NativeRect rect, out int w, out int h)) return false;
-            if (GetWindowThreadProcessId(hWnd, out uint pid) == 0) return false;
+            if (!IsCapturableWindow(hWnd, out string title, out NativeRect rect)) return false;
+            if (!TryGetWindowProcessId(hWnd, out uint pid)) return false;
 
             pid = ResolveEffectiveWindowProcess(hWnd, pid, out string procName);
-
             if (pid == currentProcessId || ExcludedProcessNames.Contains(procName))
                 return false;
+
+            int w = rect.Right - rect.Left;
+            int h = rect.Bottom - rect.Top;
 
             source = new CaptureSource
             {
@@ -261,13 +276,9 @@ namespace LanScreenShare.Media
         public static int ResolveEffectiveProcessId(IntPtr hWnd, int fallbackPid = 0)
         {
             uint pid = (uint)Math.Max(0, fallbackPid);
-            if (hWnd != IntPtr.Zero)
+            if (hWnd != IntPtr.Zero && TryGetWindowProcessId(hWnd, out uint winPid))
             {
-                uint threadId = GetWindowThreadProcessId(hWnd, out uint winPid);
-                if (threadId != 0 && winPid > 0)
-                {
-                    pid = winPid;
-                }
+                pid = winPid;
             }
 
             if (pid == 0) return 0;
@@ -290,8 +301,7 @@ namespace LanScreenShare.Media
             uint realChildPid = 0;
             EnumWindowsProc callback = (childHwnd, _) =>
             {
-                uint threadId = GetWindowThreadProcessId(childHwnd, out uint cPid);
-                if (threadId == 0 || cPid == 0 || cPid == initialPid)
+                if (!TryGetWindowProcessId(childHwnd, out uint cPid) || cPid == initialPid)
                     return true;
 
                 realChildPid = cPid;
