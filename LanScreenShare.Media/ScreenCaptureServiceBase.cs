@@ -244,18 +244,27 @@ namespace LanScreenShare.Media
             return null;
         }
 
-        public void Dispose()
+        protected virtual void Dispose(bool disposing)
         {
             if (_disposed)
                 return;
 
-            StopCapture();
-            if (OperatingSystem.IsWindows())
+            if (disposing)
             {
-                _h264Encoder?.Dispose();
+                StopCapture();
+                if (OperatingSystem.IsWindows())
+                {
+                    _h264Encoder?.Dispose();
+                }
+                _h264Encoder = null;
             }
-            _h264Encoder = null;
+
             _disposed = true;
+        }
+
+        public void Dispose()
+        {
+            Dispose(disposing: true);
             GC.SuppressFinalize(this);
         }
     }

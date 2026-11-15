@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
@@ -95,17 +96,21 @@ namespace LanScreenShare.Network.Streaming
             }
         }
 
-        private Task DispatchPacketAsync(FileTransferPacketType type, uint payloadLength, CancellationToken ct) =>
-            type switch
+        private static readonly IReadOnlyDictionary<FileTransferPacketType, Func<FileTransferPeerSession, uint, CancellationToken, Task>> PacketHandlers =
+            new Dictionary<FileTransferPacketType, Func<FileTransferPeerSession, uint, CancellationToken, Task>>
             {
-                FileTransferPacketType.Chunk => HandleChunkPacketAsync(payloadLength, ct),
-                FileTransferPacketType.Offer => HandleOfferPacketAsync(payloadLength, ct),
-                FileTransferPacketType.Accept => HandleSignalPacketAsync(payloadLength, accepted: true, ct),
-                FileTransferPacketType.Reject => HandleSignalPacketAsync(payloadLength, accepted: false, ct),
-                FileTransferPacketType.Complete => HandleCompletePacketAsync(payloadLength, ct),
-                FileTransferPacketType.Cancel => HandleCancelPacketAsync(payloadLength, ct),
-                _ => Task.CompletedTask
+                [FileTransferPacketType.Chunk] = (session, length, ct) => session.HandleChunkPacketAsync(length, ct),
+                [FileTransferPacketType.Offer] = (session, length, ct) => session.HandleOfferPacketAsync(length, ct),
+                [FileTransferPacketType.Accept] = (session, length, ct) => session.HandleSignalPacketAsync(length, accepted: true, ct),
+                [FileTransferPacketType.Reject] = (session, length, ct) => session.HandleSignalPacketAsync(length, accepted: false, ct),
+                [FileTransferPacketType.Complete] = (session, length, ct) => session.HandleCompletePacketAsync(length, ct),
+                [FileTransferPacketType.Cancel] = (session, length, ct) => session.HandleCancelPacketAsync(length, ct)
             };
+
+        private Task DispatchPacketAsync(FileTransferPacketType type, uint payloadLength, CancellationToken ct) =>
+            PacketHandlers.TryGetValue(type, out var handler)
+                ? handler(this, payloadLength, ct)
+                : Task.CompletedTask;
 
         private static async Task<T?> ReadJsonDtoAsync<T>(Stream stream, uint payloadLength, CancellationToken ct)
         {
