@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using LanScreenShare.Network.Streaming;
 
 namespace LanScreenShare.Network.Security;
 
@@ -58,18 +59,11 @@ public sealed class SessionHandshakeMessage
         return result ?? throw new InvalidDataException("No se pudo deserializar el mensaje de señalización JSON.");
     }
 
-    private static async Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken ct)
-    {
-        int total = 0;
-        while (total < buffer.Length)
-        {
-            int read = await stream.ReadAsync(buffer.Slice(total), ct);
-            if (read == 0)
-            {
-                throw new EndOfStreamException("Flujo cerrado antes de completar la lectura del mensaje de señalización.");
-            }
-            total += read;
-        }
-    }
+    private static Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken ct) =>
+        StreamConnectionHelper.ReadExactBytesAsync(
+            stream,
+            buffer,
+            ct,
+            "Flujo cerrado antes de completar la lectura del mensaje de señalización.");
 }
 

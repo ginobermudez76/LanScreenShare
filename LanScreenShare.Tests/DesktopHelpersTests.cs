@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using Avalonia;
 using Avalonia.Input;
+using Avalonia.Media;
 using LanScreenShare.Core.Models;
 using LanScreenShare.Desktop;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -102,6 +103,42 @@ public class DesktopHelpersTests
             {
                 Directory.Delete(tempDir, recursive: true);
             }
+        }
+    }
+
+    [TestMethod]
+    public void TryGetNormalizedCoordinates_FillAndUniformModes_MapAndRejectLetterboxMargins()
+    {
+        var fillInput = new RemoteInputHelper.NormalizedCoordinateInput(new Point(50, 25), new Size(200, 100), new Rect(0, 0, 100, 50), Stretch.Fill);
+        Assert.IsTrue(RemoteInputHelper.TryGetNormalizedCoordinates(fillInput, out float fx, out float fy));
+        Assert.AreEqual((0.5f, 0.5f), (fx, fy));
+
+        // Imagen 100x100 dentro de contenedor 200x100 => escala Uniform 1.0 -> offsetX = 50, rendered = 100x100
+        var uniformCenter = new RemoteInputHelper.NormalizedCoordinateInput(new Point(100, 50), new Size(100, 100), new Rect(0, 0, 200, 100), Stretch.Uniform);
+        Assert.IsTrue(RemoteInputHelper.TryGetNormalizedCoordinates(uniformCenter, out float ux, out float uy));
+        Assert.AreEqual((0.5f, 0.5f), (ux, uy));
+
+        var uniformLetterboxMargin = uniformCenter with { Position = new Point(20, 50) };
+        Assert.IsFalse(RemoteInputHelper.TryGetNormalizedCoordinates(uniformLetterboxMargin, out _, out _));
+
+        var zeroBounds = uniformCenter with { Bounds = new Rect(0, 0, 0, 100) };
+        Assert.IsFalse(RemoteInputHelper.TryGetNormalizedCoordinates(zeroBounds, out _, out _));
+    }
+
+    [TestMethod]
+    public void ConvertAvaloniaKeyToWin32Vk_CoversNavigationAndModifierKeys()
+    {
+        var mappings = new[]
+        {
+            (Key.Back, 0x08), (Key.Tab, 0x09), (Key.Delete, 0x2E),
+            (Key.Left, 0x25), (Key.Up, 0x26), (Key.Right, 0x27), (Key.Down, 0x28),
+            (Key.Home, 0x24), (Key.End, 0x23), (Key.PageUp, 0x21), (Key.PageDown, 0x22),
+            (Key.RightShift, 0x10), (Key.LeftCtrl, 0x11), (Key.RightAlt, 0x12)
+        };
+
+        foreach (var (key, expectedVk) in mappings)
+        {
+            Assert.AreEqual(expectedVk, RemoteInputHelper.ConvertAvaloniaKeyToWin32Vk(key));
         }
     }
 }

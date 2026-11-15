@@ -209,30 +209,15 @@ namespace LanScreenShare.Network.Streaming
             }
         }
 
-        private static async Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken token)
-        {
-            int totalBytesRead = 0;
-            int count = buffer.Length;
-            while (totalBytesRead < count)
-            {
-                int bytesRead = await stream.ReadAsync(buffer.Slice(totalBytesRead, count - totalBytesRead), token);
-                if (bytesRead == 0)
-                {
-                    throw new EndOfStreamException("El servidor cerró la conexión de audio.");
-                }
-                totalBytesRead += bytesRead;
-            }
-        }
+        private static Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken token) =>
+            StreamConnectionHelper.ReadExactBytesAsync(stream, buffer, token, "El servidor cerró la conexión de audio.");
 
         public Task DisconnectAsync()
         {
-            _cts?.Cancel();
-            try { _stream?.Dispose(); } catch { /* Ignore stream disposal error on disconnect */ }
-            try { _client?.Close(); _client?.Dispose(); } catch { /* Ignore client disposal error on disconnect */ }
+            StreamConnectionHelper.CloseClientResources(_cts, _stream, _client);
 
             _stream = null;
             _client = null;
-            _cts?.Dispose();
             _cts = null;
 
             StatusChanged?.Invoke(this, "Audio desconectado");

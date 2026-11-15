@@ -117,18 +117,11 @@ namespace LanScreenShare.Network.Streaming
             await stream.WriteAsync(jsonBytes, ct);
         }
 
-        public static async Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken ct)
-        {
-            int total = 0;
-            while (total < buffer.Length)
-            {
-                int read = await stream.ReadAsync(buffer.Slice(total), ct);
-                if (read <= 0)
-                {
-                    throw new EndOfStreamException($"Flujo cerrado prematuramente mientras se leían {buffer.Length} bytes.");
-                }
-                total += read;
-            }
-        }
+        public static Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken ct) =>
+            StreamConnectionHelper.ReadExactBytesAsync(
+                stream,
+                buffer,
+                ct,
+                $"Flujo cerrado prematuramente mientras se leían {buffer.Length} bytes.");
     }
 }

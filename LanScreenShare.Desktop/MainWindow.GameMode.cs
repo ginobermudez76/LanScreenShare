@@ -83,20 +83,10 @@ namespace LanScreenShare.Desktop
             }
 
             _gameModeBannerTimer?.Stop();
-            var banner = this.FindControl<Border>("GameModeBanner");
-            var bannerText = this.FindControl<TextBlock>("GameModeBannerText");
-            var bannerIcon = this.FindControl<PathIcon>("GameModeBannerIcon");
-            if (banner != null && bannerText != null)
-            {
-                banner.IsVisible = true;
-                if (bannerIcon != null)
-                {
-                    bannerIcon.Data = (this.FindResource("Icon3dRotation") as StreamGeometry)!;
-                    bannerIcon.Foreground = new SolidColorBrush(Color.Parse("#38BDF8"));
-                }
-                bannerText.Text = "Modo Juego 3D Activo — Presiona Ctrl + Alt + L para liberar el mouse";
-                bannerText.Foreground = new SolidColorBrush(Color.Parse("#38BDF8"));
-            }
+            ShowGameModeBanner(new GameModeBannerStyle(
+                "Icon3dRotation",
+                "#38BDF8",
+                "Modo Juego 3D Activo — Presiona Ctrl + Alt + L para liberar el mouse"));
         }
 
         private void DeactivateGameModeUi()
@@ -107,29 +97,52 @@ namespace LanScreenShare.Desktop
                 screenImage.Cursor = Cursor.Default;
             }
 
+            ShowGameModeBanner(new GameModeBannerStyle(
+                "IconLockOpen",
+                "#FBBF24",
+                "Mouse Liberado — Presiona Ctrl + Alt + L para recapturar",
+                AutoHide: true));
+        }
+
+        private readonly record struct GameModeBannerStyle(
+            string IconResourceKey,
+            string HexColor,
+            string Message,
+            bool AutoHide = false);
+
+        private void ShowGameModeBanner(in GameModeBannerStyle style)
+        {
             var banner = this.FindControl<Border>("GameModeBanner");
             var bannerText = this.FindControl<TextBlock>("GameModeBannerText");
             var bannerIcon = this.FindControl<PathIcon>("GameModeBannerIcon");
-            if (banner != null && bannerText != null)
+            if (banner == null || bannerText == null)
             {
-                banner.IsVisible = true;
-                if (bannerIcon != null)
-                {
-                    bannerIcon.Data = (this.FindResource("IconLockOpen") as StreamGeometry)!;
-                    bannerIcon.Foreground = new SolidColorBrush(Color.Parse("#FBBF24"));
-                }
-                bannerText.Text = "Mouse Liberado — Presiona Ctrl + Alt + L para recapturar";
-                bannerText.Foreground = new SolidColorBrush(Color.Parse("#FBBF24"));
-
-                _gameModeBannerTimer?.Stop();
-                _gameModeBannerTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
-                _gameModeBannerTimer.Tick += (s, e) =>
-                {
-                    banner.IsVisible = false;
-                    _gameModeBannerTimer?.Stop();
-                };
-                _gameModeBannerTimer.Start();
+                return;
             }
+
+            var brush = new SolidColorBrush(Color.Parse(style.HexColor));
+            banner.IsVisible = true;
+            if (bannerIcon != null)
+            {
+                bannerIcon.Data = (this.FindResource(style.IconResourceKey) as StreamGeometry)!;
+                bannerIcon.Foreground = brush;
+            }
+            bannerText.Text = style.Message;
+            bannerText.Foreground = brush;
+
+            if (!style.AutoHide)
+            {
+                return;
+            }
+
+            _gameModeBannerTimer?.Stop();
+            _gameModeBannerTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+            _gameModeBannerTimer.Tick += (s, e) =>
+            {
+                banner.IsVisible = false;
+                _gameModeBannerTimer?.Stop();
+            };
+            _gameModeBannerTimer.Start();
         }
 
         private PixelPoint GetScreenImageCenterOnScreen()
