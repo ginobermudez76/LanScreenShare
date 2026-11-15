@@ -280,12 +280,13 @@ namespace LanScreenShare.Network.Streaming
 
         private async Task WritePacketWithLockAsync(byte[] packet, string errorContext)
         {
-            await _sendLock.WaitAsync();
+            var token = _cts?.Token ?? CancellationToken.None;
+            await _sendLock.WaitAsync(token);
             try
             {
                 if (IsConnected && _stream != null)
                 {
-                    await _stream.WriteAsync(packet.AsMemory(0, packet.Length));
+                    await _stream.WriteAsync(packet.AsMemory(0, packet.Length), token);
                 }
             }
             catch (Exception ex)

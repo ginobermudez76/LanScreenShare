@@ -245,7 +245,7 @@ namespace LanScreenShare.Network.Streaming
                 string idStr = transferId.ToString("D");
                 if (_inboundTransfers.TryGetValue(idStr, out var inbound))
                 {
-                    await HandleInboundChunkAsync(inbound, offset, chunkData.AsMemory(0, dataLength));
+                    await HandleInboundChunkAsync(inbound, offset, chunkData.AsMemory(0, dataLength), ct);
                 }
             }
             finally
@@ -328,7 +328,7 @@ namespace LanScreenShare.Network.Streaming
             });
         }
 
-        private async Task HandleInboundChunkAsync(InboundTransfer inbound, long offset, ReadOnlyMemory<byte> data)
+        private async Task HandleInboundChunkAsync(InboundTransfer inbound, long offset, ReadOnlyMemory<byte> data, CancellationToken ct)
         {
             if (inbound.FileStream == null) return;
 
@@ -337,7 +337,7 @@ namespace LanScreenShare.Network.Streaming
                 inbound.FileStream.Seek(offset, SeekOrigin.Begin);
             }
 
-            await inbound.FileStream.WriteAsync(data);
+            await inbound.FileStream.WriteAsync(data, ct);
             long totalReceived = Interlocked.Add(ref inbound.ReceivedBytes, data.Length);
 
             long nowMs = inbound.Stopwatch.ElapsedMilliseconds;

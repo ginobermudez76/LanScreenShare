@@ -177,8 +177,11 @@ namespace LanScreenShare.Desktop
             if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
                 return;
 
-            _activeTransferCts?.Cancel();
-            _activeTransferCts?.Dispose();
+            if (_activeTransferCts != null)
+            {
+                await _activeTransferCts.CancelAsync();
+                _activeTransferCts.Dispose();
+            }
             _activeTransferCts = new CancellationTokenSource();
 
             try
@@ -372,7 +375,10 @@ namespace LanScreenShare.Desktop
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                Process.Start("explorer.exe", $"/select,\"{targetPath}\"");
+                string explorerPath = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                    "explorer.exe");
+                Process.Start(explorerPath, $"/select,\"{targetPath}\"");
                 return true;
             }
 

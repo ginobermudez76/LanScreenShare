@@ -116,7 +116,7 @@ namespace LanScreenShare.Core.Services
             try
             {
                 _cts?.Cancel();
-                _captureTask?.Wait(500);
+                _captureTask?.Wait(500, CancellationToken.None);
             }
             catch
             {

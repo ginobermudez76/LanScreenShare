@@ -17,7 +17,7 @@ namespace LanScreenShare.Network
     {
         private const int DiscoveryPort = 5000;
         private const string BroadcastMessagePrefix = "LAN_SCREEN_SHARE_HOST";
-        private static readonly IPAddress DefaultSubnetMask = IPAddress.Parse("255.255.255.0");
+        private static readonly IPAddress DefaultSubnetMask = new([255, 255, 255, 0]);
 
         private CancellationTokenSource? _hostCts;
         private CancellationTokenSource? _listenCts;

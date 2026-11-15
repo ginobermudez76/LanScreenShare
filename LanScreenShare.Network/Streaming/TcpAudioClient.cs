@@ -41,8 +41,11 @@ namespace LanScreenShare.Network.Streaming
             if (IsConnected)
                 await DisconnectAsync();
 
-            _cts?.Cancel();
-            _cts?.Dispose();
+            if (_cts != null)
+            {
+                await _cts.CancelAsync();
+                _cts.Dispose();
+            }
             _cts = new CancellationTokenSource();
             var sessionToken = _cts.Token;
 
@@ -177,12 +180,13 @@ namespace LanScreenShare.Network.Streaming
         private async Task TryWritePacketAsync(byte[] packet)
         {
             bool lockTaken = false;
+            var token = _cts?.Token ?? CancellationToken.None;
             try
             {
-                lockTaken = await _sendLock.WaitAsync(100);
+                lockTaken = await _sendLock.WaitAsync(100, token);
                 if (lockTaken && _stream != null)
                 {
-                    await _stream.WriteAsync(packet.AsMemory(0, packet.Length));
+                    await _stream.WriteAsync(packet.AsMemory(0, packet.Length), token);
                 }
             }
             catch (Exception ex)

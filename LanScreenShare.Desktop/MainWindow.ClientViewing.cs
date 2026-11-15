@@ -247,7 +247,7 @@ namespace LanScreenShare.Desktop
                 {
                     Console.WriteLine($"[AudioClient] Audio no disponible en el host: {ex.Message}");
                 }
-            });
+            }, CancellationToken.None);
 
             _ = Task.Run(async () =>
             {
@@ -261,7 +261,7 @@ namespace LanScreenShare.Desktop
                 {
                     Console.WriteLine($"[FileTransferClient] Canal de archivos no disponible en el host: {ex.Message}");
                 }
-            });
+            }, CancellationToken.None);
         }
 
         private async Task ConnectToDeviceAsync(DeviceInfo device)
@@ -276,7 +276,7 @@ namespace LanScreenShare.Desktop
 
             try
             {
-                await _streamClient.ConnectAsync(device.IPAddress, 5001, _sslClientOptions);
+                await _streamClient.ConnectAsync(device.IPAddress, 5001, _sslClientOptions, CancellationToken.None);
                 _isViewing = true;
                 UpdateStreamStateBadge();
                 UpdateDevicesViewingState();
@@ -288,7 +288,7 @@ namespace LanScreenShare.Desktop
             catch (Exception ex)
             {
                 string detail = ex.InnerException != null ? $"{ex.Message} ({ex.InnerException.Message})" : ex.Message;
-                HandleViewerDisconnected($"No se pudo conectar a {device.Name}: {detail}");
+                await HandleViewerDisconnectedAsync($"No se pudo conectar a {device.Name}: {detail}");
                 Console.WriteLine($"[ConnectError] No se pudo conectar a {device.Name}: {ex}");
             }
         }

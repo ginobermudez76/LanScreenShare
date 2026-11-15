@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -22,7 +23,7 @@ namespace LanScreenShare.Desktop
             if (!_isHosting) return;
             if (_allowRemoteControl)
             {
-                if (!_controlServer.IsRunning) _ = _controlServer.StartAsync(5003);
+                if (!_controlServer.IsRunning) _ = _controlServer.StartAsync(5003, CancellationToken.None);
             }
             else
             {
@@ -151,7 +152,7 @@ namespace LanScreenShare.Desktop
             bool hasCtrlAlt = e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.KeyModifiers.HasFlag(KeyModifiers.Alt);
             if (hasCtrlAlt)
             {
-                if (e.Key == Key.L) { ToggleGameMode(); return true; }
+                if (e.Key == Key.L) { _ = ToggleGameModeAsync(); return true; }
                 if (e.Key == Key.M) { _ = RequestRemoteMonitorSwitchAsync(); return true; }
             }
 
@@ -180,7 +181,7 @@ namespace LanScreenShare.Desktop
             try
             {
                 var handshake = _streamClient.ActiveSessionHandshake;
-                await _controlClient.ConnectAsync(new ControlClientConnectionOptions(_currentConnectedDeviceIp, 5003, _sslClientOptions, handshake?.SessionId, handshake?.ControlToken));
+                await _controlClient.ConnectAsync(new ControlClientConnectionOptions(_currentConnectedDeviceIp, 5003, _sslClientOptions, handshake?.SessionId, handshake?.ControlToken), CancellationToken.None);
                 Console.WriteLine($"[ControlViewer] Conectado a canal de control remoto en {_currentConnectedDeviceIp}:5003");
                 _remoteControlEnabled = true;
 

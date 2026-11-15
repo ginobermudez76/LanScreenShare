@@ -304,12 +304,13 @@ namespace LanScreenShare.Network.Streaming
         private async Task SendPacketToClientAsync(AudioClientContext clientCtx, string clientId, byte[] packet)
         {
             bool lockTaken = false;
+            var token = _cts?.Token ?? CancellationToken.None;
             try
             {
-                lockTaken = await clientCtx.SendLock.WaitAsync(100);
+                lockTaken = await clientCtx.SendLock.WaitAsync(100, token);
                 if (lockTaken)
                 {
-                    await clientCtx.Stream.WriteAsync(packet.AsMemory(0, packet.Length));
+                    await clientCtx.Stream.WriteAsync(packet.AsMemory(0, packet.Length), token);
                 }
             }
             catch

@@ -96,7 +96,7 @@ namespace LanScreenShare.Desktop
             bool shareMic = this.FindControl<CheckBox>("MicShareCheckBox")?.IsChecked ?? false;
             try
             {
-                await _audioServer.StartAsync(5002);
+                await _audioServer.StartAsync(5002, CancellationToken.None);
                 if (shareAudio)
                 {
                     int targetPid = GetTargetAudioProcessId();
@@ -114,12 +114,12 @@ namespace LanScreenShare.Desktop
 
             if (_allowRemoteControl)
             {
-                await _controlServer.StartAsync(5003);
+                await _controlServer.StartAsync(5003, CancellationToken.None);
             }
 
             try
             {
-                await _fileTransferServer.StartAsync(5004);
+                await _fileTransferServer.StartAsync(5004, CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -156,7 +156,7 @@ namespace LanScreenShare.Desktop
                 _isViewing = false;
 
                 var profile = PrepareHostingCaptureProfile(out string engine);
-                await _streamServer.StartAsync(5001);
+                await _streamServer.StartAsync(5001, CancellationToken.None);
                 InitializeAdaptiveBitrate(profile.BitrateMbps, profile.Fps);
 
                 SwitchCaptureSource(_currentSource, engine, profile);
@@ -208,7 +208,7 @@ namespace LanScreenShare.Desktop
             UpdateStatus("Sin conexión activa", "#34D399");
         }
 
-        private async void ScreenCaptureService_FrameCaptured(object? sender, CapturedFrame frame)
+        private void ScreenCaptureService_FrameCaptured(object? sender, CapturedFrame frame)
         {
             if (_isHosting && _streamServer.IsRunning)
             {
@@ -217,7 +217,7 @@ namespace LanScreenShare.Desktop
                 _lastFrameWidth = frame.Width;
                 _lastFrameHeight = frame.Height;
 
-                await _streamServer.BroadcastFrameAsync(frame);
+                _ = _streamServer.BroadcastFrameAsync(frame);
             }
         }
 
