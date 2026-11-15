@@ -28,7 +28,7 @@ namespace LanScreenShare.Media
     );
 
     [SupportedOSPlatform("windows")]
-    public static class HardwareMftEncoderDiscovery
+    public static partial class HardwareMftEncoderDiscovery
     {
         public static readonly Guid MFT_CATEGORY_VIDEO_ENCODER = new("f79eac7d-e545-4387-bdee-d647d7bde42a");
         public static readonly Guid MFMediaType_Video = new("73646976-0000-0010-8000-00AA00389B71");
@@ -46,7 +46,7 @@ namespace LanScreenShare.Media
         private const uint MFT_ENUM_FLAG_SORTANDFILTER = 0x00000040;
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct MFT_REGISTER_TYPE_INFO
+        private struct MftRegisterTypeInfo
         {
             public Guid guidMajorType;
             public Guid guidSubtype;
@@ -93,8 +93,8 @@ namespace LanScreenShare.Media
             [PreserveSig] int DetachObject();
         }
 
-        [DllImport("mfplat.dll", ExactSpelling = true, PreserveSig = true)]
-        private static extern int MFTEnumEx(
+        [LibraryImport("mfplat.dll")]
+        private static partial int MFTEnumEx(
             Guid guidCategory,
             uint flags,
             IntPtr pInputType,
@@ -102,21 +102,21 @@ namespace LanScreenShare.Media
             out IntPtr pppMFTActivate,
             out uint pnumMFTActivate);
 
-        [DllImport("ole32.dll")]
-        private static extern void CoTaskMemFree(IntPtr pv);
+        [LibraryImport("ole32.dll")]
+        private static partial void CoTaskMemFree(IntPtr pv);
 
         private static bool HasActivates(int hr, uint count, IntPtr ptr) =>
             hr == 0 && count > 0 && ptr != IntPtr.Zero;
 
         private static IntPtr AllocateH264OutputType()
         {
-            var outputType = new MFT_REGISTER_TYPE_INFO
+            var outputType = new MftRegisterTypeInfo
             {
                 guidMajorType = MFMediaType_Video,
                 guidSubtype = MFVideoFormat_H264
             };
 
-            IntPtr pOutputType = Marshal.AllocHGlobal(Marshal.SizeOf<MFT_REGISTER_TYPE_INFO>());
+            IntPtr pOutputType = Marshal.AllocHGlobal(Marshal.SizeOf<MftRegisterTypeInfo>());
             Marshal.StructureToPtr(outputType, pOutputType, false);
             return pOutputType;
         }

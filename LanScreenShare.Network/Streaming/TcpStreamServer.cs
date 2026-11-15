@@ -461,14 +461,14 @@ namespace LanScreenShare.Network.Streaming
             CurrentTelemetry.HostFrameTimeMs = frame.HostFrameTimeMs;
 
             bool anyDropped = false;
-            foreach (var client in _clients.Values)
+            foreach (var channel in _clients.Values.Select(client => client.Channel))
             {
-                if (client.Channel.Reader.Count > 0)
+                if (channel.Reader.Count > 0)
                 {
                     Interlocked.Increment(ref _droppedFramesCount);
                     anyDropped = true;
                 }
-                client.Channel.Writer.TryWrite(frame);
+                channel.Writer.TryWrite(frame);
             }
 
             if (anyDropped)
@@ -504,12 +504,12 @@ namespace LanScreenShare.Network.Streaming
                 VideoPacketProtocol.MagicEnd,
                 0, 0, 0, 0, 0, 0));
 
-            foreach (var client in _clients.Values)
+            foreach (var stream in _clients.Values.Select(client => client.Stream))
             {
                 try
                 {
-                    client.Stream.Write(endHeader, 0, endHeader.Length);
-                    client.Stream.Flush();
+                    stream.Write(endHeader, 0, endHeader.Length);
+                    stream.Flush();
                 }
                 catch
                 {

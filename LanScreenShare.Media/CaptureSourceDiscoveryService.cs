@@ -3,14 +3,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Text;
 using LanScreenShare.Core.Models;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 
 namespace LanScreenShare.Media
 {
-    public class CaptureSourceDiscoveryService
+    public partial class CaptureSourceDiscoveryService
     {
         private const string DefaultProcessDisplayName = "Aplicación";
 
@@ -68,21 +67,28 @@ namespace LanScreenShare.Media
             return (vLeft, vTop, vWidth, vHeight);
         }
 
-        private static List<CaptureSource> EnumeratePhysicalMonitors()
+        private static unsafe string ReadFixedString(char* buffer, int maxLength)
+        {
+            var span = new ReadOnlySpan<char>(buffer, maxLength);
+            int nullIdx = span.IndexOf('\0');
+            return (nullIdx >= 0 ? span[..nullIdx] : span).ToString();
+        }
+
+        private static unsafe List<CaptureSource> EnumeratePhysicalMonitors()
         {
             var monitors = new List<CaptureSource>();
             int monitorIndex = 0;
 
-            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData) =>
+            MonitorEnumProc callback = (IntPtr hMonitor, IntPtr hdcMonitor, ref NativeRect lprcMonitor, IntPtr dwData) =>
             {
-                var mi = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+                var mi = new MonitorInfoEx { cbSize = Marshal.SizeOf<MonitorInfoEx>() };
 
                 if (GetMonitorInfo(hMonitor, ref mi))
                 {
                     int w = mi.rcMonitor.Right - mi.rcMonitor.Left;
                     int h = mi.rcMonitor.Bottom - mi.rcMonitor.Top;
                     bool isPrimary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
-                    string devName = new string(mi.szDevice).TrimEnd('\0');
+                    string devName = ReadFixedString(mi.szDevice, 32);
                     string cleanDevName = devName.Replace(@"\\.\", "").Trim();
 
                     monitors.Add(new CaptureSource
@@ -104,7 +110,10 @@ namespace LanScreenShare.Media
                     monitorIndex++;
                 }
                 return true;
-            }, IntPtr.Zero);
+            };
+
+            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, Marshal.GetFunctionPointerForDelegate(callback), IntPtr.Zero);
+            GC.KeepAlive(callback);
 
             return monitors;
         }
@@ -159,18 +168,24 @@ namespace LanScreenShare.Media
 
         private static bool TryGetWindowStrings(IntPtr hWnd, out string title, out string className)
         {
-            var sbTitle = new StringBuilder(512);
-            GetWindowText(hWnd, sbTitle, 512);
-            title = sbTitle.ToString().Trim();
+            Span<char> titleBuffer = stackalloc char[512];
+            int titleLen = GetWindowText(hWnd, titleBuffer, titleBuffer.Length);
+            if (titleLen <= 0)
+            {
+                title = string.Empty;
+                className = string.Empty;
+                return false;
+            }
+            title = titleBuffer[..titleLen].ToString().Trim();
 
-            var sbClass = new StringBuilder(256);
-            GetClassName(hWnd, sbClass, 256);
-            className = sbClass.ToString();
+            Span<char> classBuffer = stackalloc char[256];
+            int classLen = GetClassName(hWnd, classBuffer, classBuffer.Length);
+            className = classLen > 0 ? classBuffer[..classLen].ToString() : string.Empty;
 
             return !string.IsNullOrEmpty(title);
         }
 
-        private static bool TryGetWindowDimensions(IntPtr hWnd, out RECT rect, out int width, out int height)
+        private static bool TryGetWindowDimensions(IntPtr hWnd, out NativeRect rect, out int width, out int height)
         {
             if (!GetWindowRect(hWnd, out rect))
             {
@@ -190,9 +205,9 @@ namespace LanScreenShare.Media
             if (!IsWindowVisible(hWnd) || IsWindowCloaked(hWnd)) return false;
             if (!TryGetWindowStrings(hWnd, out string title, out string className)) return false;
             if (IsSystemWindowClass(className, title)) return false;
-            if (!TryGetWindowDimensions(hWnd, out RECT rect, out int w, out int h)) return false;
+            if (!TryGetWindowDimensions(hWnd, out NativeRect rect, out int w, out int h)) return false;
+            if (GetWindowThreadProcessId(hWnd, out uint pid) == 0) return false;
 
-            GetWindowThreadProcessId(hWnd, out uint pid);
             pid = ResolveEffectiveWindowProcess(hWnd, pid, out string procName);
 
             if (pid == currentProcessId || ExcludedProcessNames.Contains(procName))
@@ -224,14 +239,16 @@ namespace LanScreenShare.Media
             try
             {
                 uint currentProcessId = (uint)Environment.ProcessId;
-                EnumWindows((hWnd, _) =>
+                EnumWindowsProc callback = (hWnd, _) =>
                 {
                     if (TryCreateWindowSource(hWnd, currentProcessId, out var source) && source != null)
                     {
                         sources.Add(source);
                     }
                     return true;
-                }, IntPtr.Zero);
+                };
+                EnumWindows(Marshal.GetFunctionPointerForDelegate(callback), IntPtr.Zero);
+                GC.KeepAlive(callback);
             }
             catch (Exception ex)
             {
@@ -246,8 +263,8 @@ namespace LanScreenShare.Media
             uint pid = (uint)Math.Max(0, fallbackPid);
             if (hWnd != IntPtr.Zero)
             {
-                GetWindowThreadProcessId(hWnd, out uint winPid);
-                if (winPid > 0)
+                uint threadId = GetWindowThreadProcessId(hWnd, out uint winPid);
+                if (threadId != 0 && winPid > 0)
                 {
                     pid = winPid;
                 }
@@ -271,16 +288,17 @@ namespace LanScreenShare.Media
         private static uint FindUwpChildProcess(IntPtr hWnd, uint initialPid)
         {
             uint realChildPid = 0;
-            EnumChildWindows(hWnd, (childHwnd, _) =>
+            EnumWindowsProc callback = (childHwnd, _) =>
             {
-                GetWindowThreadProcessId(childHwnd, out uint cPid);
-                if (cPid != 0 && cPid != initialPid)
-                {
-                    realChildPid = cPid;
-                    return false;
-                }
-                return true;
-            }, IntPtr.Zero);
+                uint threadId = GetWindowThreadProcessId(childHwnd, out uint cPid);
+                if (threadId == 0 || cPid == 0 || cPid == initialPid)
+                    return true;
+
+                realChildPid = cPid;
+                return false;
+            };
+            EnumChildWindows(hWnd, Marshal.GetFunctionPointerForDelegate(callback), IntPtr.Zero);
+            GC.KeepAlive(callback);
             return realChildPid;
         }
 
@@ -361,18 +379,18 @@ namespace LanScreenShare.Media
             return matchingPid;
         }
 
-        private static (Dictionary<uint, uint> ParentMap, Dictionary<uint, string> NameMap) ReadProcessHierarchy(IntPtr snapshot)
+        private static unsafe (Dictionary<uint, uint> ParentMap, Dictionary<uint, string> NameMap) ReadProcessHierarchy(IntPtr snapshot)
         {
             var parentMap = new Dictionary<uint, uint>();
             var nameMap = new Dictionary<uint, string>();
-            var pe = new PROCESSENTRY32 { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32>() };
+            var pe = new ProcessEntry32 { dwSize = (uint)Marshal.SizeOf<ProcessEntry32>() };
 
             if (Process32First(snapshot, ref pe))
             {
                 do
                 {
                     parentMap[pe.th32ProcessID] = pe.th32ParentProcessID;
-                    string exeName = pe.szExeFile;
+                    string exeName = ReadFixedString(pe.szExeFile, 260);
                     int dotIdx = exeName.LastIndexOf('.');
                     if (dotIdx > 0)
                     {
@@ -460,8 +478,8 @@ namespace LanScreenShare.Media
         private const int DWMWA_CLOAKED = 14;
         private const uint TH32CS_SNAPPROCESS = 0x00000002;
 
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-        private struct PROCESSENTRY32
+        [StructLayout(LayoutKind.Sequential)]
+        private unsafe struct ProcessEntry32
         {
             public uint dwSize;
             public uint cntUsage;
@@ -472,24 +490,26 @@ namespace LanScreenShare.Media
             public uint th32ParentProcessID;
             public int pcPriClassBase;
             public uint dwFlags;
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-            public string szExeFile;
+            public fixed char szExeFile[260];
         }
 
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        private static partial IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
 
-        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern bool Process32First(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+        [LibraryImport("kernel32.dll", EntryPoint = "Process32FirstW", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool Process32First(IntPtr hSnapshot, ref ProcessEntry32 lppe);
 
-        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern bool Process32Next(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+        [LibraryImport("kernel32.dll", EntryPoint = "Process32NextW", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool Process32Next(IntPtr hSnapshot, ref ProcessEntry32 lppe);
 
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool CloseHandle(IntPtr hObject);
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool CloseHandle(IntPtr hObject);
 
         [StructLayout(LayoutKind.Sequential)]
-        public struct RECT
+        public struct NativeRect
         {
             public int Left;
             public int Top;
@@ -497,52 +517,62 @@ namespace LanScreenShare.Media
             public int Bottom;
         }
 
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-        private struct MONITORINFOEX
+        [StructLayout(LayoutKind.Sequential)]
+        private unsafe struct MonitorInfoEx
         {
             public int cbSize;
-            public RECT rcMonitor;
-            public RECT rcWork;
+            public NativeRect rcMonitor;
+            public NativeRect rcWork;
             public uint dwFlags;
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
-            public string szDevice;
+            public fixed char szDevice[32];
         }
 
-        private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref NativeRect lprcMonitor, IntPtr dwData);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        [return: MarshalAs(UnmanagedType.Bool)]
         private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-        [DllImport("user32.dll")]
-        private static extern int GetSystemMetrics(int nIndex);
+        [LibraryImport("user32.dll")]
+        private static partial int GetSystemMetrics(int nIndex);
 
-        [DllImport("user32.dll")]
-        private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, IntPtr lpfnEnum, IntPtr dwData);
 
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFOEX lpmi);
+        [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfoEx lpmi);
 
-        [DllImport("user32.dll")]
-        private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool EnumWindows(IntPtr enumProc, IntPtr lParam);
 
-        [DllImport("user32.dll")]
-        private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool EnumChildWindows(IntPtr hWndParent, IntPtr lpEnumFunc, IntPtr lParam);
 
-        [DllImport("user32.dll")]
-        private static extern bool IsWindowVisible(IntPtr hWnd);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool IsWindowVisible(IntPtr hWnd);
 
-        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+        [LibraryImport("user32.dll", EntryPoint = "GetWindowTextW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+        private static partial int GetWindowText(IntPtr hWnd, Span<char> lpString, int nMaxCount);
 
-        [DllImport("user32.dll", CharSet = CharSet.Auto)]
-        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+        [LibraryImport("user32.dll", EntryPoint = "GetClassNameW", StringMarshalling = StringMarshalling.Utf16)]
+        private static partial int GetClassName(IntPtr hWnd, Span<char> lpClassName, int nMaxCount);
 
-        [DllImport("user32.dll")]
-        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+        [LibraryImport("user32.dll")]
+        private static partial uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
-        [DllImport("user32.dll")]
-        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool GetWindowRect(IntPtr hWnd, out NativeRect lpRect);
 
-        [DllImport("dwmapi.dll")]
-        private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+        [LibraryImport("dwmapi.dll")]
+        private static partial int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
 
         #endregion
     }

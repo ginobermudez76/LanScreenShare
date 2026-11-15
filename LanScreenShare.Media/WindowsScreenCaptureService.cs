@@ -11,7 +11,7 @@ using SkiaSharp;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public sealed class WindowsScreenCaptureService : IScreenCaptureService
+    public sealed partial class WindowsScreenCaptureService : IScreenCaptureService
     {
         public readonly record struct ScreenBounds(int X, int Y, int Width, int Height, bool AllScreens = false);
 
@@ -307,7 +307,7 @@ namespace LanScreenShare.Media
             height &= ~1;
         }
 
-        private sealed class GdiDesktopCaptureSession : IDisposable
+        private sealed partial class GdiDesktopCaptureSession : IDisposable
         {
             public IntPtr HdcSrc { get; private set; }
             public IntPtr HdcDest { get; private set; }
@@ -323,12 +323,12 @@ namespace LanScreenShare.Media
                 IntPtr hdcDest = CreateCompatibleDC(hdcSrc);
                 if (hdcDest == IntPtr.Zero)
                 {
-                    ReleaseDC(IntPtr.Zero, hdcSrc);
+                    SafeReleaseDC(IntPtr.Zero, hdcSrc);
                     return null;
                 }
 
-                var bmi = new BITMAPINFO();
-                bmi.bmiHeader.biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>();
+                var bmi = new BitmapInfo();
+                bmi.bmiHeader.biSize = (uint)Marshal.SizeOf<BitmapInfoHeader>();
                 bmi.bmiHeader.biWidth = width;
                 bmi.bmiHeader.biHeight = -height;
                 bmi.bmiHeader.biPlanes = 1;
@@ -339,7 +339,7 @@ namespace LanScreenShare.Media
                 if (hBitmap == IntPtr.Zero || pBits == IntPtr.Zero)
                 {
                     DeleteDC(hdcDest);
-                    ReleaseDC(IntPtr.Zero, hdcSrc);
+                    SafeReleaseDC(IntPtr.Zero, hdcSrc);
                     return null;
                 }
 
@@ -354,34 +354,44 @@ namespace LanScreenShare.Media
                 };
             }
 
+            private static void SafeReleaseDC(IntPtr hwnd, IntPtr hdc)
+            {
+                if (ReleaseDC(hwnd, hdc) == 0)
+                {
+                    // El DC ya había sido liberado o es inválido
+                }
+            }
+
             public void Dispose()
             {
                 if (HOld != IntPtr.Zero) SelectObject(HdcDest, HOld);
                 if (HBitmap != IntPtr.Zero) DeleteObject(HBitmap);
                 if (HdcDest != IntPtr.Zero) DeleteDC(HdcDest);
-                if (HdcSrc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, HdcSrc);
+                if (HdcSrc != IntPtr.Zero) SafeReleaseDC(IntPtr.Zero, HdcSrc);
             }
 
-            [DllImport("user32.dll")]
-            private static extern IntPtr GetDC(IntPtr hWnd);
+            [LibraryImport("user32.dll")]
+            private static partial IntPtr GetDC(IntPtr hWnd);
 
-            [DllImport("user32.dll")]
-            private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+            [LibraryImport("user32.dll")]
+            private static partial int ReleaseDC(IntPtr hWnd, IntPtr hDC);
 
-            [DllImport("gdi32.dll")]
-            private static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+            [LibraryImport("gdi32.dll")]
+            private static partial IntPtr CreateCompatibleDC(IntPtr hDC);
 
-            [DllImport("gdi32.dll")]
-            private static extern bool DeleteDC(IntPtr hDC);
+            [LibraryImport("gdi32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static partial bool DeleteDC(IntPtr hDC);
 
-            [DllImport("gdi32.dll")]
-            private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
+            [LibraryImport("gdi32.dll")]
+            private static partial IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
 
-            [DllImport("gdi32.dll")]
-            private static extern bool DeleteObject(IntPtr hObject);
+            [LibraryImport("gdi32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static partial bool DeleteObject(IntPtr hObject);
 
-            [DllImport("gdi32.dll")]
-            private static extern IntPtr CreateDIBSection(IntPtr hdc, [In] ref BITMAPINFO pbmi, uint iUsage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
+            [LibraryImport("gdi32.dll")]
+            private static partial IntPtr CreateDIBSection(IntPtr hdc, ref BitmapInfo pbmi, uint iUsage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
         }
 
         private static int ComputeTargetDimension(int customTarget, int original, double scale)
@@ -503,7 +513,7 @@ namespace LanScreenShare.Media
         {
             try
             {
-                CURSORINFO cursorInfo = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
+                CursorInfo cursorInfo = new CursorInfo { cbSize = Marshal.SizeOf<CursorInfo>() };
                 if (GetCursorInfo(ref cursorInfo) && cursorInfo.flags == CURSOR_SHOWING)
                 {
                     DrawIcon(hdcDest, cursorInfo.ptScreenPos.x - screenLeft, cursorInfo.ptScreenPos.y - screenTop, cursorInfo.hCursor);
@@ -530,20 +540,23 @@ namespace LanScreenShare.Media
         private const int SM_CXSCREEN = 0;
         private const int SM_CYSCREEN = 1;
 
-        [DllImport("gdi32.dll")]
-        private static extern bool BitBlt(IntPtr hObject, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hObjectSource, int nXSrc, int nYSrc, int dwRop);
+        [LibraryImport("gdi32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool BitBlt(IntPtr hObject, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hObjectSource, int nXSrc, int nYSrc, int dwRop);
 
-        [DllImport("user32.dll")]
-        private static extern int GetSystemMetrics(int nIndex);
+        [LibraryImport("user32.dll")]
+        private static partial int GetSystemMetrics(int nIndex);
 
-        [DllImport("user32.dll")]
-        private static extern bool DrawIcon(IntPtr hDC, int X, int Y, IntPtr hIcon);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool DrawIcon(IntPtr hDC, int X, int Y, IntPtr hIcon);
 
-        [DllImport("user32.dll")]
-        private static extern bool GetCursorInfo(ref CURSORINFO pci);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool GetCursorInfo(ref CursorInfo pci);
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct BITMAPINFOHEADER
+        private struct BitmapInfoHeader
         {
             public uint biSize;
             public int biWidth;
@@ -559,27 +572,26 @@ namespace LanScreenShare.Media
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct BITMAPINFO
+        private struct BitmapInfo
         {
-            public BITMAPINFOHEADER bmiHeader;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1)]
-            public uint[] bmiColors;
+            public BitmapInfoHeader bmiHeader;
+            public uint bmiColors;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct POINT
+        private struct NativePoint
         {
             public int x;
             public int y;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct CURSORINFO
+        private struct CursorInfo
         {
             public int cbSize;
             public int flags;
             public IntPtr hCursor;
-            public POINT ptScreenPos;
+            public NativePoint ptScreenPos;
         }
 
         #endregion

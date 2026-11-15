@@ -14,7 +14,7 @@ using Vortice.DXGI;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public sealed class DxgiScreenCaptureService : IScreenCaptureService
+    public sealed partial class DxgiScreenCaptureService : IScreenCaptureService
     {
         private CancellationTokenSource? _cts;
         private Task? _captureTask;
@@ -375,12 +375,12 @@ namespace LanScreenShare.Media
             return FrameAcquireStatus.NoFrame;
         }
 
-        private static bool HasCursorMoved(in POINT pos, int lastX, int lastY) =>
+        private static bool HasCursorMoved(in NativePoint pos, int lastX, int lastY) =>
             pos.x != lastX || pos.y != lastY;
 
-        private static bool TryGetVisibleCursorPosition(out POINT pos)
+        private static bool TryGetVisibleCursorPosition(out NativePoint pos)
         {
-            CURSORINFO curInfo = new() { cbSize = Marshal.SizeOf<CURSORINFO>() };
+            CursorInfo curInfo = new() { cbSize = Marshal.SizeOf<CursorInfo>() };
             if (GetCursorInfo(ref curInfo) && curInfo.flags == CURSOR_SHOWING)
             {
                 pos = curInfo.ptScreenPos;
@@ -808,7 +808,7 @@ namespace LanScreenShare.Media
         {
             try
             {
-                CURSORINFO cursorInfo = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
+                CursorInfo cursorInfo = new CursorInfo { cbSize = Marshal.SizeOf<CursorInfo>() };
                 if (GetCursorInfo(ref cursorInfo) && cursorInfo.flags == CURSOR_SHOWING)
                 {
                     float x = (cursorInfo.ptScreenPos.x - options.ScreenLeft) * options.ScaleX;
@@ -857,29 +857,31 @@ namespace LanScreenShare.Media
         private const int CURSOR_SHOWING = 0x00000001;
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct POINT
+        private struct NativePoint
         {
             public int x;
             public int y;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct CURSORINFO
+        private struct CursorInfo
         {
             public int cbSize;
             public int flags;
             public IntPtr hCursor;
-            public POINT ptScreenPos;
+            public NativePoint ptScreenPos;
         }
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool GetCursorInfo(ref CURSORINFO pci);
+        [LibraryImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool GetCursorInfo(ref CursorInfo pci);
 
-        [DllImport("avrt.dll", SetLastError = true)]
-        private static extern IntPtr AvSetMmThreadCharacteristics(string taskName, ref int taskIndex);
+        [LibraryImport("avrt.dll", EntryPoint = "AvSetMmThreadCharacteristicsW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+        private static partial IntPtr AvSetMmThreadCharacteristics(string taskName, ref int taskIndex);
 
-        [DllImport("avrt.dll", SetLastError = true)]
-        private static extern bool AvRevertMmThreadCharacteristics(IntPtr avrtHandle);
+        [LibraryImport("avrt.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool AvRevertMmThreadCharacteristics(IntPtr avrtHandle);
 
         #endregion
 

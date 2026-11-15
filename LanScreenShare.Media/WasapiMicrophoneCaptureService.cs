@@ -19,8 +19,6 @@ namespace LanScreenShare.Media
         public event EventHandler<CapturedAudioChunk>? AudioCaptured;
         public bool IsCapturing => _capture != null;
 
-        public void StartCapture(int processId) => StartCapture();
-
         private static WasapiCapture CreateDefaultCaptureInstance()
         {
             using var enumerator = new MMDeviceEnumerator();
@@ -82,6 +80,8 @@ namespace LanScreenShare.Media
                 }
             };
         }
+
+        public void StartCapture(int processId) => StartCapture();
 
         public void StartCapture()
         {

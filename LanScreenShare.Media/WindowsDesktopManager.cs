@@ -10,7 +10,7 @@ namespace LanScreenShare.Media
     /// Especificación: ADR-002.
     /// </summary>
     [SupportedOSPlatform("windows")]
-    public static class WindowsDesktopManager
+    public static partial class WindowsDesktopManager
     {
         public const string DesktopDefault = "Default";
         public const string DesktopWinlogon = "Winlogon";
@@ -23,26 +23,32 @@ namespace LanScreenShare.Media
         private const int UOI_NAME = 2;
         private const int ERROR_ACCESS_DENIED = 5;
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+        [LibraryImport("user32.dll", SetLastError = true)]
+        private static partial IntPtr OpenInputDesktop(
+            uint dwFlags,
+            [MarshalAs(UnmanagedType.Bool)] bool fInherit,
+            uint dwDesiredAccess);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool CloseDesktop(IntPtr hDesktop);
+        [LibraryImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool CloseDesktop(IntPtr hDesktop);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool SetThreadDesktop(IntPtr hDesktop);
+        [LibraryImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool SetThreadDesktop(IntPtr hDesktop);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr GetThreadDesktop(uint dwThreadId);
+        [LibraryImport("user32.dll", SetLastError = true)]
+        private static partial IntPtr GetThreadDesktop(uint dwThreadId);
 
-        [DllImport("kernel32.dll")]
-        private static extern uint GetCurrentThreadId();
+        [LibraryImport("kernel32.dll")]
+        private static partial uint GetCurrentThreadId();
 
-        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        private static extern bool GetUserObjectInformation(
+        [LibraryImport("user32.dll", EntryPoint = "GetUserObjectInformationW", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool GetUserObjectInformation(
             IntPtr hObj,
             int nIndex,
-            [Out] byte[] pvInfo,
+            Span<byte> pvInfo,
             uint nLength,
             out uint lpnLengthNeeded);
 
@@ -51,7 +57,7 @@ namespace LanScreenShare.Media
             if (hDesktop == IntPtr.Zero)
                 return null;
 
-            GetUserObjectInformation(hDesktop, UOI_NAME, Array.Empty<byte>(), 0, out uint needed);
+            GetUserObjectInformation(hDesktop, UOI_NAME, Span<byte>.Empty, 0, out uint needed);
             if (needed == 0)
                 return null;
 

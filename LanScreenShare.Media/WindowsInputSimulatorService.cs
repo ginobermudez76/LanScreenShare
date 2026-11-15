@@ -9,7 +9,7 @@ using LanScreenShare.Core.Security;
 namespace LanScreenShare.Media
 {
     [SupportedOSPlatform("windows")]
-    public sealed class WindowsInputSimulatorService : IInputSimulatorService
+    public sealed partial class WindowsInputSimulatorService : IInputSimulatorService
     {
         private readonly Lock _inputLock = new();
         private readonly InjectedInputTracker _tracker = new();
@@ -36,12 +36,12 @@ namespace LanScreenShare.Media
             _currentTargetSource.Width > 0 &&
             _currentTargetSource.Height > 0;
 
-        private static INPUT CreateMouseInput(int dx, int dy, uint flags, uint mouseData = 0) => new()
+        private static NativeInput CreateMouseInput(int dx, int dy, uint flags, uint mouseData = 0) => new()
         {
             type = INPUT_MOUSE,
             u = new InputUnion
             {
-                mi = new MOUSEINPUT
+                mi = new MouseInput
                 {
                     dx = dx,
                     dy = dy,
@@ -55,16 +55,16 @@ namespace LanScreenShare.Media
 
         private static uint SendSingleMouseInput(int dx, int dy, uint flags, uint mouseData = 0)
         {
-            var input = new INPUT[] { CreateMouseInput(dx, dy, flags, mouseData) };
-            return SendInput(1, input, Marshal.SizeOf<INPUT>());
+            var input = new NativeInput[] { CreateMouseInput(dx, dy, flags, mouseData) };
+            return SendInput(1, input, Marshal.SizeOf<NativeInput>());
         }
 
-        private static INPUT CreateKeyboardInput(int vk, uint flags) => new()
+        private static NativeInput CreateKeyboardInput(int vk, uint flags) => new()
         {
             type = INPUT_KEYBOARD,
             u = new InputUnion
             {
-                ki = new KEYBDINPUT
+                ki = new KeyboardInput
                 {
                     wVk = (ushort)vk,
                     wScan = 0,
@@ -75,7 +75,7 @@ namespace LanScreenShare.Media
             }
         };
 
-        private static INPUT CreateKeyReleaseInput(int vk) =>
+        private static NativeInput CreateKeyReleaseInput(int vk) =>
             CreateKeyboardInput(vk, KEYEVENTF_KEYUP);
 
         private static uint GetMouseButtonUpFlag(RemoteMouseButton button) => button switch
@@ -86,7 +86,7 @@ namespace LanScreenShare.Media
             _ => 0
         };
 
-        private static INPUT CreateMouseButtonReleaseInput(uint flag) =>
+        private static NativeInput CreateMouseButtonReleaseInput(uint flag) =>
             CreateMouseInput(0, 0, flag);
 
         private static uint GetMouseButtonDownFlag(RemoteMouseButton button) => button switch
@@ -166,7 +166,7 @@ namespace LanScreenShare.Media
             }
         }
 
-        private static int PopulateReleaseInputs(INPUT[] inputs, int[] keys, RemoteMouseButton[] buttons)
+        private static int PopulateReleaseInputs(NativeInput[] inputs, int[] keys, RemoteMouseButton[] buttons)
         {
             int idx = 0;
             foreach (int vk in keys)
@@ -195,12 +195,12 @@ namespace LanScreenShare.Media
                 if (keys.Length == 0 && buttons.Length == 0)
                     return;
 
-                var inputs = new INPUT[keys.Length + buttons.Length];
+                var inputs = new NativeInput[keys.Length + buttons.Length];
                 int count = PopulateReleaseInputs(inputs, keys, buttons);
 
                 if (count > 0)
                 {
-                    uint inserted = SendInput((uint)count, inputs, Marshal.SizeOf<INPUT>());
+                    uint inserted = SendInput((uint)count, inputs, Marshal.SizeOf<NativeInput>());
                     if (inserted < (uint)count)
                     {
                         Console.WriteLine($"[InputSimulator] Advertencia: Sólo se liberaron {inserted} de {count} eventos de limpieza.");
@@ -215,9 +215,9 @@ namespace LanScreenShare.Media
         {
             if (!IsTargetWindowValid) return false;
             IntPtr hwnd = _currentTargetSource!.Handle;
-            if (!GetClientRect(hwnd, out RECT clientRect)) return false;
+            if (!GetClientRect(hwnd, out NativeRect clientRect)) return false;
 
-            POINT pt = new POINT { x = 0, y = 0 };
+            NativePoint pt = new NativePoint { x = 0, y = 0 };
             ClientToScreen(hwnd, ref pt);
             int winW = clientRect.Right - clientRect.Left;
             int winH = clientRect.Bottom - clientRect.Top;
@@ -299,8 +299,8 @@ namespace LanScreenShare.Media
                 return;
 
             uint flags = isDown ? 0 : KEYEVENTF_KEYUP;
-            var input = new INPUT[] { CreateKeyboardInput(keyCode, flags) };
-            uint inserted = SendInput(1, input, Marshal.SizeOf<INPUT>());
+            var input = new NativeInput[] { CreateKeyboardInput(keyCode, flags) };
+            uint inserted = SendInput(1, input, Marshal.SizeOf<NativeInput>());
             if (inserted > 0)
             {
                 _tracker.RecordKey(keyCode, isDown);
@@ -327,7 +327,7 @@ namespace LanScreenShare.Media
         private const uint KEYEVENTF_KEYUP = 0x0002;
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct RECT
+        private struct NativeRect
         {
             public int Left;
             public int Top;
@@ -336,14 +336,14 @@ namespace LanScreenShare.Media
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct POINT
+        private struct NativePoint
         {
             public int x;
             public int y;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct INPUT
+        private struct NativeInput
         {
             public uint type;
             public InputUnion u;
@@ -352,12 +352,12 @@ namespace LanScreenShare.Media
         [StructLayout(LayoutKind.Explicit)]
         private struct InputUnion
         {
-            [FieldOffset(0)] public MOUSEINPUT mi;
-            [FieldOffset(0)] public KEYBDINPUT ki;
+            [FieldOffset(0)] public MouseInput mi;
+            [FieldOffset(0)] public KeyboardInput ki;
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct MOUSEINPUT
+        private struct MouseInput
         {
             public int dx;
             public int dy;
@@ -368,7 +368,7 @@ namespace LanScreenShare.Media
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct KEYBDINPUT
+        private struct KeyboardInput
         {
             public ushort wVk;
             public ushort wScan;
@@ -377,23 +377,27 @@ namespace LanScreenShare.Media
             public UIntPtr dwExtraInfo;
         }
 
-        [DllImport("user32.dll")]
-        private static extern int GetSystemMetrics(int nIndex);
+        [LibraryImport("user32.dll")]
+        private static partial int GetSystemMetrics(int nIndex);
 
-        [DllImport("user32.dll")]
-        private static extern bool SetCursorPos(int X, int Y);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool SetCursorPos(int X, int Y);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern uint SendInput(uint nInputs, [In] INPUT[] pInputs, int cbSize);
+        [LibraryImport("user32.dll", SetLastError = true)]
+        private static partial uint SendInput(uint nInputs, ReadOnlySpan<NativeInput> pInputs, int cbSize);
 
-        [DllImport("user32.dll")]
-        private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool GetClientRect(IntPtr hWnd, out NativeRect lpRect);
 
-        [DllImport("user32.dll")]
-        private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool ClientToScreen(IntPtr hWnd, ref NativePoint lpPoint);
 
-        [DllImport("user32.dll")]
-        private static extern bool SetForegroundWindow(IntPtr hWnd);
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool SetForegroundWindow(IntPtr hWnd);
 
         #endregion
 
