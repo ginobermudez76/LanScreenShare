@@ -20,6 +20,9 @@ namespace LanScreenShare.Desktop
     {
         #region Stream Settings Logic
 
+        private const string QualitySliderControlName = "QualitySlider";
+        private const string ScaleComboBoxControlName = "ScaleComboBox";
+
         private static bool TryGetSelectedItemTagAsInt(ComboBox? combo, out int value)
         {
             if (combo?.SelectedItem is ComboBoxItem item && item.Tag is string tag)
@@ -73,7 +76,7 @@ namespace LanScreenShare.Desktop
                 };
             }
 
-            var qualitySlider = this.FindControl<Slider>("QualitySlider");
+            var qualitySlider = this.FindControl<Slider>(QualitySliderControlName);
             if (qualitySlider != null)
             {
                 UpdateQualitySliderForCodec(GetSelectedCodec());
@@ -99,7 +102,7 @@ namespace LanScreenShare.Desktop
                 if (_isUpdatingQualitySlider) return;
                 if (!TryGetSelectedItemTagAsInt(bitrateCombo, out int val)) return;
 
-                var slider = this.FindControl<Slider>("QualitySlider");
+                var slider = this.FindControl<Slider>(QualitySliderControlName);
                 if (slider != null && (int)slider.Value != val)
                 {
                     slider.Value = val;
@@ -114,7 +117,7 @@ namespace LanScreenShare.Desktop
 
         private void InitializeScaleControl()
         {
-            var scaleCombo = this.FindControl<ComboBox>("ScaleComboBox");
+            var scaleCombo = this.FindControl<ComboBox>(ScaleComboBoxControlName);
             if (scaleCombo == null) return;
 
             scaleCombo.SelectionChanged += (s, e) =>
@@ -145,7 +148,7 @@ namespace LanScreenShare.Desktop
                 _abrController.IsEnabled = isChecked;
                 if (!isChecked && _screenCaptureService != null)
                 {
-                    var slider = this.FindControl<Slider>("QualitySlider");
+                    var slider = this.FindControl<Slider>(QualitySliderControlName);
                     int manualVal = slider != null ? (int)slider.Value : _appSettings.BitrateMbps;
                     _screenCaptureService.BitrateMbps = manualVal;
                     _screenCaptureService.TargetFps = GetSelectedFps();
@@ -234,7 +237,7 @@ namespace LanScreenShare.Desktop
         private void InitializeResolutionOptions(CaptureSource? source = null)
         {
             source ??= _currentSource;
-            var scaleCombo = this.FindControl<ComboBox>("ScaleComboBox");
+            var scaleCombo = this.FindControl<ComboBox>(ScaleComboBoxControlName);
             if (scaleCombo == null) return;
 
             var (nativeW, nativeH) = GetNativeDimensions(source);
@@ -358,7 +361,7 @@ namespace LanScreenShare.Desktop
             targetH = 0;
             scale = 1.0;
 
-            var combo = this.FindControl<ComboBox>("ScaleComboBox");
+            var combo = this.FindControl<ComboBox>(ScaleComboBoxControlName);
             if (combo?.SelectedItem is not ComboBoxItem item || item.Tag is not string tag)
                 return;
 
@@ -443,7 +446,7 @@ namespace LanScreenShare.Desktop
         {
             string codec = GetSelectedCodec();
             int fps = GetSelectedFps();
-            int sliderVal = (int)(this.FindControl<Slider>("QualitySlider")?.Value ?? (codec == "h264" ? 8 : 75));
+            int sliderVal = (int)(this.FindControl<Slider>(QualitySliderControlName)?.Value ?? (codec == "h264" ? 8 : 75));
             int quality = codec == "h264" ? _appSettings.Quality : sliderVal;
             int bitrateMbps = codec == "h264" ? sliderVal : _appSettings.BitrateMbps;
             GetSelectedResolution(out int targetW, out int targetH, out double scale);
@@ -548,7 +551,7 @@ namespace LanScreenShare.Desktop
 
         private void UpdateQualitySliderForCodec(string codec)
         {
-            var slider = this.FindControl<Slider>("QualitySlider");
+            var slider = this.FindControl<Slider>(QualitySliderControlName);
             var title = this.FindControl<TextBlock>("QualityTitleLabel");
             var valueLabel = this.FindControl<TextBlock>("QualityValueLabel");
             var bitrateCombo = this.FindControl<ComboBox>("BitrateComboBox");
@@ -725,7 +728,7 @@ namespace LanScreenShare.Desktop
         {
             int fps = GetSelectedFps();
             string codec = GetSelectedCodec();
-            int sliderVal = (int)(this.FindControl<Slider>("QualitySlider")?.Value ?? (codec == "h264" ? 8 : 75));
+            int sliderVal = (int)(this.FindControl<Slider>(QualitySliderControlName)?.Value ?? (codec == "h264" ? 8 : 75));
             GetSelectedResolution(out int targetW, out int targetH, out double scale);
 
             UpdateFpsAndQualityLabels(fps, codec, sliderVal);
@@ -803,7 +806,7 @@ namespace LanScreenShare.Desktop
             _appSettings.Codec = GetSelectedCodec();
             _appSettings.Fps = GetSelectedFps();
 
-            int sliderVal = (int)(this.FindControl<Slider>("QualitySlider")?.Value ?? (_appSettings.Codec == "h264" ? 8 : 75));
+            int sliderVal = (int)(this.FindControl<Slider>(QualitySliderControlName)?.Value ?? (_appSettings.Codec == "h264" ? 8 : 75));
             if (_appSettings.Codec == "h264")
             {
                 _appSettings.BitrateMbps = sliderVal;
@@ -813,7 +816,7 @@ namespace LanScreenShare.Desktop
                 _appSettings.Quality = sliderVal;
             }
 
-            if (GetSelectedComboTag("ScaleComboBox") is { } tag)
+            if (GetSelectedComboTag(ScaleComboBoxControlName) is { } tag)
             {
                 _appSettings.ResolutionTag = tag;
             }
@@ -890,11 +893,13 @@ namespace LanScreenShare.Desktop
                 rtt = _streamClient.CurrentTelemetry.RttMs;
             }
 
-            qualityColor = rtt <= 0 ? "#10B981"
-                : rtt < 30 ? "#10B981"
-                : rtt < 60 ? "#3B82F6"
-                : rtt < 90 ? "#F59E0B"
-                : "#EF4444";
+            qualityColor = rtt switch
+            {
+                < 30 => "#10B981",
+                < 60 => "#3B82F6",
+                < 90 => "#F59E0B",
+                _ => "#EF4444"
+            };
         }
 
         private string FormatFpsInfo(long frames)
@@ -958,8 +963,13 @@ namespace LanScreenShare.Desktop
             UpdateCanvasSpecsUi(frames);
         }
 
-        private string FormatEngineTag() =>
-            _isHosting ? (_screenCaptureService is DxgiScreenCaptureService ? " • DXGI GPU" : " • GDI CPU") : "";
+        private string FormatEngineTag()
+        {
+            if (!_isHosting)
+                return "";
+
+            return _screenCaptureService is DxgiScreenCaptureService ? " • DXGI GPU" : " • GDI CPU";
+        }
 
         private string FormatAudioTag()
         {
@@ -1007,6 +1017,14 @@ namespace LanScreenShare.Desktop
             }
         }
 
+        private int GetDisplayFps(long frames)
+        {
+            if (frames > 0)
+                return (int)frames;
+
+            return _lastHostFps > 0 ? _lastHostFps : 0;
+        }
+
         private void UpdateCanvasSpecsUi(long frames)
         {
             if (!CanUpdateCanvasSpecs()) return;
@@ -1014,7 +1032,7 @@ namespace LanScreenShare.Desktop
             var canvasSpecs = this.FindControl<TextBlock>("CanvasSpecsText");
             if (canvasSpecs != null)
             {
-                int displayFps = frames > 0 ? (int)frames : (_lastHostFps > 0 ? _lastHostFps : 0);
+                int displayFps = GetDisplayFps(frames);
                 canvasSpecs.Text = $"{_lastFrameWidth} × {_lastFrameHeight} · {displayFps} fps";
             }
         }

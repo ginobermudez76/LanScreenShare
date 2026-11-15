@@ -14,6 +14,8 @@ namespace LanScreenShare.Desktop
     {
         #region Display, Fullscreen & Sidebars
 
+        private const string ScreenImageControlName = "ScreenImage";
+
         private void MainWindow_GlobalPointerMoved(object? sender, PointerEventArgs e)
         {
             if (!_isFullscreen || _isGameMode)
@@ -237,7 +239,7 @@ namespace LanScreenShare.Desktop
         private void ToggleStretchMode()
         {
             _currentStretchMode = _currentStretchMode == Stretch.Uniform ? Stretch.Fill : Stretch.Uniform;
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             if (screenImage != null)
             {
                 screenImage.Stretch = _currentStretchMode;
@@ -448,7 +450,7 @@ namespace LanScreenShare.Desktop
 
         private void TogglePopoutPanelVisibility(bool isPopout)
         {
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             var popoutPanel = this.FindControl<StackPanel>("PopoutActivePanel");
             if (screenImage != null) screenImage.IsVisible = !isPopout;
             if (popoutPanel != null) popoutPanel.IsVisible = isPopout;
@@ -475,7 +477,7 @@ namespace LanScreenShare.Desktop
                 popout.SetSecureDesktopState(true);
             }
 
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             if (screenImage?.Source != null)
             {
                 popout.UpdateFrame(screenImage.Source);
@@ -566,7 +568,7 @@ namespace LanScreenShare.Desktop
         private void HandlePopoutStretchModeChanged(Stretch stretch)
         {
             _currentStretchMode = stretch;
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             if (screenImage != null) screenImage.Stretch = stretch;
             var stretchBtnText = this.FindControl<TextBlock>("StretchModeButtonText");
             if (stretchBtnText != null) stretchBtnText.Text = stretch == Stretch.Uniform ? "Ajustar" : "Llenar";
@@ -588,7 +590,10 @@ namespace LanScreenShare.Desktop
                 {
                     win.Close();
                 }
-                catch { }
+                catch
+                {
+                    // Ignore errors if popout window is already closed
+                }
             }
         }
 

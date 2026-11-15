@@ -179,7 +179,10 @@ namespace LanScreenShare.Media
                         _wasapiOut.Stop();
                         _wasapiOut.Dispose();
                     }
-                    catch { }
+                    catch
+                    {
+                        // Ignore audio output stop/dispose errors
+                    }
 
                     _wasapiOut = null;
                 }

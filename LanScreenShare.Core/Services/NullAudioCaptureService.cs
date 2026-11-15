@@ -11,8 +11,8 @@ namespace LanScreenShare.Core.Services
     {
         public event EventHandler<CapturedAudioChunk>? AudioCaptured
         {
-            add { }
-            remove { }
+            add { /* No-op en implementación nula multiplataforma */ }
+            remove { /* No-op en implementación nula multiplataforma */ }
         }
         public bool IsCapturing { get; private set; }
 

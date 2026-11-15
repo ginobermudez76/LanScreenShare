@@ -173,7 +173,10 @@ namespace LanScreenShare.Media
             {
                 Thread.CurrentThread.Priority = ThreadPriority.Highest;
             }
-            catch { }
+            catch
+            {
+                // Ignore if thread priority elevation is not permitted
+            }
 
             var stopwatch = new Stopwatch();
             var fpsTracker = new HostFpsTracker();
@@ -358,6 +361,27 @@ namespace LanScreenShare.Media
                 if (HdcDest != IntPtr.Zero) DeleteDC(HdcDest);
                 if (HdcSrc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, HdcSrc);
             }
+
+            [DllImport("user32.dll")]
+            private static extern IntPtr GetDC(IntPtr hWnd);
+
+            [DllImport("user32.dll")]
+            private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool DeleteDC(IntPtr hDC);
+
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool DeleteObject(IntPtr hObject);
+
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr CreateDIBSection(IntPtr hdc, [In] ref BITMAPINFO pbmi, uint iUsage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
         }
 
         private static int ComputeTargetDimension(int customTarget, int original, double scale)
@@ -506,29 +530,8 @@ namespace LanScreenShare.Media
         private const int SM_CXSCREEN = 0;
         private const int SM_CYSCREEN = 1;
 
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetDC(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-
-        [DllImport("gdi32.dll")]
-        private static extern IntPtr CreateCompatibleDC(IntPtr hDC);
-
-        [DllImport("gdi32.dll")]
-        private static extern bool DeleteDC(IntPtr hDC);
-
-        [DllImport("gdi32.dll")]
-        private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
-
-        [DllImport("gdi32.dll")]
-        private static extern bool DeleteObject(IntPtr hObject);
-
         [DllImport("gdi32.dll")]
         private static extern bool BitBlt(IntPtr hObject, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hObjectSource, int nXSrc, int nYSrc, int dwRop);
-
-        [DllImport("gdi32.dll")]
-        private static extern IntPtr CreateDIBSection(IntPtr hdc, [In] ref BITMAPINFO pbmi, uint iUsage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
 
         [DllImport("user32.dll")]
         private static extern int GetSystemMetrics(int nIndex);

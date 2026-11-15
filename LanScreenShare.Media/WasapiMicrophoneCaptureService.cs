@@ -122,13 +122,19 @@ namespace LanScreenShare.Media
                 {
                     captureInstance.StopRecording();
                 }
-                catch { }
+                catch
+                {
+                    // Ignore StopRecording errors if microphone was disconnected
+                }
 
                 try
                 {
                     captureInstance.Dispose();
                 }
-                catch { }
+                catch
+                {
+                    // Ignore disposal errors on microphone capture instance
+                }
 
                 Console.WriteLine("[WASAPI Mic] Captura de micrófono detenida.");
             }

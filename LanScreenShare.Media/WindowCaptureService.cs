@@ -168,7 +168,14 @@ namespace LanScreenShare.Media
 
         private void CaptureLoop(CancellationToken token)
         {
-            try { Thread.CurrentThread.Priority = ThreadPriority.Highest; } catch { }
+            try
+            {
+                Thread.CurrentThread.Priority = ThreadPriority.Highest;
+            }
+            catch
+            {
+                // Ignore if thread priority elevation is not permitted
+            }
 
             var stopwatch = new Stopwatch();
             var tracker = new WindowFpsTracker();
@@ -323,6 +330,27 @@ namespace LanScreenShare.Media
                 if (HdcMem != IntPtr.Zero) DeleteDC(HdcMem);
                 if (HdcWindow != IntPtr.Zero) ReleaseDC(Hwnd, HdcWindow);
             }
+
+            [DllImport("user32.dll")]
+            private static extern IntPtr GetDC(IntPtr hWnd);
+
+            [DllImport("user32.dll")]
+            private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool DeleteDC(IntPtr hdc);
+
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+
+            [DllImport("gdi32.dll")]
+            private static extern bool DeleteObject(IntPtr hObject);
+
+            [DllImport("gdi32.dll")]
+            private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO pbmi, uint iUsage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
         }
 
         private static (SKBitmap bitmapToEncode, SKBitmap? disposableBitmap, int finalWidth, int finalHeight) PrepareEncodingBitmap(
@@ -528,27 +556,6 @@ namespace LanScreenShare.Media
 
         [DllImport("user32.dll")]
         private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetDC(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-
-        [DllImport("gdi32.dll")]
-        private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-
-        [DllImport("gdi32.dll")]
-        private static extern bool DeleteDC(IntPtr hdc);
-
-        [DllImport("gdi32.dll")]
-        private static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
-
-        [DllImport("gdi32.dll")]
-        private static extern bool DeleteObject(IntPtr hObject);
-
-        [DllImport("gdi32.dll")]
-        private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO pbmi, uint iUsage, out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
 
         [DllImport("user32.dll")]
         private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);

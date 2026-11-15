@@ -15,6 +15,9 @@ namespace LanScreenShare.Desktop
 {
     public partial class StreamPopoutWindow : Window
     {
+        private const string StreamHeaderBarName = "StreamHeaderBar";
+        private const string StreamFooterBarName = "StreamFooterBar";
+
         public event Action? ReattachRequested;
         public event Action? DisconnectRequested;
         public event Action<bool>? RemoteControlToggled;
@@ -59,7 +62,7 @@ namespace LanScreenShare.Desktop
             _headerAutoHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
             _headerAutoHideTimer.Tick += OnHeaderAutoHideTick;
 
-            var headerBar = this.FindControl<Border>("StreamHeaderBar");
+            var headerBar = this.FindControl<Border>(StreamHeaderBarName);
             if (headerBar != null)
             {
                 headerBar.PointerEntered += (s, e) =>
@@ -82,7 +85,7 @@ namespace LanScreenShare.Desktop
             _footerAutoHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
             _footerAutoHideTimer.Tick += OnFooterAutoHideTick;
 
-            var footerBar = this.FindControl<Border>("StreamFooterBar");
+            var footerBar = this.FindControl<Border>(StreamFooterBarName);
             if (footerBar != null)
             {
                 footerBar.PointerEntered += (s, e) =>
@@ -103,7 +106,7 @@ namespace LanScreenShare.Desktop
         private void OnHeaderAutoHideTick(object? sender, EventArgs e)
         {
             if (!_isFullscreen || _isMouseOverHeaderBar) return;
-            var header = this.FindControl<Border>("StreamHeaderBar");
+            var header = this.FindControl<Border>(StreamHeaderBarName);
             if (header != null) header.IsVisible = false;
             _headerAutoHideTimer.Stop();
         }
@@ -111,7 +114,7 @@ namespace LanScreenShare.Desktop
         private void OnFooterAutoHideTick(object? sender, EventArgs e)
         {
             if (_isMouseOverFooterBar) return;
-            var footer = this.FindControl<Border>("StreamFooterBar");
+            var footer = this.FindControl<Border>(StreamFooterBarName);
             if (footer != null) footer.IsVisible = false;
             _footerAutoHideTimer.Stop();
         }
@@ -354,11 +357,11 @@ namespace LanScreenShare.Desktop
 
             if (_isFullscreen)
             {
-                var headerBar = this.FindControl<Border>("StreamHeaderBar");
+                var headerBar = this.FindControl<Border>(StreamHeaderBarName);
                 if (headerBar != null) UpdateHeaderVisibility(headerBar, posY);
             }
 
-            var footerBar = this.FindControl<Border>("StreamFooterBar");
+            var footerBar = this.FindControl<Border>(StreamFooterBarName);
             if (footerBar != null) UpdateFooterVisibility(footerBar, posY, windowHeight);
         }
 
@@ -435,8 +438,8 @@ namespace LanScreenShare.Desktop
         private void SetFullscreen(bool fullscreen)
         {
             _isFullscreen = fullscreen;
-            var headerBar = this.FindControl<Border>("StreamHeaderBar");
-            var footerBar = this.FindControl<Border>("StreamFooterBar");
+            var headerBar = this.FindControl<Border>(StreamHeaderBarName);
+            var footerBar = this.FindControl<Border>(StreamFooterBarName);
 
             if (fullscreen)
             {
@@ -477,7 +480,7 @@ namespace LanScreenShare.Desktop
 
         private bool IsPointerOverHeaderBar(double posY)
         {
-            var header = this.FindControl<Border>("StreamHeaderBar");
+            var header = this.FindControl<Border>(StreamHeaderBarName);
             if (header == null || !header.IsVisible) return false;
             double headerHeight = header.Bounds.Height > 0 ? header.Bounds.Height : 50;
             return posY <= headerHeight;
@@ -485,7 +488,7 @@ namespace LanScreenShare.Desktop
 
         private bool IsPointerOverFooterBar(double posY)
         {
-            var footer = this.FindControl<Border>("StreamFooterBar");
+            var footer = this.FindControl<Border>(StreamFooterBarName);
             if (footer == null || !footer.IsVisible) return false;
             double windowHeight = this.Bounds.Height > 0 ? this.Bounds.Height : this.ClientSize.Height;
             double footerHeight = footer.Bounds.Height > 0 ? footer.Bounds.Height : 50;

@@ -302,8 +302,8 @@ namespace LanScreenShare.Network.Streaming
         public Task DisconnectAsync()
         {
             _cts?.Cancel();
-            try { _stream?.Dispose(); } catch { }
-            try { _client?.Close(); _client?.Dispose(); } catch { }
+            try { _stream?.Dispose(); } catch { /* Ignore stream disposal error on disconnect */ }
+            try { _client?.Close(); _client?.Dispose(); } catch { /* Ignore client disposal error on disconnect */ }
 
             _stream = null;
             _client = null;

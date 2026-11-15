@@ -154,7 +154,7 @@ public class WindowsDpapiIdentityKeyStorage : IIdentityKeyStorage
         {
             if (File.Exists(tempPath))
             {
-                try { File.Delete(tempPath); } catch { }
+                try { File.Delete(tempPath); } catch { /* Ignorar error de limpieza de archivo temporal */ }
             }
         }
 

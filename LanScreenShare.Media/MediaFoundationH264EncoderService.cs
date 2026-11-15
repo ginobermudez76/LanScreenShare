@@ -213,12 +213,26 @@ namespace LanScreenShare.Media
 
         private static void TrySetAttribute(IMFAttributes attrs, Guid key, int value)
         {
-            try { attrs.Set(key, value); } catch { }
+            try
+            {
+                attrs.Set(key, value);
+            }
+            catch
+            {
+                // Ignore unsupported MFT attribute
+            }
         }
 
         private static void TrySetAttribute(IMFAttributes attrs, Guid key, uint value)
         {
-            try { attrs.Set(key, value); } catch { }
+            try
+            {
+                attrs.Set(key, value);
+            }
+            catch
+            {
+                // Ignore unsupported MFT attribute
+            }
         }
 
         private static void ApplyEncoderAttributes(IMFTransform encoder, int fps)
@@ -242,7 +256,14 @@ namespace LanScreenShare.Media
 
         private static void TrySetCodecValue(ICodecAPI codecApi, Guid key, object value)
         {
-            try { codecApi.SetValue(key, ref value); } catch { }
+            try
+            {
+                codecApi.SetValue(key, ref value);
+            }
+            catch
+            {
+                // Ignore unsupported ICodecAPI property
+            }
         }
 
         private static void TrySetCodecValueWithFallback(ICodecAPI codecApi, Guid key, object primary, object fallback)
@@ -281,7 +302,10 @@ namespace LanScreenShare.Media
                     codecApi = (ICodecAPI)Marshal.GetObjectForIUnknown(pCodecApi);
                     ApplyCodecApiValues(codecApi, fps);
                 }
-                catch { }
+                catch
+                {
+                    // Ignore COM errors when configuring optional codec API properties
+                }
                 finally
                 {
                     if (codecApi != null && Marshal.IsComObject(codecApi))

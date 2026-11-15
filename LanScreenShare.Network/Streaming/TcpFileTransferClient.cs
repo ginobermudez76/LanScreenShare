@@ -280,7 +280,7 @@ namespace LanScreenShare.Network.Streaming
             if (cancel != null && _inboundTransfers.TryRemove(cancel.TransferId, out var inbound))
             {
                 inbound.Dispose();
-                try { if (File.Exists(inbound.DestinationPath)) File.Delete(inbound.DestinationPath); } catch { }
+                try { if (File.Exists(inbound.DestinationPath)) File.Delete(inbound.DestinationPath); } catch { /* Ignore partial file deletion failure */ }
                 TransferError?.Invoke(this, new FileTransferError
                 {
                     TransferId = inbound.TransferId,
@@ -544,14 +544,17 @@ namespace LanScreenShare.Network.Streaming
                     _sendLock.Release();
                 }
             }
-            catch { }
+            catch
+            {
+                // Ignore network failure while sending cancel packet
+            }
         }
 
         public Task DisconnectAsync()
         {
             _cts?.Cancel();
-            try { _stream?.Dispose(); } catch { }
-            try { _client?.Close(); } catch { }
+            try { _stream?.Dispose(); } catch { /* Ignore stream disposal error */ }
+            try { _client?.Close(); } catch { /* Ignore client close error */ }
             _stream = null;
             _client = null;
             return Task.CompletedTask;

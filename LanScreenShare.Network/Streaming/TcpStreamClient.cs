@@ -119,11 +119,17 @@ namespace LanScreenShare.Network.Streaming
             }
             finally
             {
-                string reason = state.EndedByHost
-                    ? "El anfitrión ha finalizado la transmisión"
-                    : (token.IsCancellationRequested ? "Desconectado" : "Conexión perdida con el anfitrión");
+                string reason = GetDisconnectReason(state.EndedByHost, token.IsCancellationRequested);
                 await DisconnectInternalAsync(reason);
             }
+        }
+
+        private static string GetDisconnectReason(bool endedByHost, bool isCancelled)
+        {
+            if (endedByHost)
+                return "El anfitrión ha finalizado la transmisión";
+
+            return isCancelled ? "Desconectado" : "Conexión perdida con el anfitrión";
         }
 
         private static bool IsValidPayload(int dataLength) =>
@@ -223,7 +229,10 @@ namespace LanScreenShare.Network.Streaming
                     await stream.WriteAsync(telemetryBytes.AsMemory(), token);
                     await stream.FlushAsync(token);
                 }
-                catch { }
+                catch
+                {
+                    // Ignore telemetry write errors if stream is closing
+                }
             }, token);
         }
 
@@ -265,8 +274,8 @@ namespace LanScreenShare.Network.Streaming
                 return Task.CompletedTask;
 
             _cts?.Cancel();
-            try { _stream?.Dispose(); } catch { }
-            try { _client?.Close(); _client?.Dispose(); } catch { }
+            try { _stream?.Dispose(); } catch { /* Ignore stream disposal error on disconnect */ }
+            try { _client?.Close(); _client?.Dispose(); } catch { /* Ignore client disposal error on disconnect */ }
 
             _stream = null;
             _client = null;

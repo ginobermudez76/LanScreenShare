@@ -480,10 +480,10 @@ namespace LanScreenShare.Desktop
 
         private async Task DisconnectViewerServicesAsync()
         {
-            try { await _streamClient.DisconnectAsync(); } catch { }
-            try { await _audioClient.DisconnectAsync(); } catch { }
-            try { await _controlClient.DisconnectAsync(); } catch { }
-            try { await _fileTransferClient.DisconnectAsync(); } catch { }
+            try { await _streamClient.DisconnectAsync(); } catch { /* Ignore disconnect errors during viewer teardown */ }
+            try { await _audioClient.DisconnectAsync(); } catch { /* Ignore disconnect errors during viewer teardown */ }
+            try { await _controlClient.DisconnectAsync(); } catch { /* Ignore disconnect errors during viewer teardown */ }
+            try { await _fileTransferClient.DisconnectAsync(); } catch { /* Ignore disconnect errors during viewer teardown */ }
         }
 
         private static bool IsDisconnectFailure(string reason) =>

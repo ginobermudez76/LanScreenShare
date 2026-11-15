@@ -106,7 +106,14 @@ namespace LanScreenShare.Media
                 GC.KeepAlive(handler);
                 if (asyncOp != null)
                 {
-                    try { Marshal.ReleaseComObject(asyncOp); } catch { }
+                    try
+                    {
+                        Marshal.ReleaseComObject(asyncOp);
+                    }
+                    catch
+                    {
+                        // Ignore COM release failure
+                    }
                 }
                 Marshal.FreeHGlobal(pProp);
                 Marshal.FreeHGlobal(pParams);
@@ -315,6 +322,7 @@ namespace LanScreenShare.Media
         {
             while (!token.IsCancellationRequested && TryReadAndDispatchPacket(waveFormat, formatEncoding))
             {
+                // Continue draining all available packets from the capture buffer
             }
         }
 
@@ -330,13 +338,19 @@ namespace LanScreenShare.Media
             {
                 _audioClient?.Stop();
             }
-            catch { }
+            catch
+            {
+                // Ignore errors stopping audio client during shutdown
+            }
 
             try
             {
                 _captureTask?.Wait(200);
             }
-            catch { }
+            catch
+            {
+                // Ignore task cancellation or timeout on stop
+            }
 
             Cleanup();
             Console.WriteLine("[ProcessAudio] Captura de audio de proceso detenida.");
@@ -351,13 +365,27 @@ namespace LanScreenShare.Media
 
             if (_audioClient != null)
             {
-                try { Marshal.ReleaseComObject(_audioClient); } catch { }
+                try
+                {
+                    Marshal.ReleaseComObject(_audioClient);
+                }
+                catch
+                {
+                    // Ignore COM release errors during cleanup
+                }
                 _audioClient = null;
             }
 
             if (_captureClient != null)
             {
-                try { Marshal.ReleaseComObject(_captureClient); } catch { }
+                try
+                {
+                    Marshal.ReleaseComObject(_captureClient);
+                }
+                catch
+                {
+                    // Ignore COM release errors during cleanup
+                }
                 _captureClient = null;
             }
 

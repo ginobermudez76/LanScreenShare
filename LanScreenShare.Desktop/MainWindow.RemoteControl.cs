@@ -146,7 +146,7 @@ namespace LanScreenShare.Desktop
             normX = 0f;
             normY = 0f;
 
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             if (!TryGetValidImageGeometry(screenImage, out var geom))
                 return false;
 
@@ -317,7 +317,7 @@ namespace LanScreenShare.Desktop
                 remoteControlBtn.Background = new SolidColorBrush(Color.Parse("#2563EB"));
             }
 
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             if (screenImage != null)
             {
                 screenImage.Focus();
@@ -350,7 +350,7 @@ namespace LanScreenShare.Desktop
 
         private void DeactivateGameModeUi()
         {
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             if (screenImage != null)
             {
                 screenImage.Cursor = Cursor.Default;
@@ -383,7 +383,7 @@ namespace LanScreenShare.Desktop
 
         private Avalonia.PixelPoint GetScreenImageCenterOnScreen()
         {
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             if (screenImage != null && HasPositiveDimensions(screenImage.Bounds))
             {
                 int imgCenterX = this.Position.X + (int)Math.Round(screenImage.Bounds.X + (screenImage.Bounds.Width / 2.0));
@@ -491,19 +491,24 @@ namespace LanScreenShare.Desktop
             }
         }
 
+        private static RemoteMouseButton GetPressedMouseButton(PointerPointProperties props)
+        {
+            if (props.IsLeftButtonPressed) return RemoteMouseButton.Left;
+            if (props.IsRightButtonPressed) return RemoteMouseButton.Right;
+            if (props.IsMiddleButtonPressed) return RemoteMouseButton.Middle;
+            return RemoteMouseButton.None;
+        }
+
         private void ScreenImage_PointerPressed(object? sender, PointerPressedEventArgs e)
         {
             if (!CanProcessPointerInput(e))
                 return;
 
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             screenImage?.Focus();
 
             var props = e.GetCurrentPoint(screenImage).Properties;
-            RemoteMouseButton button = props.IsLeftButtonPressed ? RemoteMouseButton.Left
-                : props.IsRightButtonPressed ? RemoteMouseButton.Right
-                : props.IsMiddleButtonPressed ? RemoteMouseButton.Middle
-                : RemoteMouseButton.None;
+            RemoteMouseButton button = GetPressedMouseButton(props);
 
             if (button != RemoteMouseButton.None)
             {
@@ -516,7 +521,7 @@ namespace LanScreenShare.Desktop
             if (!CanProcessPointerInput(e))
                 return;
 
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
             var props = e.GetCurrentPoint(screenImage).Properties;
 
             RemoteMouseButton button = props.PointerUpdateKind switch
