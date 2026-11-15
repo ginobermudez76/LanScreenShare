@@ -57,8 +57,13 @@ jobs:
             /d:sonar.cs.vscoveragexml.reportsPaths="**/TestResults/**/*.xml" `
             /d:sonar.coverage.exclusions="**/obj/**,scripts/**,LanScreenShare.Desktop/**/*Window*.cs,LanScreenShare.Desktop/App.axaml.cs,LanScreenShare.Desktop/Program.cs,LanScreenShare.Media/DxgiScreenCaptureService.cs,LanScreenShare.Media/WindowsScreenCaptureService.cs,LanScreenShare.Media/WindowCaptureService.cs,LanScreenShare.Media/CaptureSourceDiscoveryService.cs,LanScreenShare.Media/ProcessLoopbackAudioCapture.cs,LanScreenShare.Media/WasapiAudioCaptureService.cs,LanScreenShare.Media/WasapiAudioPlayerService.cs,LanScreenShare.Media/WasapiMicrophoneCaptureService.cs,LanScreenShare.Media/WindowsInputSimulatorService.cs,LanScreenShare.Media/MediaFoundationH264EncoderService.cs,LanScreenShare.Media/MediaFoundationH264DecoderService.cs,LanScreenShare.Media/HardwareMftEncoderDiscovery.cs,LanScreenShare.Media/WindowsDesktopManager.cs"
           dotnet build --configuration Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet test --configuration Release --no-build --logger trx --collect:"Code Coverage;Format=xml" --results-directory TestResults
+          $testExit = $LASTEXITCODE
           dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
+          $scannerExit = $LASTEXITCODE
+          if ($testExit -ne 0) { exit $testExit }
+          if ($scannerExit -ne 0) { exit $scannerExit }
 
       - name: Report SonarCloud PR Issues & Coverage
         if: ${{ !cancelled() }}
@@ -79,6 +84,7 @@ jobs:
           $trxFiles = Get-ChildItem -Path "TestResults" -Recurse -Filter "*.trx" -ErrorAction SilentlyContinue
           $testTotal = 0
           $testPassed = 0
+          $testFailed = 0
           foreach ($trx in $trxFiles) {
             try {
               [xml]$trxXml = Get-Content $trx.FullName
@@ -86,13 +92,22 @@ jobs:
               if ($counters) {
                 $testTotal += [int]$counters.total
                 $testPassed += [int]$counters.passed
+                $testFailed += [int]$counters.failed
               }
             } catch { }
           }
-          $unitTestsDisplay = if ($testTotal -gt 0) { "$testPassed / $testTotal passed" } else { "N/A" }
+          $testSkipped = [Math]::Max(0, $testTotal - $testPassed - $testFailed)
+          $unitTestsDisplay = if ($testTotal -gt 0) {
+            if ($testFailed -gt 0) { "$testPassed passed, $testFailed failed, $testSkipped skipped ($testTotal total)" }
+            elseif ($testSkipped -gt 0) { "$testPassed passed, $testSkipped skipped ($testTotal total)" }
+            else { "$testPassed / $testTotal passed" }
+          } else { "N/A" }
 
           $taskStatus = "MISSING_REPORT"
-          $reportTask = Get-ChildItem -Path ".sonarqube" -Recurse -Filter "report-task.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $reportTask = Get-ChildItem -Path ".sonarqube" -Force -Recurse -Filter "report-task.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $reportTask) {
+            $reportTask = Get-ChildItem -Path ".sonar" -Force -Recurse -Filter "report-task.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
           if ($reportTask) {
             $ceLine = Get-Content $reportTask.FullName | Where-Object { $_ -like "ceTaskId=*" } | Select-Object -First 1
             if ($ceLine) {
@@ -147,7 +162,17 @@ jobs:
 
             $qgStatus = $qg.projectStatus.status
             $qgIcon = if ($qgStatus -eq "OK") { "✅ PASSED" } else { "❌ FAILED ($qgStatus)" }
-            $covVal = if ($env:PR_NUMBER) { $m['new_coverage'] } else { $m['coverage'] }
+            $newCovVal = $m['new_coverage']
+            $overallCovVal = $m['coverage']
+            $covDisplay = if ($env:PR_NUMBER) {
+              $newTxt = if ($newCovVal) { "$newCovVal% (New)" } else { "N/A (New)" }
+              $allTxt = if ($overallCovVal) { "$overallCovVal% (Overall)" } else { "N/A (Overall)" }
+              "$newTxt / $allTxt"
+            } elseif ($overallCovVal) {
+              "$overallCovVal%"
+            } else {
+              "N/A"
+            }
             $dupVal = if ($env:PR_NUMBER) { $m['new_duplicated_lines_density'] } else { $m['duplicated_lines_density'] }
 
             [void]$sb.AppendLine("## SonarQube Cloud Report — $qgIcon")
@@ -155,7 +180,7 @@ jobs:
             [void]$sb.AppendLine("| Metric | Value |")
             [void]$sb.AppendLine("| --- | --- |")
             [void]$sb.AppendLine("| Quality Gate | **$qgStatus** |")
-            [void]$sb.AppendLine("| Coverage | $(if ($covVal) { "$covVal%" } else { "N/A" }) |")
+            [void]$sb.AppendLine("| Coverage | $covDisplay |")
             [void]$sb.AppendLine("| Duplications | $(if ($dupVal) { "$dupVal%" } else { "N/A" }) |")
             [void]$sb.AppendLine("| Open Issues | **$($issuesResp.total)** |")
             [void]$sb.AppendLine("| Unit Tests | $unitTestsDisplay |")

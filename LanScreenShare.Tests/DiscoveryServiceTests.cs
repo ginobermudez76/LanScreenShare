@@ -13,10 +13,13 @@ namespace LanScreenShare.Tests;
 [TestClass]
 public class DiscoveryServiceTests
 {
-    private static UdpReceiveResult BuildDatagram(string payload, string remoteIp = "192.168.1.55", int port = 11000)
+    private sealed record DatagramInput(string Payload, string RemoteIp = "192.168.1.55", int Port = 11000);
+    private sealed record ProbeContext(int Port, Task<DeviceInfo> DiscoveredTask, Task? ListenerTask);
+
+    private static UdpReceiveResult BuildDatagram(DatagramInput input)
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(payload);
-        return new UdpReceiveResult(bytes, new IPEndPoint(IPAddress.Parse(remoteIp), port));
+        byte[] bytes = Encoding.UTF8.GetBytes(input.Payload);
+        return new UdpReceiveResult(bytes, new IPEndPoint(IPAddress.Parse(input.RemoteIp), input.Port));
     }
 
     private static int GetAvailableUdpPort()
@@ -25,40 +28,51 @@ public class DiscoveryServiceTests
         return ((IPEndPoint)probe.Client.LocalEndPoint!).Port;
     }
 
-    [DataTestMethod]
-    [DataRow("LAN_SCREEN_SHARE_HOST|PC-REMOTA|192.168.1.50|1", "PC-REMOTA", "192.168.1.50", true)]
-    [DataRow("LAN_SCREEN_SHARE_HOST|PC-VIEW-ONLY|10.0.0.25|0", "PC-VIEW-ONLY", "10.0.0.25", false)]
-    [DataRow("LAN_SCREEN_SHARE_HOST|PC-LEGACY|10.0.0.30", "PC-LEGACY", "10.0.0.30", true)]
-    public void ProcessIncomingDatagram_ValidHostFormats_RaisesExpectedDeviceInfo(
-        string payload,
-        string expectedName,
-        string expectedIp,
-        bool expectedRemoteControl)
+    [TestMethod]
+    public void ProcessIncomingDatagram_ValidHostFormats_RaisesExpectedDeviceInfo()
     {
-        var service = new DiscoveryService();
-        DeviceInfo? discovered = null;
-        service.OnDeviceDiscovered += (_, device) => discovered = device;
+        var cases = new[]
+        {
+            new { Payload = "LAN_SCREEN_SHARE_HOST|PC-REMOTA|192.168.1.50|1", Name = "PC-REMOTA", Ip = "192.168.1.50", RemoteControl = true },
+            new { Payload = "LAN_SCREEN_SHARE_HOST|PC-VIEW-ONLY|10.0.0.25|0", Name = "PC-VIEW-ONLY", Ip = "10.0.0.25", RemoteControl = false },
+            new { Payload = "LAN_SCREEN_SHARE_HOST|PC-LEGACY|10.0.0.30", Name = "PC-LEGACY", Ip = "10.0.0.30", RemoteControl = true }
+        };
 
-        service.ProcessIncomingDatagram(BuildDatagram(payload));
+        foreach (var item in cases)
+        {
+            var service = new DiscoveryService();
+            DeviceInfo? discovered = null;
+            service.OnDeviceDiscovered += (_, device) => discovered = device;
 
-        Assert.IsNotNull(discovered);
-        Assert.AreEqual(expectedName, discovered.Name);
-        Assert.IsTrue(discovered.IPAddress == expectedIp && discovered.IsRemoteControlAllowed == expectedRemoteControl);
+            service.ProcessIncomingDatagram(BuildDatagram(new DatagramInput(item.Payload)));
+
+            Assert.IsNotNull(discovered);
+            Assert.AreEqual(
+                (item.Name, item.Ip, item.RemoteControl),
+                (discovered.Name, discovered.IPAddress, discovered.IsRemoteControlAllowed));
+        }
     }
 
-    [DataTestMethod]
-    [DataRow("WRONG_PREFIX|PC|10.0.0.5|1", "192.168.1.55")]
-    [DataRow("LAN_SCREEN_SHARE_HOST|ONLY_TWO", "192.168.1.55")]
-    [DataRow("", "192.168.1.55")]
-    public void ProcessIncomingDatagram_InvalidPayloads_DoesNotRaiseEvent(string payload, string remoteIp)
+    [TestMethod]
+    public void ProcessIncomingDatagram_InvalidPayloads_DoesNotRaiseEvent()
     {
-        var service = new DiscoveryService();
-        int count = 0;
-        service.OnDeviceDiscovered += (_, _) => count++;
+        var cases = new[]
+        {
+            "WRONG_PREFIX|PC|10.0.0.5|1",
+            "LAN_SCREEN_SHARE_HOST|ONLY_TWO",
+            string.Empty
+        };
 
-        service.ProcessIncomingDatagram(BuildDatagram(payload, remoteIp));
+        foreach (string payload in cases)
+        {
+            var service = new DiscoveryService();
+            int count = 0;
+            service.OnDeviceDiscovered += (_, _) => count++;
 
-        Assert.AreEqual(0, count);
+            service.ProcessIncomingDatagram(BuildDatagram(new DatagramInput(payload)));
+
+            Assert.AreEqual(0, count);
+        }
     }
 
     [TestMethod]
@@ -68,40 +82,61 @@ public class DiscoveryServiceTests
         int count = 0;
         service.OnDeviceDiscovered += (_, _) => count++;
 
-        service.ProcessIncomingDatagram(BuildDatagram($"LAN_SCREEN_SHARE_HOST|{Environment.MachineName}|127.0.0.1|1", "127.0.0.1"));
+        service.ProcessIncomingDatagram(
+            BuildDatagram(new DatagramInput($"LAN_SCREEN_SHARE_HOST|{Environment.MachineName}|127.0.0.1|1", "127.0.0.1")));
 
         Assert.AreEqual(0, count);
     }
 
-    [DataTestMethod]
-    [DataRow("127.0.0.1", "192.168.1.99", "192.168.1.99")]
-    [DataRow("169.254.12.34", "192.168.1.99", "192.168.1.99")]
-    [DataRow("   ", "192.168.1.99", "192.168.1.99")]
-    [DataRow("10.0.5.20", "192.168.1.99", "10.0.5.20")]
-    public void ResolveFinalIp_SelectsValidOrFallbackIp(string reportedIp, string remoteIp, string expectedIp)
+    [TestMethod]
+    public void ResolveFinalIp_SelectsValidOrFallbackIp()
     {
-        Assert.AreEqual(expectedIp, DiscoveryService.ResolveFinalIp(reportedIp, remoteIp));
+        var cases = new[]
+        {
+            new { ReportedIp = "127.0.0.1", RemoteIp = "192.168.1.99", ExpectedIp = "192.168.1.99" },
+            new { ReportedIp = "169.254.12.34", RemoteIp = "192.168.1.99", ExpectedIp = "192.168.1.99" },
+            new { ReportedIp = "   ", RemoteIp = "192.168.1.99", ExpectedIp = "192.168.1.99" },
+            new { ReportedIp = "10.0.5.20", RemoteIp = "192.168.1.99", ExpectedIp = "10.0.5.20" }
+        };
+
+        foreach (var item in cases)
+        {
+            Assert.AreEqual(item.ExpectedIp, DiscoveryService.ResolveFinalIp(item.ReportedIp, item.RemoteIp));
+        }
     }
 
-    [DataTestMethod]
-    [DataRow(false, "OTHER-HOST-XYZ", "127.0.0.1", "127.0.0.1")]
-    [DataRow(true, null, "127.0.0.1", "10.0.0.2")]
-    [DataRow(true, null, "10.0.0.2", "127.0.0.1")]
-    [DataRow(false, null, "198.51.100.250", "198.51.100.251")]
-    public void IsSelfMessage_DistinguishesLocalVsRemoteHosts(bool expected, string? senderOverride, string reportedIp, string remoteIp)
+    [TestMethod]
+    public void IsSelfMessage_DistinguishesLocalVsRemoteHosts()
     {
-        string sender = senderOverride ?? Environment.MachineName;
-        Assert.AreEqual(expected, DiscoveryService.IsSelfMessage(sender, reportedIp, remoteIp));
+        var cases = new[]
+        {
+            new { Expected = false, Sender = "OTHER-HOST-XYZ", ReportedIp = "127.0.0.1", RemoteIp = "127.0.0.1" },
+            new { Expected = true, Sender = Environment.MachineName, ReportedIp = "127.0.0.1", RemoteIp = "10.0.0.2" },
+            new { Expected = true, Sender = Environment.MachineName, ReportedIp = "10.0.0.2", RemoteIp = "127.0.0.1" },
+            new { Expected = false, Sender = Environment.MachineName, ReportedIp = "198.51.100.250", RemoteIp = "198.51.100.251" }
+        };
+
+        foreach (var item in cases)
+        {
+            Assert.AreEqual(item.Expected, DiscoveryService.IsSelfMessage(item.Sender, item.ReportedIp, item.RemoteIp));
+        }
     }
 
-    [DataTestMethod]
-    [DataRow("::1", false)]
-    [DataRow("127.0.0.1", false)]
-    [DataRow("169.254.1.10", false)]
-    [DataRow("192.168.10.5", true)]
-    public void IsEligibleIpv4_FiltersLoopbackApipaAndIpv6(string ipText, bool expected)
+    [TestMethod]
+    public void IsEligibleIpv4_FiltersLoopbackApipaAndIpv6()
     {
-        Assert.AreEqual(expected, DiscoveryService.IsEligibleIpv4(IPAddress.Parse(ipText)));
+        var cases = new[]
+        {
+            new { IpText = "::1", Expected = false },
+            new { IpText = "127.0.0.1", Expected = false },
+            new { IpText = "169.254.1.10", Expected = false },
+            new { IpText = "192.168.10.5", Expected = true }
+        };
+
+        foreach (var item in cases)
+        {
+            Assert.AreEqual(item.Expected, DiscoveryService.IsEligibleIpv4(IPAddress.Parse(item.IpText)));
+        }
     }
 
     [TestMethod]
@@ -139,11 +174,10 @@ public class DiscoveryServiceTests
             service.StartListening();
             service.StartListening();
 
-            await SendProbeUntilDiscoveredAsync(probePort, discoveredTcs.Task, service.ListenerTask);
+            await SendProbeUntilDiscoveredAsync(new ProbeContext(probePort, discoveredTcs.Task, service.ListenerTask));
             var discovered = await discoveredTcs.Task;
 
-            Assert.AreEqual("REMOTE-PROBE", discovered.Name);
-            Assert.AreEqual("192.0.2.10", discovered.IPAddress);
+            Assert.AreEqual(("REMOTE-PROBE", "192.0.2.10"), (discovered.Name, discovered.IPAddress));
         }
         finally
         {
@@ -154,22 +188,22 @@ public class DiscoveryServiceTests
         }
     }
 
-    private static async Task SendProbeUntilDiscoveredAsync(int port, Task<DeviceInfo> discoveredTask, Task? listenerTask)
+    private static async Task SendProbeUntilDiscoveredAsync(ProbeContext context)
     {
         using var sender = new UdpClient();
         byte[] payload = Encoding.UTF8.GetBytes("LAN_SCREEN_SHARE_HOST|REMOTE-PROBE|192.0.2.10|1");
-        var endpoint = new IPEndPoint(IPAddress.Loopback, port);
+        var endpoint = new IPEndPoint(IPAddress.Loopback, context.Port);
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
 
-        while (!discoveredTask.IsCompleted)
+        while (!context.DiscoveredTask.IsCompleted)
         {
-            if (listenerTask?.IsFaulted == true)
+            if (context.ListenerTask?.IsFaulted == true)
             {
-                await listenerTask;
+                await context.ListenerTask;
             }
 
             await sender.SendAsync(payload, payload.Length, endpoint);
-            await Task.WhenAny(discoveredTask, Task.Delay(50, timeoutCts.Token));
+            await Task.WhenAny(context.DiscoveredTask, Task.Delay(50, timeoutCts.Token));
             timeoutCts.Token.ThrowIfCancellationRequested();
         }
     }

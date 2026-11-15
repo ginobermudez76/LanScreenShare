@@ -22,7 +22,6 @@ namespace LanScreenShare.Network
         private readonly int _discoveryPort;
         private CancellationTokenSource? _hostCts;
         private CancellationTokenSource? _listenCts;
-        internal Task? HostTask { get; private set; }
         internal Task? ListenerTask { get; private set; }
 
         public DiscoveryService(int discoveryPort = DefaultDiscoveryPort)
@@ -41,7 +40,7 @@ namespace LanScreenShare.Network
             _hostCts = new CancellationTokenSource();
             var token = _hostCts.Token;
 
-            HostTask = Task.Run(async () =>
+            Task.Run(async () =>
             {
                 var pcName = Environment.MachineName;
 
@@ -109,7 +108,7 @@ namespace LanScreenShare.Network
             _listenCts = new CancellationTokenSource();
             var token = _listenCts.Token;
 
-            HostTask = Task.Run(async () =>
+            ListenerTask = Task.Run(async () =>
             {
                 using var udpClient = new UdpClient();
                 udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);

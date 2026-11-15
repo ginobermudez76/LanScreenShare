@@ -90,32 +90,32 @@ public class CoreModelsAndServicesTests
         Assert.AreEqual(4, decoded.Pixels.Length);
     }
 
-    [DataTestMethod]
-    [DataRow(0, 0, 0, 0L, NetworkQuality.Unknown, "Calculando...", "#94A3B8")]
-    [DataRow(12, 60, 60, 0L, NetworkQuality.Excellent, "Excelente", "#10B981")]
-    [DataRow(35, 60, 60, 1L, NetworkQuality.Good, "Buena", "#3B82F6")]
-    [DataRow(70, 60, 60, 10L, NetworkQuality.Fair, "Moderada", "#F59E0B")]
-    [DataRow(150, 60, 60, 25L, NetworkQuality.Poor, "Inestable", "#EF4444")]
-    public void StreamTelemetry_EvaluatesAllNetworkQualityTiers(
-        int rtt,
-        int hostFps,
-        int viewerFps,
-        long drops,
-        NetworkQuality expectedQuality,
-        string expectedText,
-        string expectedHex)
+    [TestMethod]
+    public void StreamTelemetry_EvaluatesAllNetworkQualityTiers()
     {
-        var telemetry = new StreamTelemetry
+        var cases = new[]
         {
-            RttMs = rtt,
-            HostFps = hostFps,
-            ViewerFps = viewerFps,
-            DroppedFrames = drops
+            new { Rtt = 0, HostFps = 0, ViewerFps = 0, Drops = 0L, Quality = NetworkQuality.Unknown, Text = "Calculando...", Hex = "#94A3B8" },
+            new { Rtt = 12, HostFps = 60, ViewerFps = 60, Drops = 0L, Quality = NetworkQuality.Excellent, Text = "Excelente", Hex = "#10B981" },
+            new { Rtt = 35, HostFps = 60, ViewerFps = 60, Drops = 1L, Quality = NetworkQuality.Good, Text = "Buena", Hex = "#3B82F6" },
+            new { Rtt = 70, HostFps = 60, ViewerFps = 60, Drops = 10L, Quality = NetworkQuality.Fair, Text = "Moderada", Hex = "#F59E0B" },
+            new { Rtt = 150, HostFps = 60, ViewerFps = 60, Drops = 25L, Quality = NetworkQuality.Poor, Text = "Inestable", Hex = "#EF4444" }
         };
 
-        Assert.AreEqual(expectedQuality, telemetry.Quality);
-        Assert.AreEqual(expectedText, telemetry.QualityText);
-        Assert.AreEqual(expectedHex, telemetry.QualityColorHex);
+        foreach (var item in cases)
+        {
+            var telemetry = new StreamTelemetry
+            {
+                RttMs = item.Rtt,
+                HostFps = item.HostFps,
+                ViewerFps = item.ViewerFps,
+                DroppedFrames = item.Drops
+            };
+
+            Assert.AreEqual(
+                (item.Quality, item.Text, item.Hex),
+                (telemetry.Quality, telemetry.QualityText, telemetry.QualityColorHex));
+        }
     }
 
     [TestMethod]
