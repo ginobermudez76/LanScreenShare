@@ -4,8 +4,8 @@ using System.Runtime.InteropServices.Marshalling;
 using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Win32.SafeHandles;
 using LanScreenShare.Core.Models;
+using Microsoft.Win32.SafeHandles;
 using NAudio.Wave;
 
 namespace LanScreenShare.Media
