@@ -234,107 +234,149 @@ namespace LanScreenShare.Media
         private static bool NeedsResize(int targetW, int targetH, int width, int height) =>
             targetW > 0 && targetH > 0 && (targetW != width || targetH != height);
 
+        private static int ComputeTargetDimension(int customTarget, int original, double scale)
+        {
+            if (customTarget > 0) return customTarget & ~1;
+            if (scale > 0.2 && scale < 0.99) return ((int)(original * scale)) & ~1;
+            return 0;
+        }
+
         private static bool IsCursorShowing(in CURSORINFO pci) =>
             pci.flags == CURSOR_SHOWING && pci.hCursor != IntPtr.Zero;
 
         private static bool IsInsideBounds(int x, int y, int width, int height) =>
             x >= 0 && x < width && y >= 0 && y < height;
 
-        private CapturedFrame? CaptureWindowFrame(IntPtr hwnd, in WindowCaptureOptions options)
+        private static bool TryGetEvenClientDimensions(IntPtr hwnd, out int width, out int height)
         {
+            width = 0;
+            height = 0;
             if (!GetClientRect(hwnd, out RECT clientRect))
-                return null;
+                return false;
 
-            int width = clientRect.Right - clientRect.Left;
-            int height = clientRect.Bottom - clientRect.Top;
+            width = (clientRect.Right - clientRect.Left) & ~1;
+            height = (clientRect.Bottom - clientRect.Top) & ~1;
+            return width >= 2 && height >= 2;
+        }
 
-            if (width <= 0 || height <= 0)
-                return null;
+        private sealed class GdiWindowCaptureSession : IDisposable
+        {
+            public IntPtr Hwnd { get; private init; }
+            public IntPtr HdcWindow { get; private init; }
+            public IntPtr HdcMem { get; private init; }
+            public IntPtr HBitmap { get; private init; }
+            public IntPtr PBits { get; private init; }
+            public IntPtr HOld { get; private init; }
 
-            IntPtr hdcWindow = GetDC(hwnd);
-            if (hdcWindow == IntPtr.Zero)
-                return null;
-
-            IntPtr hdcMem = CreateCompatibleDC(hdcWindow);
-            if (hdcMem == IntPtr.Zero)
+            public static GdiWindowCaptureSession? TryCreate(IntPtr hwnd, int width, int height)
             {
-                ReleaseDC(hwnd, hdcWindow);
-                return null;
+                IntPtr hdcWindow = GetDC(hwnd);
+                if (hdcWindow == IntPtr.Zero)
+                    return null;
+
+                IntPtr hdcMem = CreateCompatibleDC(hdcWindow);
+                if (hdcMem == IntPtr.Zero)
+                {
+                    ReleaseDC(hwnd, hdcWindow);
+                    return null;
+                }
+
+                var bmi = CreateBitmapInfo(width, height);
+                IntPtr hBitmap = CreateDIBSection(hdcMem, ref bmi, DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
+                if (!IsValidBitmapSection(hBitmap, pBits))
+                {
+                    DeleteDC(hdcMem);
+                    ReleaseDC(hwnd, hdcWindow);
+                    return null;
+                }
+
+                IntPtr hOld = SelectObject(hdcMem, hBitmap);
+                return new GdiWindowCaptureSession
+                {
+                    Hwnd = hwnd,
+                    HdcWindow = hdcWindow,
+                    HdcMem = hdcMem,
+                    HBitmap = hBitmap,
+                    PBits = pBits,
+                    HOld = hOld
+                };
             }
 
-            BITMAPINFO bmi = new BITMAPINFO();
-            bmi.bmiHeader.biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>();
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
+            private static bool IsValidBitmapSection(IntPtr hBitmap, IntPtr pBits) =>
+                hBitmap != IntPtr.Zero && pBits != IntPtr.Zero;
 
-            IntPtr hBitmap = CreateDIBSection(hdcMem, ref bmi, DIB_RGB_COLORS, out IntPtr pBits, IntPtr.Zero, 0);
-            if (hBitmap == IntPtr.Zero || pBits == IntPtr.Zero)
+            private static BITMAPINFO CreateBitmapInfo(int width, int height)
             {
-                DeleteDC(hdcMem);
-                ReleaseDC(hwnd, hdcWindow);
-                return null;
+                var bmi = new BITMAPINFO();
+                bmi.bmiHeader.biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>();
+                bmi.bmiHeader.biWidth = width;
+                bmi.bmiHeader.biHeight = -height;
+                bmi.bmiHeader.biPlanes = 1;
+                bmi.bmiHeader.biBitCount = 32;
+                bmi.bmiHeader.biCompression = BI_RGB;
+                return bmi;
             }
 
-            IntPtr hOld = SelectObject(hdcMem, hBitmap);
+            public void Dispose()
+            {
+                if (HOld != IntPtr.Zero) SelectObject(HdcMem, HOld);
+                if (HBitmap != IntPtr.Zero) DeleteObject(HBitmap);
+                if (HdcMem != IntPtr.Zero) DeleteDC(HdcMem);
+                if (HdcWindow != IntPtr.Zero) ReleaseDC(Hwnd, HdcWindow);
+            }
+        }
 
+        private static (SKBitmap bitmapToEncode, SKBitmap? disposableBitmap, int finalWidth, int finalHeight) PrepareEncodingBitmap(
+            SKBitmap skBitmap,
+            int width,
+            int height,
+            in WindowCaptureOptions options)
+        {
+            int targetW = ComputeTargetDimension(options.CustomTargetWidth, width, options.Scale);
+            int targetH = ComputeTargetDimension(options.CustomTargetHeight, height, options.Scale);
+
+            if (NeedsResize(targetW, targetH, width, height))
+            {
+                var resized = skBitmap.Resize(new SKImageInfo(targetW, targetH), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
+                if (resized != null)
+                {
+                    return (resized, resized, targetW, targetH);
+                }
+            }
+
+            return (skBitmap, null, width, height);
+        }
+
+        private (byte[]? EncodedBytes, string Codec) EncodeBitmapWithFallback(
+            SKBitmap bitmapToEncode,
+            int finalWidth,
+            int finalHeight,
+            in WindowCaptureOptions options)
+        {
+            string currentCodec = _codec;
+            byte[]? encodedBytes = currentCodec == "h264"
+                ? EncodeH264(bitmapToEncode, finalWidth, finalHeight, options.ForceKeyframe)
+                : null;
+
+            if (encodedBytes == null || encodedBytes.Length == 0)
+            {
+                currentCodec = "jpeg";
+                encodedBytes = EncodeJpeg(bitmapToEncode, options.Quality);
+            }
+
+            return (encodedBytes, currentCodec);
+        }
+
+        private CapturedFrame? EncodeCapturedWindowBitmap(IntPtr pBits, int width, int height, in WindowCaptureOptions options)
+        {
+            var imageInfo = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using var skBitmap = new SKBitmap();
+            skBitmap.InstallPixels(imageInfo, pBits, width * 4);
+
+            var (bitmapToEncode, resizedBitmap, finalWidth, finalHeight) = PrepareEncodingBitmap(skBitmap, width, height, options);
             try
             {
-                bool captured = PrintWindow(hwnd, hdcMem, PW_RENDERFULLCONTENT);
-                if (!captured)
-                {
-                    BitBlt(hdcMem, 0, 0, width, height, hdcWindow, 0, 0, SRCCOPY);
-                }
-
-                DrawCursorOnDC(hwnd, hdcMem, width, height);
-
-                int finalWidth = width;
-                int finalHeight = height;
-
-                var imageInfo = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
-                using var skBitmap = new SKBitmap();
-                skBitmap.InstallPixels(imageInfo, pBits, width * 4);
-
-                SKBitmap bitmapToEncode = skBitmap;
-                SKBitmap? resizedBitmap = null;
-
-                int targetW = options.CustomTargetWidth > 0 ? options.CustomTargetWidth : (options.Scale > 0.2 && options.Scale < 0.99 ? (int)(width * options.Scale) : 0);
-                int targetH = options.CustomTargetHeight > 0 ? options.CustomTargetHeight : (options.Scale > 0.2 && options.Scale < 0.99 ? (int)(height * options.Scale) : 0);
-
-                if (NeedsResize(targetW, targetH, width, height))
-                {
-                    resizedBitmap = skBitmap.Resize(new SKImageInfo(targetW, targetH), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
-                    if (resizedBitmap != null)
-                    {
-                        bitmapToEncode = resizedBitmap;
-                        finalWidth = targetW;
-                        finalHeight = targetH;
-                    }
-                }
-
-                byte[]? encodedBytes = null;
-                string currentCodec = _codec;
-
-                try
-                {
-                    if (currentCodec == "h264")
-                    {
-                        encodedBytes = EncodeH264(bitmapToEncode, finalWidth, finalHeight, options.ForceKeyframe);
-                    }
-
-                    if (encodedBytes == null || encodedBytes.Length == 0)
-                    {
-                        currentCodec = "jpeg";
-                        encodedBytes = EncodeJpeg(bitmapToEncode, options.Quality);
-                    }
-                }
-                finally
-                {
-                    resizedBitmap?.Dispose();
-                }
-
+                var (encodedBytes, currentCodec) = EncodeBitmapWithFallback(bitmapToEncode, finalWidth, finalHeight, options);
                 if (encodedBytes == null || encodedBytes.Length == 0)
                     return null;
 
@@ -349,11 +391,26 @@ namespace LanScreenShare.Media
             }
             finally
             {
-                SelectObject(hdcMem, hOld);
-                DeleteObject(hBitmap);
-                DeleteDC(hdcMem);
-                ReleaseDC(hwnd, hdcWindow);
+                resizedBitmap?.Dispose();
             }
+        }
+
+        private CapturedFrame? CaptureWindowFrame(IntPtr hwnd, in WindowCaptureOptions options)
+        {
+            if (!TryGetEvenClientDimensions(hwnd, out int width, out int height))
+                return null;
+
+            using var session = GdiWindowCaptureSession.TryCreate(hwnd, width, height);
+            if (session == null)
+                return null;
+
+            if (!PrintWindow(hwnd, session.HdcMem, PW_RENDERFULLCONTENT))
+            {
+                BitBlt(session.HdcMem, 0, 0, width, height, session.HdcWindow, 0, 0, SRCCOPY);
+            }
+
+            DrawCursorOnDC(hwnd, session.HdcMem, width, height);
+            return EncodeCapturedWindowBitmap(session.PBits, width, height, options);
         }
 
         private byte[]? EncodeH264(SKBitmap bitmap, int width, int height, bool forceKeyframe)
