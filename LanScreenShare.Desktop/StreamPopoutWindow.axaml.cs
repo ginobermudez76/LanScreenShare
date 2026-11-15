@@ -33,6 +33,9 @@ namespace LanScreenShare.Desktop
         public event Action<Stretch>? StretchModeChanged;
         public event Action<RemoteInputMessage>? RemoteInputSent;
 
+        private bool _allowRemoteControl = true;
+        private bool _allowSourceSwitch = true;
+        private bool _allowFileTransfer = true;
         private bool _isRemoteControlEnabled;
         private bool _isGameMode;
         private bool _isRecenteringMouse;
@@ -225,9 +228,9 @@ namespace LanScreenShare.Desktop
             this.Closing += PopoutWindow_Closing;
         }
 
-        private static void Popout_DragOver(object? sender, DragEventArgs e)
+        private void Popout_DragOver(object? sender, DragEventArgs e)
         {
-            if (e.DataTransfer.Contains(DataFormat.File))
+            if (_allowFileTransfer && e.DataTransfer.Contains(DataFormat.File))
             {
                 e.DragEffects = DragDropEffects.Copy;
             }
@@ -239,6 +242,9 @@ namespace LanScreenShare.Desktop
 
         private void Popout_Drop(object? sender, DragEventArgs e)
         {
+            if (!_allowFileTransfer)
+                return;
+
             if (e.DataTransfer.TryGetFiles() is { } files)
             {
                 var paths = files.Select(f => f.Path.LocalPath).Where(File.Exists).ToArray();
@@ -286,14 +292,46 @@ namespace LanScreenShare.Desktop
             }
         }
 
+        public void ApplyPermissions(bool allowRemoteControl, bool allowSourceSwitch, bool allowFileTransfer)
+        {
+            SetRemoteControlAllowed(allowRemoteControl);
+            SetSourceSwitchAllowed(allowSourceSwitch);
+            SetFileTransferAllowed(allowFileTransfer);
+        }
+
         public void SetRemoteControlAllowed(bool allowed)
         {
-            var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
-            var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
+            _allowRemoteControl = allowed;
+            ConfigurePermissionToggle("RemoteControlButton", allowed);
+            ConfigurePermissionToggle("GameModeButton", allowed);
+
+            if (!allowed)
+            {
+                SetRemoteControlState(false);
+                if (_isGameMode) ExitGameModeSilently();
+            }
+        }
+
+        private void ConfigurePermissionToggle(string name, bool allowed)
+        {
+            var btn = this.FindControl<ToggleButton>(name);
+            if (btn == null) return;
+            btn.IsVisible = allowed;
+            if (!allowed) btn.IsChecked = false;
+        }
+
+        public void SetSourceSwitchAllowed(bool allowed)
+        {
+            _allowSourceSwitch = allowed;
             var switchMonitorBtn = this.FindControl<Button>("SwitchMonitorButton");
-            if (remoteControlBtn != null) remoteControlBtn.IsVisible = allowed;
-            if (gameModeBtn != null) gameModeBtn.IsVisible = allowed;
             if (switchMonitorBtn != null) switchMonitorBtn.IsVisible = allowed;
+        }
+
+        public void SetFileTransferAllowed(bool allowed)
+        {
+            _allowFileTransfer = allowed;
+            var sendFileBtn = this.FindControl<Button>("SendFileButton");
+            if (sendFileBtn != null) sendFileBtn.IsVisible = allowed;
         }
 
         public void SetActiveMonitorLabel(string label)

@@ -254,16 +254,27 @@ namespace LanScreenShare.Desktop
 
         private bool HandlePopoutKeyShortcuts(KeyEventArgs e)
         {
-            if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.KeyModifiers.HasFlag(KeyModifiers.Alt))
-            {
-                if (e.Key == Key.L) { GameModeToggled?.Invoke(); return true; }
-                if (e.Key == Key.M) { CycleMonitorRequested?.Invoke(); return true; }
-            }
+            bool hasCtrlAlt = e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.KeyModifiers.HasFlag(KeyModifiers.Alt);
+            if (hasCtrlAlt && TryHandlePopoutControlAltShortcut(e.Key))
+                return true;
 
             if (e.Key == Key.F11) { ToggleFullscreen(); return true; }
             if (e.Key == Key.Escape && _isFullscreen) { SetFullscreen(false); return true; }
 
             return false;
+        }
+
+        private bool TryHandlePopoutControlAltShortcut(Key key) => key switch
+        {
+            Key.L => InvokeShortcutIfAllowed(_allowRemoteControl, GameModeToggled),
+            Key.M => InvokeShortcutIfAllowed(_allowSourceSwitch, CycleMonitorRequested),
+            _ => false
+        };
+
+        private static bool InvokeShortcutIfAllowed(bool allowed, Action? handler)
+        {
+            if (allowed) handler?.Invoke();
+            return true;
         }
 
         private void PopoutWindow_KeyDown(object? sender, KeyEventArgs e)

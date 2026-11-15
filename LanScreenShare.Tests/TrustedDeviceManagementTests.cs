@@ -16,12 +16,13 @@ namespace LanScreenShare.Tests;
 
 internal sealed class TrackingInputSimulator : IInputSimulatorService
 {
+    public int SimulatedCount { get; private set; }
     public int ReleaseCallsCount { get; private set; }
     public bool Disposed { get; private set; }
 
     public void SimulateInput(RemoteInputMessage input)
     {
-        // No-op test double
+        SimulatedCount++;
     }
 
     public void SetTargetSource(CaptureSource source)
@@ -236,7 +237,13 @@ public class TrustedDeviceManagementTests
 
             DateTime seenAt = new(2026, 11, 15, 12, 30, 0, DateTimeKind.Utc);
             await store.UpdateLastSeenAsync(FingerprintA, seenAt);
-            var updatedPerms = new DevicePermissions(DeviceAccessMode.AskEveryTime, false, true, false);
+            var updatedPerms = new DevicePermissions
+            {
+                AccessMode = DeviceAccessMode.AskEveryTime,
+                AllowRemoteControl = false,
+                AllowClipboardSync = true,
+                AllowFileTransfer = false
+            };
             await store.UpdateDeviceSettingsAsync(FingerprintA, "  Laptop Oficina  ", updatedPerms);
             await store.RevokeDeviceAsync(FingerprintA);
 
@@ -330,7 +337,13 @@ public class TrustedDeviceManagementTests
         await manager.UpdateDeviceSettingsAsync(
             FingerprintA,
             "Mi Alias",
-            new DevicePermissions(DeviceAccessMode.AskEveryTime, AllowRemoteControl: false, AllowClipboardSync: false, AllowFileTransfer: false));
+            new DevicePermissions
+            {
+                AccessMode = DeviceAccessMode.AskEveryTime,
+                AllowRemoteControl = false,
+                AllowClipboardSync = false,
+                AllowFileTransfer = false
+            });
 
         Assert.AreEqual((false, false, false), (sessionA.ControlPermissionAllowed, sessionA.ClipboardAuthorized, sessionA.FileTransferAuthorized));
         Assert.AreEqual((RemoteControlState.Revoked, 1), (authority.RequestRemoteControl(sessionA.SessionId), simulator.ReleaseCallsCount));
@@ -351,7 +364,13 @@ public class TrustedDeviceManagementTests
     {
         DateTime staleSeenAt = DateTime.UtcNow.AddDays(-5);
         await using var harness = await FourChannelMtlsHarness.CreateAndStartAsync(
-            new DevicePermissions(DeviceAccessMode.AskEveryTime, AllowRemoteControl: true, AllowClipboardSync: true, AllowFileTransfer: false),
+            new DevicePermissions
+            {
+                AccessMode = DeviceAccessMode.AskEveryTime,
+                AllowRemoteControl = true,
+                AllowClipboardSync = true,
+                AllowFileTransfer = false
+            },
             staleSeenAt);
 
         int explicitPromptCount = 0;
@@ -406,5 +425,189 @@ public class TrustedDeviceManagementTests
         Assert.AreEqual((0, 0, 0), (harness.StreamServer.ConnectedClientsCount, harness.AudioServer.ConnectedClientsCount, harness.FileServer.ConnectedClientsCount));
         Assert.IsNull(harness.Authority.ActiveControllerSessionId);
         Assert.IsTrue(harness.Simulator.ReleaseCallsCount >= 1);
+    }
+
+    [TestMethod]
+    public async Task DevicePermissions_LegacyJsonDefaultsSourceSwitchTrue_AndBitmaskRoundTrips()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"lss-perms-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string storePath = Path.Combine(tempDir, "paired_devices.json");
+            const string legacyJson = """
+            [
+              {
+                "DeviceId": "legacy-src",
+                "DeviceName": "Legacy Viewer",
+                "PublicKeyFingerprint": "SHA256:AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899",
+                "PairedAt": "2026-01-01T10:00:00Z",
+                "LastSeenAt": "2026-01-01T11:00:00Z",
+                "IsRevoked": false,
+                "Permissions": {
+                  "AccessMode": 0,
+                  "AllowRemoteControl": false,
+                  "AllowClipboardSync": true,
+                  "AllowFileTransfer": false
+                }
+              }
+            ]
+            """;
+            await File.WriteAllTextAsync(storePath, legacyJson);
+
+            var store = new JsonPairedDeviceStore(storePath);
+            var loaded = await store.GetPairedDeviceAsync(FingerprintA);
+            var restrictedExpected = new EffectiveSessionPermissions
+            {
+                AllowRemoteControl = false,
+                AllowSourceSwitch = true,
+                AllowFileTransfer = false,
+                AllowClipboardSync = true
+            };
+            var roundTripped = EffectiveSessionPermissions.FromBitmask(restrictedExpected.ToBitmask());
+            var intersected = EffectiveSessionPermissions.AllAllowed.IntersectWith(restrictedExpected);
+
+            Assert.AreEqual((false, true, true, false), (
+                loaded!.EffectivePermissions.AllowRemoteControl,
+                loaded.EffectivePermissions.AllowSourceSwitch,
+                loaded.EffectivePermissions.AllowClipboardSync,
+                loaded.EffectivePermissions.AllowFileTransfer));
+            Assert.AreEqual((roundTripped, roundTripped), (restrictedExpected, intersected));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SessionAuthority_RevokeAndUpdatePermissions_EmitChangedEventsAndResetRevokedState()
+    {
+        var store = new InMemoryPairedDeviceStore();
+        await store.AddPairedDeviceAsync(CreateDevice("Equipo Viewer", FingerprintA));
+        var authority = new SessionAuthority(store);
+
+        SessionPermissionsChangedEventArgs? lastChanged = null;
+        authority.SessionPermissionsChanged += (_, e) => lastChanged = e;
+
+        var (_, session, _) = await authority.TryCreateSessionAsync(FingerprintA);
+        authority.TryAcquireControl(session!.SessionId, out _);
+        authority.RevokeControl(session.SessionId);
+
+        var revokedSnapshot = (lastChanged!.Permissions, authority.RequestRemoteControl(session.SessionId));
+
+        authority.UpdateDevicePermissions(FingerprintA, new DevicePermissions
+        {
+            AllowRemoteControl = true,
+            AllowSourceSwitch = false,
+            AllowFileTransfer = false,
+            AllowClipboardSync = false
+        });
+
+        var updatedSnapshot = (lastChanged.Permissions, authority.RequestRemoteControl(session.SessionId));
+
+        Assert.AreEqual((new EffectiveSessionPermissions { AllowRemoteControl = false }, RemoteControlState.Revoked), revokedSnapshot);
+        Assert.AreEqual((new EffectiveSessionPermissions { AllowSourceSwitch = false, AllowFileTransfer = false, AllowClipboardSync = false }, RemoteControlState.Granted), updatedSnapshot);
+    }
+
+    [TestMethod]
+    public async Task MtlsHandshakeAndLivePush_SyncEffectivePermissionsWithoutBlockingSourceSwitch()
+    {
+        await using var harness = await FourChannelMtlsHarness.CreateAndStartAsync(
+            new DevicePermissions
+            {
+                AllowRemoteControl = false,
+                AllowSourceSwitch = true,
+                AllowFileTransfer = false,
+                AllowClipboardSync = true
+            },
+            DateTime.UtcNow.AddMinutes(-5));
+
+        bool allowGlobalClipboard = false;
+        harness.StreamServer.GlobalPermissionsProvider = () =>
+            new EffectiveSessionPermissions { AllowClipboardSync = allowGlobalClipboard };
+
+        int switchCount = 0;
+        harness.ControlServer.SwitchMonitorRequested += (_, _) => Interlocked.Increment(ref switchCount);
+
+        using var streamClient = new TcpStreamClient();
+        var liveUpdateTcs = new TaskCompletionSource<EffectiveSessionPermissions>(TaskCreationOptions.RunContinuationsAsynchronously);
+        streamClient.PermissionsUpdated += (_, perms) => liveUpdateTcs.TrySetResult(perms);
+
+        await streamClient.ConnectAsync("127.0.0.1", harness.StreamPort, harness.ClientSsl);
+        var handshake = streamClient.ActiveSessionHandshake!;
+        var initialEffective = handshake.GetEffectivePermissions();
+
+        using var controlClient = new TcpControlClient();
+        await controlClient.ConnectAsync(new ControlClientConnectionOptions(
+            "127.0.0.1", harness.ControlPort, harness.ClientSsl, handshake.SessionId, handshake.ControlToken));
+
+        await controlClient.SendSwitchMonitorAsync(-1);
+        await controlClient.SendInputAsync(new RemoteInputMessage { Type = InputEventType.MouseMove, NormalizedX = 0.5f, NormalizedY = 0.5f });
+        await Task.Delay(150);
+
+        allowGlobalClipboard = true;
+        harness.Authority.UpdateDevicePermissions(harness.ViewerFingerprint, new DevicePermissions
+        {
+            AllowRemoteControl = true,
+            AllowSourceSwitch = false,
+            AllowFileTransfer = true,
+            AllowClipboardSync = true
+        });
+
+        var pushed = await liveUpdateTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.AreEqual(new EffectiveSessionPermissions { AllowRemoteControl = false, AllowFileTransfer = false, AllowClipboardSync = false }, initialEffective);
+        Assert.AreEqual((1, 0), (switchCount, harness.Simulator.SimulatedCount));
+        Assert.AreEqual(new EffectiveSessionPermissions { AllowSourceSwitch = false }, pushed);
+    }
+
+    [TestMethod]
+    public async Task MtlsControlAndFileServer_EnforceSeparateSourceSwitchAndDropFilesOnHotRevoke()
+    {
+        await using var harness = await FourChannelMtlsHarness.CreateAndStartAsync(
+            new DevicePermissions
+            {
+                AllowRemoteControl = true,
+                AllowSourceSwitch = false,
+                AllowFileTransfer = true,
+                AllowClipboardSync = true
+            },
+            DateTime.UtcNow.AddMinutes(-5));
+
+        int selectCount = 0;
+        int clipboardCount = 0;
+        harness.ControlServer.SelectSourceRequested += (_, _) => Interlocked.Increment(ref selectCount);
+        harness.ControlServer.ClipboardTextReceived += (_, _) => Interlocked.Increment(ref clipboardCount);
+
+        using var streamClient = new TcpStreamClient();
+        await streamClient.ConnectAsync("127.0.0.1", harness.StreamPort, harness.ClientSsl);
+        var handshake = streamClient.ActiveSessionHandshake!;
+
+        using var controlClient = new TcpControlClient();
+        await controlClient.ConnectAsync(new ControlClientConnectionOptions(
+            "127.0.0.1", harness.ControlPort, harness.ClientSsl, handshake.SessionId, handshake.ControlToken));
+
+        using var fileClient = new TcpFileTransferClient();
+        await fileClient.ConnectAsync(new FileTransferClientConnectionOptions(
+            "127.0.0.1", harness.FilePort, harness.ClientSsl, handshake.SessionId, handshake.FileTransferToken));
+
+        await controlClient.SendSelectSourceAsync("screen:1");
+        await controlClient.SendInputAsync(new RemoteInputMessage { Type = InputEventType.MouseMove, NormalizedX = 0.25f, NormalizedY = 0.25f });
+        await Task.Delay(150);
+        int simAfterAllowedMove = harness.Simulator.SimulatedCount;
+
+        harness.Authority.UpdateDevicePermissions(harness.ViewerFingerprint, new DevicePermissions
+        {
+            AllowRemoteControl = false,
+            AllowSourceSwitch = false,
+            AllowFileTransfer = false,
+            AllowClipboardSync = true
+        });
+        await controlClient.SendClipboardTextAsync("texto-permitido");
+        await Task.Delay(250);
+
+        Assert.AreEqual((0, 1, 1), (selectCount, simAfterAllowedMove, clipboardCount));
+        Assert.AreEqual(0, harness.FileServer.ConnectedClientsCount);
     }
 }

@@ -9,13 +9,47 @@ namespace LanScreenShare.Core.Security
         AskEveryTime = 1
     }
 
-    public sealed record DevicePermissions(
-        DeviceAccessMode AccessMode = DeviceAccessMode.Auto,
-        bool AllowRemoteControl = true,
-        bool AllowClipboardSync = true,
-        bool AllowFileTransfer = true)
+    public sealed record DevicePermissions
     {
+        public DeviceAccessMode AccessMode { get; init; } = DeviceAccessMode.Auto;
+        public bool AllowRemoteControl { get; init; } = true;
+        public bool AllowSourceSwitch { get; init; } = true;
+        public bool AllowClipboardSync { get; init; } = true;
+        public bool AllowFileTransfer { get; init; } = true;
+
         public static readonly DevicePermissions Default = new();
+    }
+
+    public readonly record struct EffectiveSessionPermissions()
+    {
+        public bool AllowRemoteControl { get; init; } = true;
+        public bool AllowSourceSwitch { get; init; } = true;
+        public bool AllowFileTransfer { get; init; } = true;
+        public bool AllowClipboardSync { get; init; } = true;
+
+        public static EffectiveSessionPermissions AllAllowed => new();
+
+        public EffectiveSessionPermissions IntersectWith(EffectiveSessionPermissions hostGlobals) => new()
+        {
+            AllowRemoteControl = AllowRemoteControl && hostGlobals.AllowRemoteControl,
+            AllowSourceSwitch = AllowSourceSwitch && hostGlobals.AllowSourceSwitch,
+            AllowFileTransfer = AllowFileTransfer && hostGlobals.AllowFileTransfer,
+            AllowClipboardSync = AllowClipboardSync && hostGlobals.AllowClipboardSync
+        };
+
+        public int ToBitmask() =>
+            (AllowRemoteControl ? 1 : 0)
+            | (AllowSourceSwitch ? 2 : 0)
+            | (AllowFileTransfer ? 4 : 0)
+            | (AllowClipboardSync ? 8 : 0);
+
+        public static EffectiveSessionPermissions FromBitmask(int bitmask) => new()
+        {
+            AllowRemoteControl = (bitmask & 1) != 0,
+            AllowSourceSwitch = (bitmask & 2) != 0,
+            AllowFileTransfer = (bitmask & 4) != 0,
+            AllowClipboardSync = (bitmask & 8) != 0
+        };
     }
 
     public sealed record PairedDevice

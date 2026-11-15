@@ -19,12 +19,14 @@ namespace LanScreenShare.Network.Streaming
         private CancellationTokenSource? _cts;
         private readonly SemaphoreSlim _sendLock = new(1, 1);
         private ulong _sequenceNumber;
+        private int _disconnectSignaled;
         private bool _disposed;
 
         public event EventHandler<string>? StatusChanged;
         public event EventHandler<string>? ClipboardTextReceived;
         public event EventHandler<string>? MonitorInfoReceived;
         public event EventHandler<string>? SecureDesktopStateReceived;
+        public event EventHandler? Disconnected;
         public bool IsConnected => _client != null && _client.Connected && _stream != null;
 
         public Task ConnectAsync(string hostIp, int port = 5003, CancellationToken cancellationToken = default) =>
@@ -61,6 +63,7 @@ namespace LanScreenShare.Network.Streaming
 
             _stream = stream;
             _sequenceNumber = 0;
+            Interlocked.Exchange(ref _disconnectSignaled, 0);
             _ = Task.Run(() => ReceiveServerMessagesLoopAsync(stream, sessionToken), CancellationToken.None);
             StatusChanged?.Invoke(this, $"Control remoto LSI2 conectado a {options.HostIp}:{options.Port}");
         }
@@ -120,6 +123,10 @@ namespace LanScreenShare.Network.Streaming
                 {
                     Console.WriteLine($"[ControlClient] Bucle de recepción finalizado: {ex.Message}");
                 }
+            }
+            finally
+            {
+                _ = DisconnectAsync();
             }
         }
 
@@ -290,13 +297,18 @@ namespace LanScreenShare.Network.Streaming
 
         public Task DisconnectAsync()
         {
+            bool hadResources = _cts != null || _stream != null || _client != null;
             StreamConnectionHelper.CloseClientResources(_cts, _stream, _client);
 
             _stream = null;
             _client = null;
             _cts = null;
 
-            StatusChanged?.Invoke(this, "Control remoto desconectado");
+            if (hadResources && Interlocked.Exchange(ref _disconnectSignaled, 1) == 0)
+            {
+                StatusChanged?.Invoke(this, "Control remoto desconectado");
+                Disconnected?.Invoke(this, EventArgs.Empty);
+            }
             return Task.CompletedTask;
         }
 

@@ -120,25 +120,36 @@ namespace LanScreenShare.Desktop
 
         public void SetGameModeState(bool isGameMode)
         {
-            _isGameMode = isGameMode;
-            var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
-            var screenImage = this.FindControl<Image>("ScreenImage");
+            ApplyGameModeVisuals(isGameMode);
             var banner = this.FindControl<Border>("GameModeBanner");
             var bannerText = this.FindControl<TextBlock>("GameModeBannerText");
             var bannerIcon = this.FindControl<PathIcon>("GameModeBannerIcon");
+            ShowGameModeBanner(isGameMode, banner, bannerText, bannerIcon);
+        }
 
+        public void ExitGameModeSilently()
+        {
+            ApplyGameModeVisuals(false);
+            _gameModeBannerTimer?.Stop();
+            var banner = this.FindControl<Border>("GameModeBanner");
+            if (banner != null) banner.IsVisible = false;
+        }
+
+        private void ApplyGameModeVisuals(bool isGameMode)
+        {
+            _isGameMode = isGameMode;
+            var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
             if (gameModeBtn != null)
             {
                 gameModeBtn.IsChecked = isGameMode;
-                gameModeBtn.Background = isGameMode ? new SolidColorBrush(Color.Parse("#2563EB")) : new SolidColorBrush(Color.Parse("#27272A"));
+                gameModeBtn.Background = new SolidColorBrush(Color.Parse(isGameMode ? "#2563EB" : "#27272A"));
             }
 
+            var screenImage = this.FindControl<Image>("ScreenImage");
             if (screenImage != null)
             {
                 screenImage.Cursor = isGameMode ? new Cursor(StandardCursorType.None) : Cursor.Default;
             }
-
-            ShowGameModeBanner(isGameMode, banner, bannerText, bannerIcon);
         }
 
         private void ShowGameModeBanner(bool isGameMode, Border? banner, TextBlock? bannerText, PathIcon? bannerIcon)

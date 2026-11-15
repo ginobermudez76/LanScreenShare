@@ -197,16 +197,26 @@ namespace LanScreenShare.Desktop
                 Foreground = BrushFrom("#94A3B8")
             };
 
+        private readonly record struct DevicePermissionChecks(
+            CheckBox ControlCheck,
+            CheckBox SourceSwitchCheck,
+            CheckBox ClipboardCheck,
+            CheckBox FilesCheck);
+
         private readonly record struct PermissionControls(
             TextBox AliasBox,
             ComboBox ModeCombo,
-            CheckBox ControlCheck,
-            CheckBox ClipboardCheck,
-            CheckBox FilesCheck);
+            DevicePermissionChecks Checks);
 
         private StackPanel BuildPermissionsEditor(TrustedDeviceViewItem item)
         {
             var perms = item.Device.EffectivePermissions;
+            var checks = new DevicePermissionChecks(
+                ControlCheck: CreatePermissionCheckBox("Control mouse y teclado", perms.AllowRemoteControl),
+                SourceSwitchCheck: CreatePermissionCheckBox("Cambiar pantalla / fuente", perms.AllowSourceSwitch),
+                ClipboardCheck: CreatePermissionCheckBox("Portapapeles", perms.AllowClipboardSync),
+                FilesCheck: CreatePermissionCheckBox("Archivos", perms.AllowFileTransfer));
+
             var controls = new PermissionControls(
                 AliasBox: new TextBox
                 {
@@ -228,9 +238,7 @@ namespace LanScreenShare.Desktop
                     ItemsSource = AccessModeOptions,
                     SelectedIndex = perms.AccessMode == DeviceAccessMode.AskEveryTime ? 1 : 0
                 },
-                ControlCheck: CreatePermissionCheckBox("Control mouse y teclado", perms.AllowRemoteControl),
-                ClipboardCheck: CreatePermissionCheckBox("Portapapeles", perms.AllowClipboardSync),
-                FilesCheck: CreatePermissionCheckBox("Archivos", perms.AllowFileTransfer));
+                Checks: checks);
 
             var topControls = new StackPanel
             {
@@ -241,9 +249,10 @@ namespace LanScreenShare.Desktop
             topControls.Children.Add(controls.ModeCombo);
 
             var checkRow = new WrapPanel { Orientation = Orientation.Horizontal };
-            checkRow.Children.Add(controls.ControlCheck);
-            checkRow.Children.Add(controls.ClipboardCheck);
-            checkRow.Children.Add(controls.FilesCheck);
+            checkRow.Children.Add(checks.ControlCheck);
+            checkRow.Children.Add(checks.SourceSwitchCheck);
+            checkRow.Children.Add(checks.ClipboardCheck);
+            checkRow.Children.Add(checks.FilesCheck);
 
             var actions = BuildDeviceActionButtons(item, controls);
 
@@ -272,11 +281,15 @@ namespace LanScreenShare.Desktop
             var saveBtn = CreateActionButton("Guardar permisos", "#1D4ED8", AccentBlueHex, "#FFFFFF");
             saveBtn.Click += async (_, _) =>
             {
-                var updatedPerms = new DevicePermissions(
-                    controls.ModeCombo.SelectedIndex == 1 ? DeviceAccessMode.AskEveryTime : DeviceAccessMode.Auto,
-                    controls.ControlCheck.IsChecked == true,
-                    controls.ClipboardCheck.IsChecked == true,
-                    controls.FilesCheck.IsChecked == true);
+                var checks = controls.Checks;
+                var updatedPerms = new DevicePermissions
+                {
+                    AccessMode = controls.ModeCombo.SelectedIndex == 1 ? DeviceAccessMode.AskEveryTime : DeviceAccessMode.Auto,
+                    AllowRemoteControl = checks.ControlCheck.IsChecked == true,
+                    AllowSourceSwitch = checks.SourceSwitchCheck.IsChecked == true,
+                    AllowClipboardSync = checks.ClipboardCheck.IsChecked == true,
+                    AllowFileTransfer = checks.FilesCheck.IsChecked == true
+                };
 
                 await _deviceManager.UpdateDeviceSettingsAsync(fingerprint, controls.AliasBox.Text, updatedPerms);
                 ShowFeedback($"Permisos y alias guardados para '{item.DisplayName}'.", isWarning: false);

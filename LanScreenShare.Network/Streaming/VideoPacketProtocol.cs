@@ -17,6 +17,7 @@ namespace LanScreenShare.Network.Streaming
         public const uint MagicJpeg = 0x4C535331; // "LSS1"
         public const uint MagicH264 = 0x4C535332; // "LSS2"
         public const uint MagicEnd = 0x4C535330;  // "LSS0"
+        public const uint MagicPermissions = 0x4C535350; // "LSSP"
         public const int HeaderSize = 32;
         public const int MaxPayloadSize = 50 * 1024 * 1024;
 

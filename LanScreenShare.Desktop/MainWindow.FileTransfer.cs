@@ -107,7 +107,7 @@ namespace LanScreenShare.Desktop
 
         private bool CanTransferFiles =>
             (_isHosting && _streamServer.ConnectedClientsCount > 0) ||
-            (_isViewing && _streamClient.IsConnected);
+            (_isViewing && _streamClient.IsConnected && _viewerPermissions.AllowFileTransfer);
 
         private void MainWindow_DragOver(object? sender, DragEventArgs e)
         {
@@ -174,7 +174,9 @@ namespace LanScreenShare.Desktop
 
         private async Task SendFileToPeerAsync(string filePath)
         {
-            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+            if (!CanTransferFiles || string.IsNullOrEmpty(filePath))
+                return;
+            if (!File.Exists(filePath))
                 return;
 
             if (_activeTransferCts != null)

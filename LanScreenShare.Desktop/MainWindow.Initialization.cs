@@ -92,6 +92,7 @@ namespace LanScreenShare.Desktop
         private void InitializeStreamingSubsystem()
         {
             _streamServer = new TcpStreamServer(_sessionAuthority, _sslServerOptions, _pairedDeviceStore);
+            _streamServer.GlobalPermissionsProvider = GetHostGlobalPermissions;
             _streamServer.PairingApprovalCallback = (_, deviceName, sasFormatted) => RequestPairingApprovalAsync(deviceName, sasFormatted);
             _streamServer.ExplicitApprovalCallback = RequestStreamApprovalAsync;
             _streamServer.ClientConnected += StreamServer_ClientConnected;
@@ -137,6 +138,7 @@ namespace LanScreenShare.Desktop
             _streamClient = new TcpStreamClient();
             _streamClient.FrameReceived += StreamClient_FrameReceived;
             _streamClient.StatusChanged += StreamClient_StatusChanged;
+            _streamClient.PermissionsUpdated += StreamClient_PermissionsUpdated;
         }
 
         private bool CanSendViewerVoiceChat() =>
@@ -259,6 +261,13 @@ namespace LanScreenShare.Desktop
 
         private async Task EnableRemoteControlFromUiAsync(ToggleButton remoteControlBtn)
         {
+            if (!_viewerPermissions.AllowRemoteControl)
+            {
+                remoteControlBtn.IsChecked = false;
+                _remoteControlEnabled = false;
+                return;
+            }
+
             bool connected = await EnsureControlConnectedAsync();
             if (!connected)
             {

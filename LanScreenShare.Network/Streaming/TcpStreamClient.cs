@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using LanScreenShare.Core.Interfaces;
 using LanScreenShare.Core.Models;
+using LanScreenShare.Core.Security;
 using LanScreenShare.Network.Security;
 
 namespace LanScreenShare.Network.Streaming
@@ -22,6 +23,7 @@ namespace LanScreenShare.Network.Streaming
         public event EventHandler<CapturedFrame>? FrameReceived;
         public event EventHandler<string>? StatusChanged;
         public event EventHandler<StreamTelemetry>? TelemetryUpdated;
+        public event EventHandler<EffectiveSessionPermissions>? PermissionsUpdated;
 
         public bool IsConnected => _client != null && _client.Connected && _stream != null;
         public SessionHandshakeMessage? ActiveSessionHandshake { get; private set; }
@@ -42,6 +44,7 @@ namespace LanScreenShare.Network.Streaming
                 await DisconnectAsync();
 
             _isDisconnecting = 0;
+            ActiveSessionHandshake = null;
             _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var token = _cts.Token;
 
@@ -153,6 +156,14 @@ namespace LanScreenShare.Network.Streaming
                 Console.WriteLine("[StreamClient] Recibida señal de fin de transmisión del anfitrión (LSS0).");
                 state.EndedByHost = true;
                 return false;
+            }
+
+            if (header.Magic == VideoPacketProtocol.MagicPermissions)
+            {
+                var updatedPermissions = EffectiveSessionPermissions.FromBitmask(header.Width);
+                ActiveSessionHandshake?.ApplyEffectivePermissions(updatedPermissions);
+                PermissionsUpdated?.Invoke(this, updatedPermissions);
+                return true;
             }
 
             if (!VideoPacketProtocol.IsValidFrameMagic(header.Magic) || !IsValidPayload(header.DataLength))

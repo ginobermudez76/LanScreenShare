@@ -27,6 +27,7 @@ namespace LanScreenShare.Network.Streaming
             public required TcpClient Client { get; init; }
             public required Stream Stream { get; init; }
             public required Channel<CapturedFrame> Channel { get; init; }
+            public SemaphoreSlim WriteLock { get; } = new(1, 1);
             public string? SessionId { get; init; }
             public int CurrentRttMs { get; set; }
             public int ViewerFps { get; set; }
@@ -54,6 +55,7 @@ namespace LanScreenShare.Network.Streaming
         public Func<string, string, string, Task<bool>>? PairingApprovalCallback { get; set; }
         public Func<string, Task<bool>>? ClientApprovalCallback { get; set; }
         public Func<string, Task<bool>>? ExplicitApprovalCallback { get; set; }
+        public Func<EffectiveSessionPermissions>? GlobalPermissionsProvider { get; set; }
 
         public bool IsRunning => _listener != null && _cts != null && !_cts.IsCancellationRequested;
         public int ConnectedClientsCount => _clients.Count;
@@ -73,6 +75,7 @@ namespace LanScreenShare.Network.Streaming
             if (_sessionAuthority != null)
             {
                 _sessionAuthority.SessionTerminated += OnSessionTerminated;
+                _sessionAuthority.SessionPermissionsChanged += OnSessionPermissionsChanged;
             }
         }
 
@@ -81,6 +84,9 @@ namespace LanScreenShare.Network.Streaming
 
         private void OnSessionTerminated(object? sender, string sessionId) =>
             StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, sessionId, RemoveClient);
+
+        private void OnSessionPermissionsChanged(object? sender, SessionPermissionsChangedEventArgs e) =>
+            _ = BroadcastSessionPermissionsAsync(e.SessionId);
 
         public Task StartAsync(int port = 5001, CancellationToken cancellationToken = default)
         {
@@ -379,9 +385,66 @@ namespace LanScreenShare.Network.Streaming
                     ? TlsConfigurationHelper.ComputeFingerprint(hostCert)
                     : string.Empty
             };
+            okHandshake.ApplyEffectivePermissions(ResolveEffectivePermissions(session));
 
             await SessionHandshakeMessage.WriteAsync(sslStream, okHandshake, token);
             return session.SessionId;
+        }
+
+        private EffectiveSessionPermissions ResolveEffectivePermissions(ActiveSession? session)
+        {
+            var sessionPerms = session?.GetEffectivePermissions() ?? EffectiveSessionPermissions.AllAllowed;
+            var globalPerms = GlobalPermissionsProvider?.Invoke() ?? EffectiveSessionPermissions.AllAllowed;
+            return sessionPerms.IntersectWith(globalPerms);
+        }
+
+        public async Task BroadcastSessionPermissionsAsync(string? targetSessionId = null)
+        {
+            if (_clients.IsEmpty)
+                return;
+
+            var token = _cts?.Token ?? CancellationToken.None;
+            foreach (var ctx in _clients.Values)
+            {
+                if (!IsMatchingTargetSession(ctx, targetSessionId))
+                    continue;
+
+                var session = ctx.SessionId != null ? _sessionAuthority?.GetSession(ctx.SessionId) : null;
+                var effective = ResolveEffectivePermissions(session);
+                byte[] packet = VideoPacketProtocol.SerializeHeader(new VideoHeaderData(
+                    VideoPacketProtocol.MagicPermissions,
+                    0,
+                    effective.ToBitmask(),
+                    0,
+                    0,
+                    0,
+                    0));
+                await WritePacketToClientAsync(ctx, packet, token);
+            }
+        }
+
+        private static bool IsMatchingTargetSession(ClientContext ctx, string? targetSessionId) =>
+            string.IsNullOrEmpty(targetSessionId)
+            || string.Equals(ctx.SessionId, targetSessionId, StringComparison.Ordinal);
+
+        private static async Task WritePacketToClientAsync(ClientContext ctx, byte[] packet, CancellationToken token)
+        {
+            try
+            {
+                await ctx.WriteLock.WaitAsync(token);
+                try
+                {
+                    await ctx.Stream.WriteAsync(packet, token);
+                    await ctx.Stream.FlushAsync(token);
+                }
+                finally
+                {
+                    ctx.WriteLock.Release();
+                }
+            }
+            catch (ObjectDisposedException) { /* Cliente cerrado durante envío */ }
+            catch (OperationCanceledException) { /* Cancelación normal */ }
+            catch { /* Desconexión del socket */ }
         }
 
         private async Task MonitorClientLifecycleAsync(string clientId, ClientContext ctx, CancellationToken token)
@@ -478,9 +541,17 @@ namespace LanScreenShare.Network.Streaming
                             frame.HostFps,
                             frame.HostFrameTimeMs));
 
-                        await ctx.Stream.WriteAsync(header.AsMemory(0, header.Length), token);
-                        await ctx.Stream.WriteAsync(frame.Data.AsMemory(0, frame.Data.Length), token);
-                        await ctx.Stream.FlushAsync(token);
+                        await ctx.WriteLock.WaitAsync(token);
+                        try
+                        {
+                            await ctx.Stream.WriteAsync(header.AsMemory(0, header.Length), token);
+                            await ctx.Stream.WriteAsync(frame.Data.AsMemory(0, frame.Data.Length), token);
+                            await ctx.Stream.FlushAsync(token);
+                        }
+                        finally
+                        {
+                            ctx.WriteLock.Release();
+                        }
                     }
                 }
             }
@@ -536,6 +607,7 @@ namespace LanScreenShare.Network.Streaming
                 try { ctx.Channel.Writer.Complete(); } catch { /* Ignorar canal ya completado */ }
                 try { ctx.Stream.Dispose(); } catch { /* Ignorar error al liberar stream */ }
                 try { ctx.Client.Close(); } catch { /* Ignorar error al cerrar socket */ }
+                try { ctx.WriteLock.Dispose(); } catch { /* Ignorar lock en uso o liberado */ }
 
                 if (ctx.SessionId != null && _sessionAuthority?.GetSession(ctx.SessionId) != null)
                 {
@@ -575,6 +647,7 @@ namespace LanScreenShare.Network.Streaming
                 try { client.Client.Client.Shutdown(SocketShutdown.Both); } catch { /* Ignorar socket ya desconectado */ }
                 try { client.Stream.Dispose(); } catch { /* Ignorar error al cerrar stream */ }
                 try { client.Client.Close(); } catch { /* Ignorar error al cerrar cliente TCP */ }
+                try { client.WriteLock.Dispose(); } catch { /* Ignorar error al liberar lock */ }
 
                 if (client.SessionId != null)
                 {
@@ -607,6 +680,7 @@ namespace LanScreenShare.Network.Streaming
             if (_sessionAuthority != null)
             {
                 _sessionAuthority.SessionTerminated -= OnSessionTerminated;
+                _sessionAuthority.SessionPermissionsChanged -= OnSessionPermissionsChanged;
             }
 
             Stop();
