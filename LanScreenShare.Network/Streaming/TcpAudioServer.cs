@@ -70,7 +70,7 @@ namespace LanScreenShare.Network.Streaming
             if (IsRunning)
                 return Task.CompletedTask;
 
-            (_cts, _listener) = StreamConnectionHelper.StartAcceptLoop(port, cancellationToken, AcceptClientsLoopAsync);
+            (_cts, _listener) = StreamConnectionHelper.StartAcceptLoop(port, AcceptClientsLoopAsync, cancellationToken);
             Console.WriteLine($"[AudioServer] Escuchando en TCP port {port}...");
             return Task.CompletedTask;
         }

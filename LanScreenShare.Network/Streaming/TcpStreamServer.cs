@@ -87,7 +87,7 @@ namespace LanScreenShare.Network.Streaming
             if (IsRunning)
                 return Task.CompletedTask;
 
-            (_cts, _listener) = StreamConnectionHelper.StartAcceptLoop(port, cancellationToken, AcceptLoopAsync);
+            (_cts, _listener) = StreamConnectionHelper.StartAcceptLoop(port, AcceptLoopAsync, cancellationToken);
             Console.WriteLine($"[StreamServer] Escuchando en TCP port {port}...");
             return Task.CompletedTask;
         }

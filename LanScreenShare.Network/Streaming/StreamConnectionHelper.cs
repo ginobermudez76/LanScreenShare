@@ -21,8 +21,8 @@ namespace LanScreenShare.Network.Streaming
 
         internal static (CancellationTokenSource Cts, TcpListener Listener) StartAcceptLoop(
             int port,
-            CancellationToken cancellationToken,
-            Func<TcpListener, CancellationToken, Task> acceptLoop)
+            Func<TcpListener, CancellationToken, Task> acceptLoop,
+            CancellationToken cancellationToken = default)
         {
             var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var listener = CreateStartedTcpListener(port);
