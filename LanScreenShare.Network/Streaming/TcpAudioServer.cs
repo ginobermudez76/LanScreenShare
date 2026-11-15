@@ -70,14 +70,8 @@ namespace LanScreenShare.Network.Streaming
             if (IsRunning)
                 return Task.CompletedTask;
 
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var token = _cts.Token;
-
-            _listener = StreamConnectionHelper.CreateStartedTcpListener(port);
-
+            (_cts, _listener) = StreamConnectionHelper.StartAcceptLoop(port, cancellationToken, AcceptClientsLoopAsync);
             Console.WriteLine($"[AudioServer] Escuchando en TCP port {port}...");
-
-            _ = Task.Run(() => AcceptClientsLoopAsync(_listener, token), token);
             return Task.CompletedTask;
         }
 

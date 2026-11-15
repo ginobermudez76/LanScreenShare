@@ -19,6 +19,18 @@ namespace LanScreenShare.Network.Streaming
             return listener;
         }
 
+        internal static (CancellationTokenSource Cts, TcpListener Listener) StartAcceptLoop(
+            int port,
+            CancellationToken cancellationToken,
+            Func<TcpListener, CancellationToken, Task> acceptLoop)
+        {
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var listener = CreateStartedTcpListener(port);
+            var token = cts.Token;
+            _ = Task.Run(() => acceptLoop(listener, token), token);
+            return (cts, listener);
+        }
+
         internal static void TerminateMatchingSessions<T>(
             ConcurrentDictionary<string, T> clients,
             Func<T, string?> getSessionId,
