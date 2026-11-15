@@ -372,17 +372,30 @@ namespace LanScreenShare.Media
             return FrameAcquireStatus.NoFrame;
         }
 
+        private static bool HasCursorMoved(in POINT pos, int lastX, int lastY) =>
+            pos.x != lastX || pos.y != lastY;
+
+        private static bool TryGetVisibleCursorPosition(out POINT pos)
+        {
+            CURSORINFO curInfo = new() { cbSize = Marshal.SizeOf<CURSORINFO>() };
+            if (GetCursorInfo(ref curInfo) && curInfo.flags == CURSOR_SHOWING)
+            {
+                pos = curInfo.ptScreenPos;
+                return true;
+            }
+
+            pos = default;
+            return false;
+        }
+
         private static bool DetectCursorMovement(ref int lastCursorX, ref int lastCursorY)
         {
             try
             {
-                CURSORINFO curInfo = new() { cbSize = Marshal.SizeOf<CURSORINFO>() };
-                if (GetCursorInfo(ref curInfo) &&
-                    curInfo.flags == CURSOR_SHOWING &&
-                    (curInfo.ptScreenPos.x != lastCursorX || curInfo.ptScreenPos.y != lastCursorY))
+                if (TryGetVisibleCursorPosition(out var pos) && HasCursorMoved(pos, lastCursorX, lastCursorY))
                 {
-                    lastCursorX = curInfo.ptScreenPos.x;
-                    lastCursorY = curInfo.ptScreenPos.y;
+                    lastCursorX = pos.x;
+                    lastCursorY = pos.y;
                     return true;
                 }
             }
