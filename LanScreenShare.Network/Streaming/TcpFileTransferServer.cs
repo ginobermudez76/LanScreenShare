@@ -86,6 +86,7 @@ namespace LanScreenShare.Network.Streaming
                 string probeFile = Path.Combine(fullPath, $".lss_write_probe_{Guid.NewGuid():N}.tmp");
                 using (new FileStream(probeFile, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
                 {
+                    // Probe write permission via DeleteOnClose file creation
                 }
 
                 resolvedPath = fullPath;
@@ -107,7 +108,10 @@ namespace LanScreenShare.Network.Streaming
             {
                 Directory.CreateDirectory(fallback);
             }
-            catch { }
+            catch
+            {
+                // Ignore fallback directory creation error; caller will handle write failure
+            }
             return fallback;
         }
 
@@ -411,7 +415,7 @@ namespace LanScreenShare.Network.Streaming
             if (cancel != null && ctx.InboundTransfers.TryRemove(cancel.TransferId, out var inbound))
             {
                 inbound.Dispose();
-                try { if (File.Exists(inbound.DestinationPath)) File.Delete(inbound.DestinationPath); } catch { }
+                try { if (File.Exists(inbound.DestinationPath)) File.Delete(inbound.DestinationPath); } catch { /* Ignore partial file deletion failure */ }
                 TransferError?.Invoke(this, new FileTransferError
                 {
                     TransferId = inbound.TransferId,
@@ -620,7 +624,10 @@ namespace LanScreenShare.Network.Streaming
                     ctx.SendLock.Release();
                 }
             }
-            catch { }
+            catch
+            {
+                // Ignore network failure while sending cancel packet
+            }
         }
 
         private async Task<bool> SendFileToClientAsync(ClientContext ctx, string transferId, FileInfo fileInfo, CancellationToken ct)
@@ -711,7 +718,7 @@ namespace LanScreenShare.Network.Streaming
 
             foreach (var ctx in _clients.Values)
             {
-                try { ctx.Client.Close(); } catch { }
+                try { ctx.Client.Close(); } catch { /* Ignore client close error on stop */ }
             }
             _clients.Clear();
         }

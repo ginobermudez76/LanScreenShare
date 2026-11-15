@@ -12,6 +12,8 @@ namespace LanScreenShare.Media
 {
     public class CaptureSourceDiscoveryService
     {
+        private const string DefaultProcessDisplayName = "Aplicación";
+
         private static readonly HashSet<string> ExcludedProcessNames = new(StringComparer.OrdinalIgnoreCase)
         {
             "SearchHost",
@@ -296,7 +298,7 @@ namespace LanScreenShare.Media
 
         private static uint ResolveRootProcessIfApplicable(uint pid, string procName)
         {
-            if (string.IsNullOrEmpty(procName) || procName.Equals("Aplicación", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrEmpty(procName) || procName.Equals(DefaultProcessDisplayName, StringComparison.OrdinalIgnoreCase))
                 return pid;
 
             uint rootPid = FindApplicationRootProcessId(pid, procName);
@@ -315,7 +317,7 @@ namespace LanScreenShare.Media
             if (!OperatingSystem.IsWindows())
                 return fallbackPid;
 
-            if (string.IsNullOrEmpty(procName) || procName.Equals("Aplicación", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrEmpty(procName) || procName.Equals(DefaultProcessDisplayName, StringComparison.OrdinalIgnoreCase))
                 return fallbackPid;
 
             try
@@ -433,7 +435,7 @@ namespace LanScreenShare.Media
 
         private static string GetProcessNameSafe(uint pid)
         {
-            if (pid == 0) return "Aplicación";
+            if (pid == 0) return DefaultProcessDisplayName;
 
             try
             {
@@ -442,7 +444,7 @@ namespace LanScreenShare.Media
             }
             catch
             {
-                return "Aplicación";
+                return DefaultProcessDisplayName;
             }
         }
 

@@ -18,6 +18,8 @@ namespace LanScreenShare.Desktop
     {
         #region Hosting Logic
 
+        private const string StatusActiveGreenHex = "#22C55E";
+
         private bool CanHostHandleRemoteSourceCommands =>
             OperatingSystem.IsWindows() && _isHosting && _allowRemoteControl;
 
@@ -40,13 +42,19 @@ namespace LanScreenShare.Desktop
 
         private readonly record struct StreamBadgeVisuals(string Text, string ColorHex);
 
+        private StreamBadgeVisuals GetStreamBadgeVisuals()
+        {
+            if (_isHosting)
+                return new StreamBadgeVisuals("Transmitiendo", StatusActiveGreenHex);
+
+            return _isViewing
+                ? new StreamBadgeVisuals("Visualizando", "#3B82F6")
+                : new StreamBadgeVisuals("Sin transmisión", "#7C8B9E");
+        }
+
         private void UpdateStreamStateBadge()
         {
-            var (text, colorHex) = _isHosting
-                ? new StreamBadgeVisuals("Transmitiendo", "#22C55E")
-                : _isViewing
-                    ? new StreamBadgeVisuals("Visualizando", "#3B82F6")
-                    : new StreamBadgeVisuals("Sin transmisión", "#7C8B9E");
+            var (text, colorHex) = GetStreamBadgeVisuals();
 
             var badgeText = this.FindControl<TextBlock>("StreamStateBadgeText");
             if (badgeText != null) badgeText.Text = text;
@@ -163,7 +171,7 @@ namespace LanScreenShare.Desktop
                 UpdateStreamStateBadge();
 
                 string engineName = engine == "dxgi" ? "DirectX DXGI" : "GDI BitBlt";
-                UpdateStatus($"Transmitiendo {_currentSource.Name} ({engineName}) · Esperando visores", "#22C55E");
+                UpdateStatus($"Transmitiendo {_currentSource.Name} ({engineName}) · Esperando visores", StatusActiveGreenHex);
             }
             catch (Exception ex)
             {
@@ -233,7 +241,7 @@ namespace LanScreenShare.Desktop
                 {
                     sendFileBtn.IsVisible = count > 0;
                 }
-                UpdateStatus($"Transmitiendo pantalla · {count} espectador(es) conectado(s)", "#22C55E");
+                UpdateStatus($"Transmitiendo pantalla · {count} espectador(es) conectado(s)", StatusActiveGreenHex);
             });
         }
 
@@ -253,11 +261,11 @@ namespace LanScreenShare.Desktop
 
                 if (count > 0)
                 {
-                    UpdateStatus($"Transmitiendo pantalla · {count} espectador(es) conectado(s)", "#22C55E");
+                    UpdateStatus($"Transmitiendo pantalla · {count} espectador(es) conectado(s)", StatusActiveGreenHex);
                 }
                 else
                 {
-                    UpdateStatus("Transmitiendo pantalla · Esperando visores", "#22C55E");
+                    UpdateStatus("Transmitiendo pantalla · Esperando visores", StatusActiveGreenHex);
                 }
             });
         }

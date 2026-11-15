@@ -136,7 +136,10 @@ public class JsonPairedDeviceStore : IPairedDeviceStore
             {
                 File.Copy(_filePath, corruptBackup, overwrite: true);
             }
-            catch { }
+            catch
+            {
+                // Ignorar error de respaldo best-effort ante corrupción de archivo
+            }
 
             return new List<PairedDevice>();
         }
@@ -164,7 +167,7 @@ public class JsonPairedDeviceStore : IPairedDeviceStore
         {
             if (File.Exists(tempPath))
             {
-                try { File.Delete(tempPath); } catch { }
+                try { File.Delete(tempPath); } catch { /* Ignorar error de limpieza de archivo temporal */ }
             }
         }
     }

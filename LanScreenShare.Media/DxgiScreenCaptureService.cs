@@ -218,7 +218,10 @@ namespace LanScreenShare.Media
             {
                 AvRevertMmThreadCharacteristics(mmcssHandle);
             }
-            catch { }
+            catch
+            {
+                // Ignore MMCSS revert failure on thread exit
+            }
         }
 
         private void WaitForSecureDesktopExit(CancellationToken token)

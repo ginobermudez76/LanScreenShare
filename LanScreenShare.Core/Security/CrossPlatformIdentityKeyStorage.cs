@@ -203,7 +203,10 @@ namespace LanScreenShare.Core.Security
                 {
                     File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
                 }
-                catch { }
+                catch
+                {
+                    // Ignorar si el sistema de archivos subyacente no soporta modos POSIX
+                }
             }
         }
     }

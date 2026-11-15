@@ -194,7 +194,7 @@ namespace LanScreenShare.Network.Streaming
             if (!approved)
             {
                 Console.WriteLine($"[StreamServer] Conexión rechazada por el anfitrión para: {clientId}");
-                try { client.Close(); } catch { }
+                try { client.Close(); } catch { /* Ignore client close error */ }
                 return false;
             }
 

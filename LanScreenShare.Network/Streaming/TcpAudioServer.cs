@@ -25,9 +25,9 @@ namespace LanScreenShare.Network.Streaming
 
             public void Dispose()
             {
-                try { Stream.Dispose(); } catch { }
-                try { Client.Dispose(); } catch { }
-                try { SendLock.Dispose(); } catch { }
+                try { Stream.Dispose(); } catch { /* Ignore stream disposal error */ }
+                try { Client.Dispose(); } catch { /* Ignore client disposal error */ }
+                try { SendLock.Dispose(); } catch { /* Ignore semaphore disposal error */ }
             }
         }
 
@@ -353,7 +353,7 @@ namespace LanScreenShare.Network.Streaming
         public void Stop()
         {
             _cts?.Cancel();
-            try { _listener?.Stop(); } catch { }
+            try { _listener?.Stop(); } catch { /* Ignore listener stop error */ }
 
             foreach (var kvp in _clients)
             {

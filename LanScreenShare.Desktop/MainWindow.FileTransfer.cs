@@ -333,7 +333,10 @@ namespace LanScreenShare.Desktop
             {
                 _activeTransferCts?.Cancel();
             }
-            catch { }
+            catch
+            {
+                // Ignore cancellation token disposal race
+            }
             HideFileTransferBanner();
         }
 

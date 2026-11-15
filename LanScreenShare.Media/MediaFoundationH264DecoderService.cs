@@ -138,7 +138,10 @@ namespace LanScreenShare.Media
                 using var attrs = decoder.Attributes;
                 attrs?.Set(CODECAPI_AVLowLatencyMode, 1);
             }
-            catch { }
+            catch
+            {
+                // Ignore if MFT attributes are not supported by decoder
+            }
 
             int hrCodecApi = Marshal.QueryInterface(decoder.NativePointer, in IID_ICodecAPI, out IntPtr pCodecApi);
             if (hrCodecApi == 0 && pCodecApi != IntPtr.Zero)
@@ -155,10 +158,20 @@ namespace LanScreenShare.Media
                     catch
                     {
                         object lowLatencyBool = true;
-                        try { codecApi.SetValue(CODECAPI_AVLowLatencyMode, ref lowLatencyBool); } catch { }
+                        try
+                        {
+                            codecApi.SetValue(CODECAPI_AVLowLatencyMode, ref lowLatencyBool);
+                        }
+                        catch
+                        {
+                            // Ignore if neither uint nor bool low-latency property is supported
+                        }
                     }
                 }
-                catch { }
+                catch
+                {
+                    // Ignore COM interface conversion errors
+                }
                 finally
                 {
                     if (codecApi != null && Marshal.IsComObject(codecApi))
@@ -472,7 +485,14 @@ namespace LanScreenShare.Media
                 _decoder?.Dispose();
                 _decoder = null;
 
-                try { MediaFactory.MFShutdown(); } catch { }
+                try
+                {
+                    MediaFactory.MFShutdown();
+                }
+                catch
+                {
+                    // Ignore MFShutdown errors during disposal
+                }
                 GC.SuppressFinalize(this);
             }
         }

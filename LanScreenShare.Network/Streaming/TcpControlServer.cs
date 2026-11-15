@@ -237,9 +237,9 @@ namespace LanScreenShare.Network.Streaming
                 Console.WriteLine($"[ControlServer] Control remoto denegado por el anfitrión para: {clientId}");
                 if (_sslServerOptions != null && _sessionAuthority != null)
                 {
-                    try { await stream.WriteAsync(new byte[] { (byte)AttachmentStatus.SessionNotFound }, token); } catch { }
+                    try { await stream.WriteAsync(new byte[] { (byte)AttachmentStatus.SessionNotFound }, token); } catch { /* Ignore write failure when rejecting client */ }
                 }
-                try { client.Close(); } catch { }
+                try { client.Close(); } catch { /* Ignore client close error */ }
                 return false;
             }
 
@@ -256,9 +256,9 @@ namespace LanScreenShare.Network.Streaming
                 Console.WriteLine($"[ControlServer] Conflicto de controlador único para {clientId}: {acquireError}");
                 if (_sslServerOptions != null)
                 {
-                    try { stream.Write(new byte[] { (byte)AttachmentStatus.SessionNotFound }); } catch { }
+                    try { stream.Write(new byte[] { (byte)AttachmentStatus.SessionNotFound }); } catch { /* Ignore write failure when rejecting duplicate controller */ }
                 }
-                try { client.Close(); } catch { }
+                try { client.Close(); } catch { /* Ignore client close error */ }
                 return false;
             }
 
@@ -540,8 +540,8 @@ namespace LanScreenShare.Network.Streaming
         {
             if (_clients.TryRemove(clientId, out var ctx))
             {
-                try { ctx.Stream.Dispose(); } catch { }
-                try { ctx.Client.Dispose(); } catch { }
+                try { ctx.Stream.Dispose(); } catch { /* Ignore stream disposal error */ }
+                try { ctx.Client.Dispose(); } catch { /* Ignore client disposal error */ }
 
                 if (_sessionAuthority != null && ctx.SessionId != null)
                 {
@@ -558,7 +558,7 @@ namespace LanScreenShare.Network.Streaming
         public void Stop()
         {
             _cts?.Cancel();
-            try { _listener?.Stop(); } catch { }
+            try { _listener?.Stop(); } catch { /* Ignore listener stop error */ }
 
             foreach (var client in _clients.Values)
             {

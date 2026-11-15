@@ -11,6 +11,9 @@ namespace LanScreenShare.Desktop
 {
     public partial class SourcePickerWindow : Window
     {
+        private const string ScreensListBoxName = "ScreensListBox";
+        private const string WindowsListBoxName = "WindowsListBox";
+
         public CaptureSource? SelectedSource { get; private set; }
 
         private readonly ObservableCollection<CaptureSource> _screens = new();
@@ -66,7 +69,7 @@ namespace LanScreenShare.Desktop
 
         private void InitializeLists()
         {
-            var screensList = this.FindControl<ListBox>("ScreensListBox");
+            var screensList = this.FindControl<ListBox>(ScreensListBoxName);
             if (screensList != null)
             {
                 screensList.ItemsSource = _screens;
@@ -74,7 +77,7 @@ namespace LanScreenShare.Desktop
                 screensList.DoubleTapped += (s, e) => ConfirmSelection();
             }
 
-            var windowsList = this.FindControl<ListBox>("WindowsListBox");
+            var windowsList = this.FindControl<ListBox>(WindowsListBoxName);
             if (windowsList != null)
             {
                 windowsList.ItemsSource = _windows;
@@ -112,7 +115,7 @@ namespace LanScreenShare.Desktop
 
         private void RefreshWindowsList()
         {
-            var windowsList = this.FindControl<ListBox>("WindowsListBox");
+            var windowsList = this.FindControl<ListBox>(WindowsListBoxName);
             var prevId = (windowsList?.SelectedItem as CaptureSource)?.Id;
             LoadWindows();
             UpdateCountLabel();
@@ -156,7 +159,7 @@ namespace LanScreenShare.Desktop
 
         private void SelectActiveWindowTab()
         {
-            var windowsList = this.FindControl<ListBox>("WindowsListBox");
+            var windowsList = this.FindControl<ListBox>(WindowsListBoxName);
             if (windowsList?.SelectedItem is CaptureSource winSource)
             {
                 SelectedSource = winSource;
@@ -170,7 +173,7 @@ namespace LanScreenShare.Desktop
 
         private void SelectActiveScreenTab()
         {
-            var screensList = this.FindControl<ListBox>("ScreensListBox");
+            var screensList = this.FindControl<ListBox>(ScreensListBoxName);
             if (screensList?.SelectedItem is CaptureSource scrSource)
             {
                 SelectedSource = scrSource;
@@ -224,7 +227,7 @@ namespace LanScreenShare.Desktop
 
         private bool TrySelectInitialWindow(string initialId)
         {
-            var windowsList = this.FindControl<ListBox>("WindowsListBox");
+            var windowsList = this.FindControl<ListBox>(WindowsListBoxName);
             var windowMatch = _windows.FirstOrDefault(w => w.Id == initialId);
             if (windowMatch != null)
             {
@@ -237,7 +240,7 @@ namespace LanScreenShare.Desktop
 
         private bool TrySelectInitialScreen(string initialId)
         {
-            var screensList = this.FindControl<ListBox>("ScreensListBox");
+            var screensList = this.FindControl<ListBox>(ScreensListBoxName);
             var screenMatch = _screens.FirstOrDefault(s => s.Id == initialId);
             if (screenMatch != null)
             {
@@ -261,7 +264,7 @@ namespace LanScreenShare.Desktop
                 return;
             }
 
-            var screensList = this.FindControl<ListBox>("ScreensListBox");
+            var screensList = this.FindControl<ListBox>(ScreensListBoxName);
             if (_screens.Count > 0 && screensList != null)
             {
                 var primary = _screens.FirstOrDefault(s => s.IsPrimary) ?? _screens[0];
@@ -292,7 +295,7 @@ namespace LanScreenShare.Desktop
 
         private void ScreensList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
-            var screensList = this.FindControl<ListBox>("ScreensListBox");
+            var screensList = this.FindControl<ListBox>(ScreensListBoxName);
             if (screensList?.SelectedItem is CaptureSource source)
             {
                 SelectedSource = source;
@@ -302,7 +305,7 @@ namespace LanScreenShare.Desktop
 
         private void WindowsList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
-            var windowsList = this.FindControl<ListBox>("WindowsListBox");
+            var windowsList = this.FindControl<ListBox>(WindowsListBoxName);
             if (windowsList?.SelectedItem is CaptureSource source)
             {
                 SelectedSource = source;

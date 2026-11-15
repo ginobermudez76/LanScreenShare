@@ -123,7 +123,14 @@ namespace LanScreenShare.Media
 
         private void HandleRecordingStopped(WasapiLoopbackCapture captureInstance)
         {
-            try { captureInstance.Dispose(); } catch { }
+            try
+            {
+                captureInstance.Dispose();
+            }
+            catch
+            {
+                // Ignore disposal errors on stopped capture instance
+            }
             if (ReferenceEquals(_capture, captureInstance))
             {
                 _capture = null;
@@ -141,7 +148,10 @@ namespace LanScreenShare.Media
                     procCap.Stop();
                     procCap.Dispose();
                 }
-                catch { }
+                catch
+                {
+                    // Ignore process audio capture stop errors
+                }
             }
 
             if (_capture != null)
@@ -153,13 +163,19 @@ namespace LanScreenShare.Media
                 {
                     captureInstance.StopRecording();
                 }
-                catch { }
+                catch
+                {
+                    // Ignore StopRecording errors if device was disconnected
+                }
 
                 try
                 {
                     captureInstance.Dispose();
                 }
-                catch { }
+                catch
+                {
+                    // Ignore disposal errors on loopback capture
+                }
 
                 Console.WriteLine("[WASAPI Loopback] Captura de audio detenida.");
             }
