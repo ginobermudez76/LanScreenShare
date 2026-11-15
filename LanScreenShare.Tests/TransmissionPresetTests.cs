@@ -45,7 +45,8 @@ namespace LanScreenShare.Tests
                 TransmissionPreset = "speed",
                 ShowAdvancedSettings = false,
                 BitrateMbps = 3,
-                Fps = 30
+                Fps = 30,
+                DownloadDirectory = @"C:\CustomDownloads\LanScreenShare"
             };
 
             string json = JsonSerializer.Serialize(original);
@@ -56,6 +57,7 @@ namespace LanScreenShare.Tests
             Assert.IsFalse(deserialized.ShowAdvancedSettings);
             Assert.AreEqual(3, deserialized.BitrateMbps);
             Assert.AreEqual(30, deserialized.Fps);
+            Assert.AreEqual(@"C:\CustomDownloads\LanScreenShare", deserialized.DownloadDirectory);
         }
     }
 }

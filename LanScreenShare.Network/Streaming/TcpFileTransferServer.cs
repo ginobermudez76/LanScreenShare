@@ -66,18 +66,58 @@ namespace LanScreenShare.Network.Streaming
         public bool IsRunning => _listener != null && _cts != null && !_cts.IsCancellationRequested;
         public int ConnectedClientsCount => _clients.Count;
 
+        public static string GetDefaultDownloadDirectory() =>
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Downloads",
+                "LanScreenShare");
+
+        public static bool TryEnsureWritableDirectory(string? directoryPath, out string resolvedPath)
+        {
+            resolvedPath = string.Empty;
+            if (string.IsNullOrWhiteSpace(directoryPath))
+                return false;
+
+            try
+            {
+                string fullPath = Path.GetFullPath(directoryPath.Trim());
+                Directory.CreateDirectory(fullPath);
+
+                string probeFile = Path.Combine(fullPath, $".lss_write_probe_{Guid.NewGuid():N}.tmp");
+                using (new FileStream(probeFile, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
+                {
+                }
+
+                resolvedPath = fullPath;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static string ResolveWritableDownloadDirectory(string? preferredDirectory)
+        {
+            if (TryEnsureWritableDirectory(preferredDirectory, out string validDir))
+                return validDir;
+
+            string fallback = GetDefaultDownloadDirectory();
+            try
+            {
+                Directory.CreateDirectory(fallback);
+            }
+            catch { }
+            return fallback;
+        }
+
         public TcpFileTransferServer(
             ISessionAuthority? sessionAuthority = null,
             SslServerAuthenticationOptions? sslServerOptions = null)
         {
             _sessionAuthority = sessionAuthority;
             _sslServerOptions = sslServerOptions;
-
-            string downloads = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Downloads",
-                "LanScreenShare");
-            DownloadDirectory = downloads;
+            DownloadDirectory = GetDefaultDownloadDirectory();
         }
 
         public Task StartAsync(int port = 5004, CancellationToken cancellationToken = default)
@@ -640,14 +680,14 @@ namespace LanScreenShare.Network.Streaming
 
         public static string GetUniqueDestinationPath(string directory, string originalFileName)
         {
-            Directory.CreateDirectory(directory);
+            string targetDir = ResolveWritableDownloadDirectory(directory);
             string safeName = Path.GetFileName(originalFileName);
             if (string.IsNullOrWhiteSpace(safeName))
             {
                 safeName = $"archivo_{DateTime.Now:yyyyMMdd_HHmmss}.bin";
             }
 
-            string fullPath = Path.Combine(directory, safeName);
+            string fullPath = Path.Combine(targetDir, safeName);
             if (!File.Exists(fullPath))
                 return fullPath;
 
@@ -657,7 +697,7 @@ namespace LanScreenShare.Network.Streaming
             int count = 1;
             while (true)
             {
-                string candidate = Path.Combine(directory, $"{nameWithoutExt} ({count}){ext}");
+                string candidate = Path.Combine(targetDir, $"{nameWithoutExt} ({count}){ext}");
                 if (!File.Exists(candidate))
                     return candidate;
                 count++;

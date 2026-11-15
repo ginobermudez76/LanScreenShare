@@ -55,11 +55,7 @@ namespace LanScreenShare.Network.Streaming
 
         public TcpFileTransferClient()
         {
-            string downloads = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Downloads",
-                "LanScreenShare");
-            DownloadDirectory = downloads;
+            DownloadDirectory = TcpFileTransferServer.GetDefaultDownloadDirectory();
         }
 
         public Task ConnectAsync(string hostIp, int port = 5004, CancellationToken cancellationToken = default) =>

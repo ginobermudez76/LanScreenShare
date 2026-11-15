@@ -861,6 +861,11 @@ namespace LanScreenShare.Desktop
             {
                 _appSettings.ControlAccessMode = controlTag;
             }
+
+            if (_fileTransferServer != null && !string.IsNullOrWhiteSpace(_fileTransferServer.DownloadDirectory))
+            {
+                _appSettings.DownloadDirectory = _fileTransferServer.DownloadDirectory;
+            }
         }
 
         #endregion
