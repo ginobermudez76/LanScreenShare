@@ -94,14 +94,14 @@ public class SessionAuthorityTests
     public async Task Setup()
     {
         _store = new InMemoryPairedDeviceStore();
-        await _store.AddPairedDeviceAsync(new PairedDevice(
-            "dev-1",
-            "Laptop-Trusted",
-            _trustedFingerprint,
-            DateTime.UtcNow,
-            DateTime.UtcNow,
-            false
-        ));
+        await _store.AddPairedDeviceAsync(new PairedDevice
+        {
+            DeviceId = "dev-1",
+            DeviceName = "Laptop-Trusted",
+            PublicKeyFingerprint = _trustedFingerprint,
+            PairedAt = DateTime.UtcNow,
+            LastSeenAt = DateTime.UtcNow
+        });
         _authority = new SessionAuthority(_store);
     }
 
@@ -166,7 +166,14 @@ public class SessionAuthorityTests
     {
         // Dos dispositivos emparejados
         string peer2Fingerprint = "SHA256:2222222222222222222222222222222222222222222222222222222222222222";
-        await _store.AddPairedDeviceAsync(new PairedDevice("dev-2", "Tablet-Trusted", peer2Fingerprint, DateTime.UtcNow, DateTime.UtcNow, false));
+        await _store.AddPairedDeviceAsync(new PairedDevice
+        {
+            DeviceId = "dev-2",
+            DeviceName = "Tablet-Trusted",
+            PublicKeyFingerprint = peer2Fingerprint,
+            PairedAt = DateTime.UtcNow,
+            LastSeenAt = DateTime.UtcNow
+        });
 
         var (_, session1, _) = await _authority.TryCreateSessionAsync(_trustedFingerprint);
         var (_, session2, _) = await _authority.TryCreateSessionAsync(peer2Fingerprint);

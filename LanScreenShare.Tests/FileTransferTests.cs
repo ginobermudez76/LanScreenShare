@@ -163,8 +163,8 @@ namespace LanScreenShare.Tests
             string viewerFp = TlsConfigurationHelper.ComputeFingerprint(viewerCert);
 
             var store = new InMemoryPairedDeviceStore();
-            await store.AddPairedDeviceAsync(new PairedDevice("h1", "Host", hostFp, DateTime.UtcNow, DateTime.UtcNow, false));
-            await store.AddPairedDeviceAsync(new PairedDevice("v1", "Viewer", viewerFp, DateTime.UtcNow, DateTime.UtcNow, false));
+            await store.AddPairedDeviceAsync(PairedDevice.Create("h1", "Host", hostFp));
+            await store.AddPairedDeviceAsync(PairedDevice.Create("v1", "Viewer", viewerFp));
 
             var authority = new SessionAuthority(store);
             var (created, session, _) = await authority.TryCreateSessionAsync(viewerFp);

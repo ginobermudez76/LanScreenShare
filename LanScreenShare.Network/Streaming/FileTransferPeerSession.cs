@@ -39,7 +39,8 @@ namespace LanScreenShare.Network.Streaming
     internal readonly record struct FileTransferCallbacks(
         Action<FileTransferProgress>? OnProgress,
         Action<FileTransferCompleted>? OnCompleted,
-        Action<FileTransferError>? OnError);
+        Action<FileTransferError>? OnError,
+        Func<bool>? CanTransferFiles = null);
 
     internal sealed class FileTransferPeerSession : IDisposable
     {
@@ -63,14 +64,13 @@ namespace LanScreenShare.Network.Streaming
             Stream stream,
             Func<string> getDownloadDirectory,
             string logTag,
-            FileTransferCallbacks callbacks,
-            Func<bool>? canTransferFiles = null)
+            FileTransferCallbacks callbacks)
         {
             Stream = stream;
             _getDownloadDirectory = getDownloadDirectory;
             _logTag = logTag;
             _callbacks = callbacks;
-            _canTransferFiles = canTransferFiles ?? (() => true);
+            _canTransferFiles = callbacks.CanTransferFiles ?? (() => true);
         }
 
         public async Task ProcessIncomingLoopAsync(CancellationToken ct)

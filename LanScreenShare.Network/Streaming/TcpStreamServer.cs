@@ -90,9 +90,7 @@ namespace LanScreenShare.Network.Streaming
             _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var token = _cts.Token;
 
-            _listener = new TcpListener(IPAddress.Any, port);
-            _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _listener.Start();
+            _listener = StreamConnectionHelper.CreateStartedTcpListener(port);
 
             Console.WriteLine($"[StreamServer] Escuchando en TCP port {port}...");
 
@@ -340,13 +338,14 @@ namespace LanScreenShare.Network.Streaming
                 return false;
             }
 
-            await _pairedDeviceStore.AddPairedDeviceAsync(new PairedDevice(
-                Guid.NewGuid().ToString("D"),
-                peer.DeviceName,
-                peer.Fingerprint,
-                DateTime.UtcNow,
-                DateTime.UtcNow,
-                false));
+            await _pairedDeviceStore.AddPairedDeviceAsync(new PairedDevice
+            {
+                DeviceId = Guid.NewGuid().ToString("D"),
+                DeviceName = peer.DeviceName,
+                PublicKeyFingerprint = peer.Fingerprint,
+                PairedAt = DateTime.UtcNow,
+                LastSeenAt = DateTime.UtcNow
+            });
 
             return true;
         }

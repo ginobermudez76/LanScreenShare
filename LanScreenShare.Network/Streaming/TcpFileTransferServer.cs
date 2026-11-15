@@ -135,9 +135,7 @@ namespace LanScreenShare.Network.Streaming
             _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var token = _cts.Token;
 
-            _listener = new TcpListener(IPAddress.Any, port);
-            _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _listener.Start();
+            _listener = StreamConnectionHelper.CreateStartedTcpListener(port);
 
             Console.WriteLine($"[FileTransferServer] Servidor de transferencia de archivos escuchando en puerto {port}...");
 
@@ -279,7 +277,8 @@ namespace LanScreenShare.Network.Streaming
                 var callbacks = new FileTransferCallbacks(
                     progress => TransferProgress?.Invoke(this, progress),
                     completed => TransferCompleted?.Invoke(this, completed),
-                    error => TransferError?.Invoke(this, error));
+                    error => TransferError?.Invoke(this, error),
+                    () => IsFileTransferAuthorized(sessionId));
 
                 var ctx = new ClientContext
                 {
@@ -289,8 +288,7 @@ namespace LanScreenShare.Network.Streaming
                         stream,
                         () => DownloadDirectory,
                         "FileTransferServer",
-                        callbacks,
-                        () => IsFileTransferAuthorized(sessionId))
+                        callbacks)
                 };
 
                 _clients[clientId] = ctx;

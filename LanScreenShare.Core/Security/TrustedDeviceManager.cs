@@ -15,14 +15,21 @@ namespace LanScreenShare.Core.Security
         Revoked = 2
     }
 
+    public sealed record TrustedDeviceStatusInfo(
+        TrustedDeviceStatus Status,
+        string Label,
+        string? ActiveSessionId,
+        bool IsActiveController);
+
     public sealed record TrustedDeviceViewItem(
         PairedDevice Device,
-        TrustedDeviceStatus Status,
         string ShortFingerprint,
-        string StatusLabel,
-        string? ActiveSessionId,
-        bool IsActiveController)
+        TrustedDeviceStatusInfo StatusInfo)
     {
+        public TrustedDeviceStatus Status => StatusInfo.Status;
+        public string StatusLabel => StatusInfo.Label;
+        public string? ActiveSessionId => StatusInfo.ActiveSessionId;
+        public bool IsActiveController => StatusInfo.IsActiveController;
         public string DisplayName => Device.DisplayName;
         public string OriginalName => Device.DeviceName;
         public string PairedAtDisplay => FormatLocalTimestamp(Device.PairedAt);
@@ -118,11 +125,12 @@ namespace LanScreenShare.Core.Security
 
             return new TrustedDeviceViewItem(
                 device,
-                status,
                 FormatShortFingerprint(device.PublicKeyFingerprint),
-                statusLabel,
-                activeSession?.SessionId.Value,
-                isController);
+                new TrustedDeviceStatusInfo(
+                    status,
+                    statusLabel,
+                    activeSession?.SessionId.Value,
+                    isController));
         }
 
         private static TrustedDeviceStatus ResolveStatus(PairedDevice device, ActiveSession? activeSession)
@@ -166,12 +174,12 @@ namespace LanScreenShare.Core.Security
             if (fingerprint.IsEmpty) return;
 
             var activeSessions = _sessionAuthority.GetActiveSessions();
-            foreach (var session in activeSessions)
+            var matchingSessions = activeSessions.Where(session =>
+                string.Equals(session.PeerFingerprint.Value, fingerprint.Value, StringComparison.OrdinalIgnoreCase));
+
+            foreach (var session in matchingSessions)
             {
-                if (string.Equals(session.PeerFingerprint.Value, fingerprint.Value, StringComparison.OrdinalIgnoreCase))
-                {
-                    _sessionAuthority.RevokeControl(session.SessionId);
-                }
+                _sessionAuthority.RevokeControl(session.SessionId);
             }
 
             _getInputSimulator()?.ReleaseInjectedInputs();

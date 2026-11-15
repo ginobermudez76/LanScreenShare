@@ -71,9 +71,7 @@ namespace LanScreenShare.Network.Streaming
             _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var token = _cts.Token;
 
-            _listener = new TcpListener(IPAddress.Any, port);
-            _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _listener.Start();
+            _listener = StreamConnectionHelper.CreateStartedTcpListener(port);
 
             Console.WriteLine($"[ControlServer] Servidor de control remoto (LSI2) escuchando en puerto {port}...");
 

@@ -137,8 +137,23 @@ internal sealed class FourChannelMtlsHarness : IAsyncDisposable
         string viewerFp = TlsConfigurationHelper.ComputeFingerprint(viewerCert);
 
         var store = new InMemoryPairedDeviceStore();
-        await store.AddPairedDeviceAsync(new PairedDevice("h", "Host", hostFp, viewerLastSeen, viewerLastSeen));
-        await store.AddPairedDeviceAsync(new PairedDevice("v", "Viewer", viewerFp, viewerLastSeen, viewerLastSeen, false, null, viewerPermissions));
+        await store.AddPairedDeviceAsync(new PairedDevice
+        {
+            DeviceId = "h",
+            DeviceName = "Host",
+            PublicKeyFingerprint = hostFp,
+            PairedAt = viewerLastSeen,
+            LastSeenAt = viewerLastSeen
+        });
+        await store.AddPairedDeviceAsync(new PairedDevice
+        {
+            DeviceId = "v",
+            DeviceName = "Viewer",
+            PublicKeyFingerprint = viewerFp,
+            PairedAt = viewerLastSeen,
+            LastSeenAt = viewerLastSeen,
+            Permissions = viewerPermissions
+        });
 
         var authority = new SessionAuthority(store);
         var serverSsl = TlsConfigurationHelper.CreateServerOptions(hostCert, store);
@@ -181,13 +196,15 @@ public class TrustedDeviceManagementTests
     private const string FingerprintB = "SHA256:1111222233334444555566667777888899990000AAAABBBBCCCCDDDDEEEEFFFF";
 
     private static PairedDevice CreateDevice(string name, string fingerprint, bool isRevoked = false) =>
-        new(
-            Guid.NewGuid().ToString("D"),
-            name,
-            fingerprint,
-            DateTime.UtcNow.AddDays(-2),
-            DateTime.UtcNow.AddHours(-1),
-            isRevoked);
+        new()
+        {
+            DeviceId = Guid.NewGuid().ToString("D"),
+            DeviceName = name,
+            PublicKeyFingerprint = fingerprint,
+            PairedAt = DateTime.UtcNow.AddDays(-2),
+            LastSeenAt = DateTime.UtcNow.AddHours(-1),
+            IsRevoked = isRevoked
+        };
 
     [TestMethod]
     public async Task JsonPairedDeviceStore_LifecyclePermissionsLastSeenAndLegacyDeserialization_WorkCorrectly()

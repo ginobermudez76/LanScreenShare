@@ -34,7 +34,7 @@ public class JsonPairedDeviceStoreTests
 
         Assert.IsFalse(await store.IsDevicePairedAsync(fingerprint));
 
-        var device = new PairedDevice("dev-1", "Laptop-Test", fingerprint, DateTime.UtcNow, DateTime.UtcNow, false);
+        var device = PairedDevice.Create("dev-1", "Laptop-Test", fingerprint);
         await store.AddPairedDeviceAsync(device);
 
         Assert.IsTrue(await store.IsDevicePairedAsync(fingerprint));
@@ -54,7 +54,7 @@ public class JsonPairedDeviceStoreTests
         var store = new JsonPairedDeviceStore(_tempFilePath);
         string fingerprint = "SHA256:1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF";
 
-        await store.AddPairedDeviceAsync(new PairedDevice("dev-2", "Device-To-Revoke", fingerprint, DateTime.UtcNow, DateTime.UtcNow, false));
+        await store.AddPairedDeviceAsync(PairedDevice.Create("dev-2", "Device-To-Revoke", fingerprint));
         Assert.IsFalse(await store.IsDeviceRevokedAsync(fingerprint));
 
         await store.RevokeDeviceAsync(fingerprint);
@@ -71,7 +71,7 @@ public class JsonPairedDeviceStoreTests
         var store = new JsonPairedDeviceStore(_tempFilePath);
         string fingerprint = "SHA256:ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890";
 
-        await store.AddPairedDeviceAsync(new PairedDevice("dev-3", "Device-To-Remove", fingerprint, DateTime.UtcNow, DateTime.UtcNow, false));
+        await store.AddPairedDeviceAsync(PairedDevice.Create("dev-3", "Device-To-Remove", fingerprint));
         Assert.IsTrue(await store.IsDevicePairedAsync(fingerprint));
 
         await store.RemoveDeviceAsync(fingerprint);

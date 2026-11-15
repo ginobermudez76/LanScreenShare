@@ -100,8 +100,8 @@ public class ThreeChannelFullMtlsLifecycleTests
         string viewerFingerprint = TlsConfigurationHelper.ComputeFingerprint(viewerCert);
 
         var deviceStore = new InMemoryPairedDeviceStore();
-        await deviceStore.AddPairedDeviceAsync(new PairedDevice("host-1", "Host", hostFingerprint, DateTime.UtcNow, DateTime.UtcNow, false));
-        await deviceStore.AddPairedDeviceAsync(new PairedDevice("viewer-1", "Viewer", viewerFingerprint, DateTime.UtcNow, DateTime.UtcNow, false));
+        await deviceStore.AddPairedDeviceAsync(PairedDevice.Create("host-1", "Host", hostFingerprint));
+        await deviceStore.AddPairedDeviceAsync(PairedDevice.Create("viewer-1", "Viewer", viewerFingerprint));
 
         var sessionAuthority = new SessionAuthority(deviceStore);
         var inputSimulator = new MockInputSimulatorService();

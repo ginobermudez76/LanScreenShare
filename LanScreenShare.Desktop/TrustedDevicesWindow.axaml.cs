@@ -13,6 +13,13 @@ namespace LanScreenShare.Desktop
 {
     public partial class TrustedDevicesWindow : Window
     {
+        private const string AccentBlueHex = "#2563EB";
+        private static readonly string[] AccessModeOptions =
+        [
+            "Acceso automático sin preguntar",
+            "Preguntar siempre al conectar"
+        ];
+
         private readonly TrustedDeviceManager _deviceManager = null!;
         private readonly Action<X509Certificate2>? _onIdentityRegenerated;
         private bool _confirmRevokeAllPending;
@@ -109,7 +116,7 @@ namespace LanScreenShare.Desktop
             return new Border
             {
                 Background = BrushFrom("#171E2B"),
-                BorderBrush = BrushFrom(item.Status == TrustedDeviceStatus.Connected ? "#2563EB" : "#253042"),
+                BorderBrush = BrushFrom(item.Status == TrustedDeviceStatus.Connected ? AccentBlueHex : "#253042"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(12),
                 Padding = new Thickness(16, 14),
@@ -117,7 +124,7 @@ namespace LanScreenShare.Desktop
             };
         }
 
-        private Grid BuildCardHeader(TrustedDeviceViewItem item)
+        private static Grid BuildCardHeader(TrustedDeviceViewItem item)
         {
             var grid = new Grid
             {
@@ -159,7 +166,7 @@ namespace LanScreenShare.Desktop
         {
             (string bg, string border, string fg) = item.Status switch
             {
-                TrustedDeviceStatus.Connected => ("#152D4F", "#2563EB", "#93C5FD"),
+                TrustedDeviceStatus.Connected => ("#152D4F", AccentBlueHex, "#93C5FD"),
                 TrustedDeviceStatus.Revoked => ("#33181D", "#7F1D1D", "#FCA5A5"),
                 _ => ("#143026", "#166534", "#86EFAC")
             };
@@ -218,11 +225,7 @@ namespace LanScreenShare.Desktop
                     BorderBrush = BrushFrom("#2A364B"),
                     Foreground = BrushFrom("#F8FAFC"),
                     Width = 225,
-                    ItemsSource = new[]
-                    {
-                        "Acceso automático sin preguntar",
-                        "Preguntar siempre al conectar"
-                    },
+                    ItemsSource = AccessModeOptions,
                     SelectedIndex = perms.AccessMode == DeviceAccessMode.AskEveryTime ? 1 : 0
                 },
                 ControlCheck: CreatePermissionCheckBox("Control mouse y teclado", perms.AllowRemoteControl),
@@ -266,7 +269,7 @@ namespace LanScreenShare.Desktop
             var panel = new WrapPanel { Orientation = Orientation.Horizontal };
             var fingerprint = (DeviceFingerprint)item.Device.PublicKeyFingerprint;
 
-            var saveBtn = CreateActionButton("Guardar permisos", "#1D4ED8", "#2563EB", "#FFFFFF");
+            var saveBtn = CreateActionButton("Guardar permisos", "#1D4ED8", AccentBlueHex, "#FFFFFF");
             saveBtn.Click += async (_, _) =>
             {
                 var updatedPerms = new DevicePermissions(
@@ -408,10 +411,10 @@ namespace LanScreenShare.Desktop
 
             text.Text = message;
             banner.Background = BrushFrom(isWarning ? "#311C18" : "#152B43");
-            banner.BorderBrush = BrushFrom(isWarning ? "#92400E" : "#2563EB");
+            banner.BorderBrush = BrushFrom(isWarning ? "#92400E" : AccentBlueHex);
             banner.IsVisible = true;
         }
 
-        private static IBrush BrushFrom(string hex) => new SolidColorBrush(Color.Parse(hex));
+        private static SolidColorBrush BrushFrom(string hex) => new(Color.Parse(hex));
     }
 }
