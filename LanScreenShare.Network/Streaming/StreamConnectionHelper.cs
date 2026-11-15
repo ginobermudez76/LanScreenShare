@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net.Sockets;
 using System.Threading;
@@ -8,6 +9,20 @@ namespace LanScreenShare.Network.Streaming
 {
     internal static class StreamConnectionHelper
     {
+        internal static void TerminateMatchingSessions<T>(
+            ConcurrentDictionary<string, T> clients,
+            Func<T, string?> getSessionId,
+            string terminatedSessionId,
+            Action<string> removeClient)
+        {
+            foreach (var kvp in clients)
+            {
+                if (string.Equals(getSessionId(kvp.Value), terminatedSessionId, StringComparison.Ordinal))
+                {
+                    removeClient(kvp.Key);
+                }
+            }
+        }
         internal static async Task ReadExactBytesAsync(
             Stream stream,
             Memory<byte> buffer,

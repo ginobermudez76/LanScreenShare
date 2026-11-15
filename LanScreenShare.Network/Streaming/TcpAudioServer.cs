@@ -32,7 +32,7 @@ namespace LanScreenShare.Network.Streaming
         }
 
         private readonly ISessionAuthority? _sessionAuthority;
-        private readonly SslServerAuthenticationOptions? _sslServerOptions;
+        private SslServerAuthenticationOptions? _sslServerOptions;
 
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
@@ -59,16 +59,11 @@ namespace LanScreenShare.Network.Streaming
             }
         }
 
-        private void OnSessionTerminated(object? sender, string sessionId)
-        {
-            foreach (var kvp in _clients)
-            {
-                if (kvp.Value.SessionId == sessionId)
-                {
-                    RemoveClient(kvp.Key);
-                }
-            }
-        }
+        public void UpdateSslServerOptions(SslServerAuthenticationOptions? sslServerOptions) =>
+            _sslServerOptions = sslServerOptions;
+
+        private void OnSessionTerminated(object? sender, string sessionId) =>
+            StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, sessionId, RemoveClient);
 
         public Task StartAsync(int port = 5002, CancellationToken cancellationToken = default)
         {

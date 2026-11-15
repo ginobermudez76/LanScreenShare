@@ -16,7 +16,7 @@ namespace LanScreenShare.Network.Streaming
     public sealed class TcpFileTransferServer : IDisposable
     {
         private readonly ISessionAuthority? _sessionAuthority;
-        private readonly SslServerAuthenticationOptions? _sslServerOptions;
+        private SslServerAuthenticationOptions? _sslServerOptions;
 
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
@@ -27,6 +27,7 @@ namespace LanScreenShare.Network.Streaming
         {
             public TcpClient Client { get; init; } = null!;
             public FileTransferPeerSession Session { get; init; } = null!;
+            public string? SessionId { get; init; }
         }
 
         public string DownloadDirectory { get; set; }
@@ -96,6 +97,34 @@ namespace LanScreenShare.Network.Streaming
             _sessionAuthority = sessionAuthority;
             _sslServerOptions = sslServerOptions;
             DownloadDirectory = GetDefaultDownloadDirectory();
+
+            if (_sessionAuthority != null)
+            {
+                _sessionAuthority.SessionTerminated += OnSessionTerminated;
+            }
+        }
+
+        public void UpdateSslServerOptions(SslServerAuthenticationOptions? sslServerOptions) =>
+            _sslServerOptions = sslServerOptions;
+
+        private void OnSessionTerminated(object? sender, string sessionId) =>
+            StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, sessionId, ForceDisconnectClient);
+
+        private void ForceDisconnectClient(string clientId)
+        {
+            if (_clients.TryGetValue(clientId, out var ctx))
+            {
+                CleanupClient(clientId, ctx.Client);
+            }
+        }
+
+        private bool IsFileTransferAuthorized(string? sessionId)
+        {
+            if (_sessionAuthority == null || sessionId == null)
+                return true;
+
+            var session = _sessionAuthority.GetSession(new SessionId(sessionId));
+            return session != null && session.FileTransferAuthorized;
         }
 
         public Task StartAsync(int port = 5004, CancellationToken cancellationToken = default)
@@ -144,6 +173,13 @@ namespace LanScreenShare.Network.Streaming
             SslStream sslStream,
             string peerFingerprint,
             string clientId,
+            CancellationToken token) =>
+            (await ValidateChannelAttachmentWithSessionAsync(sslStream, peerFingerprint, clientId, token)).Success;
+
+        private async Task<(bool Success, string? SessionId)> ValidateChannelAttachmentWithSessionAsync(
+            SslStream sslStream,
+            string peerFingerprint,
+            string clientId,
             CancellationToken token)
         {
             byte[] attachBuffer = new byte[ChannelAttachmentMessage.MessageSize];
@@ -155,17 +191,24 @@ namespace LanScreenShare.Network.Streaming
                     out string? attachError))
             {
                 Console.WriteLine($"[FileTransferServer] Error en CHANNEL_ATTACH de {clientId}: {attachError}");
-                return false;
+                return (false, null);
             }
 
             if (attachPayload.Channel != ChannelType.FileTransfer)
             {
                 Console.WriteLine($"[FileTransferServer] Canal incorrecto en CHANNEL_ATTACH de {clientId}: {attachPayload.Channel}");
-                return false;
+                return (false, null);
             }
 
             if (_sessionAuthority != null)
             {
+                if (!IsFileTransferAuthorized(attachPayload.SessionId))
+                {
+                    await sslStream.WriteAsync(new byte[] { (byte)AttachmentStatus.SessionNotFound }, token);
+                    Console.WriteLine($"[FileTransferServer] Transferencia de archivos denegada por permiso de dispositivo para {clientId}");
+                    return (false, null);
+                }
+
                 var status = _sessionAuthority.TryAttachChannel(
                     attachPayload.TokenId,
                     attachPayload.SessionId,
@@ -176,21 +219,21 @@ namespace LanScreenShare.Network.Streaming
                 {
                     await sslStream.WriteAsync(new byte[] { (byte)status }, token);
                     Console.WriteLine($"[FileTransferServer] Rechazado CHANNEL_ATTACH ({status}) para {clientId}");
-                    return false;
+                    return (false, null);
                 }
             }
 
             await sslStream.WriteAsync(new byte[] { (byte)AttachmentStatus.Success }, token);
-            return true;
+            return (true, attachPayload.SessionId);
         }
 
-        private async Task<Stream?> AuthenticateTlsAndChannelAsync(
+        private async Task<(Stream? Stream, string? SessionId)> AuthenticateTlsAndChannelAsync(
             Stream stream,
             string clientId,
             CancellationToken token)
         {
             if (_sslServerOptions == null)
-                return stream;
+                return (stream, null);
 
             var sslStream = new SslStream(stream, false);
             using var authCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -201,14 +244,14 @@ namespace LanScreenShare.Network.Streaming
             if (sslStream.RemoteCertificate == null)
             {
                 Console.WriteLine($"[FileTransferServer] Conexión rechazada para {clientId}: Falta certificado.");
-                return null;
+                return (null, null);
             }
 
             using var peerCert = new X509Certificate2(sslStream.RemoteCertificate);
             string peerFingerprint = TlsConfigurationHelper.ComputeFingerprint(peerCert);
 
-            bool attached = await ValidateChannelAttachmentAsync(sslStream, peerFingerprint, clientId, linkedCts.Token);
-            return attached ? sslStream : null;
+            var (attached, sessionId) = await ValidateChannelAttachmentWithSessionAsync(sslStream, peerFingerprint, clientId, linkedCts.Token);
+            return attached ? (sslStream, sessionId) : (null, null);
         }
 
         private void CleanupClient(string clientId, TcpClient client)
@@ -226,7 +269,7 @@ namespace LanScreenShare.Network.Streaming
             var clientId = client.Client.RemoteEndPoint?.ToString() ?? Guid.NewGuid().ToString();
             try
             {
-                Stream? stream = await AuthenticateTlsAndChannelAsync(client.GetStream(), clientId, token);
+                var (stream, sessionId) = await AuthenticateTlsAndChannelAsync(client.GetStream(), clientId, token);
                 if (stream == null)
                 {
                     client.Close();
@@ -241,7 +284,13 @@ namespace LanScreenShare.Network.Streaming
                 var ctx = new ClientContext
                 {
                     Client = client,
-                    Session = new FileTransferPeerSession(stream, () => DownloadDirectory, "FileTransferServer", callbacks)
+                    SessionId = sessionId,
+                    Session = new FileTransferPeerSession(
+                        stream,
+                        () => DownloadDirectory,
+                        "FileTransferServer",
+                        callbacks,
+                        () => IsFileTransferAuthorized(sessionId))
                 };
 
                 _clients[clientId] = ctx;
@@ -273,6 +322,9 @@ namespace LanScreenShare.Network.Streaming
 
             foreach (var ctx in _clients.Values)
             {
+                if (!IsFileTransferAuthorized(ctx.SessionId))
+                    continue;
+
                 if (await ctx.Session.SendFileAsync(transferId, fileInfo, cancellationToken))
                 {
                     return true;
@@ -325,6 +377,10 @@ namespace LanScreenShare.Network.Streaming
         {
             if (_disposed) return;
             _disposed = true;
+            if (_sessionAuthority != null)
+            {
+                _sessionAuthority.SessionTerminated -= OnSessionTerminated;
+            }
             Stop();
             _cts?.Dispose();
         }

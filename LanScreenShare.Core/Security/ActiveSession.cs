@@ -13,6 +13,9 @@ namespace LanScreenShare.Core.Security
         public SessionState State { get; set; }
         public bool VideoAuthorized { get; set; }
         public bool AudioAuthorized { get; set; }
+        public bool ControlPermissionAllowed { get; set; } = true;
+        public bool ClipboardAuthorized { get; set; } = true;
+        public bool FileTransferAuthorized { get; set; } = true;
         public RemoteControlState ControlState { get; set; }
         public HashSet<ChannelType> AttachedChannels { get; } = new();
 

@@ -10,7 +10,7 @@ namespace LanScreenShare.Tests;
 
 public class InMemoryPairedDeviceStore : IPairedDeviceStore
 {
-    private readonly ConcurrentDictionary<string, PairedDevice> _devices = new();
+    private readonly ConcurrentDictionary<string, PairedDevice> _devices = new(StringComparer.OrdinalIgnoreCase);
 
     public Task<bool> IsDevicePairedAsync(DeviceFingerprint fingerprint)
     {
@@ -26,6 +26,12 @@ public class InMemoryPairedDeviceStore : IPairedDeviceStore
         return Task.FromResult(false);
     }
 
+    public Task<PairedDevice?> GetPairedDeviceAsync(DeviceFingerprint fingerprint)
+    {
+        _devices.TryGetValue(fingerprint.Value, out var device);
+        return Task.FromResult(device);
+    }
+
     public Task<IReadOnlyList<PairedDevice>> GetAllPairedDevicesAsync()
     {
         IReadOnlyList<PairedDevice> list = _devices.Values.ToList();
@@ -38,18 +44,40 @@ public class InMemoryPairedDeviceStore : IPairedDeviceStore
         return Task.CompletedTask;
     }
 
-    public Task RevokeDeviceAsync(DeviceFingerprint fingerprint)
+    public Task RevokeDeviceAsync(DeviceFingerprint fingerprint) =>
+        UpdateDeviceAsync(fingerprint, d => d with { IsRevoked = true });
+
+    public Task UnrevokeDeviceAsync(DeviceFingerprint fingerprint) =>
+        UpdateDeviceAsync(fingerprint, d => d with { IsRevoked = false });
+
+    public Task UpdateLastSeenAsync(DeviceFingerprint fingerprint, DateTime? seenAt = null) =>
+        UpdateDeviceAsync(fingerprint, d => d with { LastSeenAt = seenAt ?? DateTime.UtcNow });
+
+    public Task UpdateDeviceSettingsAsync(DeviceFingerprint fingerprint, string? alias, DevicePermissions permissions)
     {
-        if (_devices.TryGetValue(fingerprint.Value, out var device))
-        {
-            _devices[fingerprint.Value] = device with { IsRevoked = true };
-        }
-        return Task.CompletedTask;
+        ArgumentNullException.ThrowIfNull(permissions);
+        string? normalized = string.IsNullOrWhiteSpace(alias) ? null : alias.Trim();
+        return UpdateDeviceAsync(fingerprint, d => d with { Alias = normalized, Permissions = permissions });
     }
 
     public Task RemoveDeviceAsync(DeviceFingerprint fingerprint)
     {
-        _devices.TryRemove(fingerprint, out _);
+        _devices.TryRemove(fingerprint.Value, out _);
+        return Task.CompletedTask;
+    }
+
+    public Task ClearAllDevicesAsync()
+    {
+        _devices.Clear();
+        return Task.CompletedTask;
+    }
+
+    private Task UpdateDeviceAsync(DeviceFingerprint fingerprint, Func<PairedDevice, PairedDevice> transform)
+    {
+        if (_devices.TryGetValue(fingerprint.Value, out var device))
+        {
+            _devices[fingerprint.Value] = transform(device);
+        }
         return Task.CompletedTask;
     }
 }

@@ -52,6 +52,7 @@ namespace LanScreenShare.Network.Streaming
         private readonly Func<string> _getDownloadDirectory;
         private readonly string _logTag;
         private readonly FileTransferCallbacks _callbacks;
+        private readonly Func<bool> _canTransferFiles;
 
         public Stream Stream { get; }
         public SemaphoreSlim SendLock { get; } = new(1, 1);
@@ -62,12 +63,14 @@ namespace LanScreenShare.Network.Streaming
             Stream stream,
             Func<string> getDownloadDirectory,
             string logTag,
-            FileTransferCallbacks callbacks)
+            FileTransferCallbacks callbacks,
+            Func<bool>? canTransferFiles = null)
         {
             Stream = stream;
             _getDownloadDirectory = getDownloadDirectory;
             _logTag = logTag;
             _callbacks = callbacks;
+            _canTransferFiles = canTransferFiles ?? (() => true);
         }
 
         public async Task ProcessIncomingLoopAsync(CancellationToken ct)
@@ -121,10 +124,18 @@ namespace LanScreenShare.Network.Streaming
         private async Task HandleOfferPacketAsync(uint payloadLength, CancellationToken ct)
         {
             var offer = await ReadJsonDtoAsync<FileTransferOfferDto>(Stream, payloadLength, ct);
-            if (offer != null && !string.IsNullOrWhiteSpace(offer.TransferId))
+            if (offer == null || string.IsNullOrWhiteSpace(offer.TransferId))
             {
-                await HandleInboundOfferAsync(offer, ct);
+                return;
             }
+
+            if (!_canTransferFiles())
+            {
+                await SendLockedAsync(() => FileTransferPacket.WriteRejectAsync(Stream, offer.TransferId, "Transferencia de archivos deshabilitada para este dispositivo.", ct), ct);
+                return;
+            }
+
+            await HandleInboundOfferAsync(offer, ct);
         }
 
         private async Task HandleSignalPacketAsync(uint payloadLength, bool accepted, CancellationToken ct)
