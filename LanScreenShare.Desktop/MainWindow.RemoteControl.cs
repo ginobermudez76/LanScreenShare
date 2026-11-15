@@ -267,34 +267,33 @@ namespace LanScreenShare.Desktop
             }
         }
 
-        private void ScreenImage_PointerPressed(object? sender, PointerPressedEventArgs e)
+        private void HandleScreenImagePointerButton(PointerEventArgs e, InputEventType eventType, bool focusImage)
         {
             if (!CanProcessPointerInput(e))
                 return;
 
             var screenImage = this.FindControl<Image>(ScreenImageControlName);
-            screenImage?.Focus();
+            if (focusImage)
+            {
+                screenImage?.Focus();
+            }
 
             var props = e.GetCurrentPoint(screenImage).Properties;
-            RemoteMouseButton button = RemoteInputHelper.GetPressedMouseButton(props);
+            RemoteMouseButton button = eventType == InputEventType.MouseDown
+                ? RemoteInputHelper.GetPressedMouseButton(props)
+                : RemoteInputHelper.GetReleasedMouseButton(props);
 
             if (button != RemoteMouseButton.None)
             {
-                DispatchPointerButtonEvent(e, InputEventType.MouseDown, button);
+                DispatchPointerButtonEvent(e, eventType, button);
             }
         }
 
-        private void ScreenImage_PointerReleased(object? sender, PointerReleasedEventArgs e)
-        {
-            if (!CanProcessPointerInput(e))
-                return;
+        private void ScreenImage_PointerPressed(object? sender, PointerPressedEventArgs e) =>
+            HandleScreenImagePointerButton(e, InputEventType.MouseDown, focusImage: true);
 
-            var screenImage = this.FindControl<Image>(ScreenImageControlName);
-            var props = e.GetCurrentPoint(screenImage).Properties;
-            RemoteMouseButton button = RemoteInputHelper.GetReleasedMouseButton(props);
-
-            DispatchPointerButtonEvent(e, InputEventType.MouseUp, button);
-        }
+        private void ScreenImage_PointerReleased(object? sender, PointerReleasedEventArgs e) =>
+            HandleScreenImagePointerButton(e, InputEventType.MouseUp, focusImage: false);
 
         private void SendWheelEvent(short delta, float x, float y)
         {
@@ -344,29 +343,24 @@ namespace LanScreenShare.Desktop
             }
         }
 
-        private void ScreenImage_KeyDown(object? sender, KeyEventArgs e)
+        private void HandleScreenImageKeyEvent(KeyEventArgs e, InputEventType eventType)
         {
-            if (TryHandleShortcutKeys(e))
-            {
-                e.Handled = true;
-                return;
-            }
+            bool handledShortcut = eventType == InputEventType.KeyDown
+                ? TryHandleShortcutKeys(e)
+                : IsShortcutKey(e);
 
-            SendRemoteKeyEvent(e.Key, InputEventType.KeyDown);
+            if (!handledShortcut)
+            {
+                SendRemoteKeyEvent(e.Key, eventType);
+            }
             e.Handled = true;
         }
 
-        private void ScreenImage_KeyUp(object? sender, KeyEventArgs e)
-        {
-            if (IsShortcutKey(e))
-            {
-                e.Handled = true;
-                return;
-            }
+        private void ScreenImage_KeyDown(object? sender, KeyEventArgs e) =>
+            HandleScreenImageKeyEvent(e, InputEventType.KeyDown);
 
-            SendRemoteKeyEvent(e.Key, InputEventType.KeyUp);
-            e.Handled = true;
-        }
+        private void ScreenImage_KeyUp(object? sender, KeyEventArgs e) =>
+            HandleScreenImageKeyEvent(e, InputEventType.KeyUp);
 
         #endregion
     }
