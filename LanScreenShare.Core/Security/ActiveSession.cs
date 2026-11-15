@@ -14,9 +14,16 @@ namespace LanScreenShare.Core.Security
         public bool VideoAuthorized { get; set; }
         public bool AudioAuthorized { get; set; }
         public bool ControlPermissionAllowed { get; set; } = true;
+        public bool SourceSwitchAuthorized { get; set; } = true;
         public bool ClipboardAuthorized { get; set; } = true;
         public bool FileTransferAuthorized { get; set; } = true;
         public RemoteControlState ControlState { get; set; }
+
+        public EffectiveSessionPermissions GetEffectivePermissions() => new(
+            AllowRemoteControl: ControlPermissionAllowed && ControlState != RemoteControlState.Revoked,
+            AllowSourceSwitch: SourceSwitchAuthorized,
+            AllowFileTransfer: FileTransferAuthorized,
+            AllowClipboardSync: ClipboardAuthorized);
         public HashSet<ChannelType> AttachedChannels { get; } = new();
 
         public ActiveSession(SessionId sessionId, DeviceFingerprint peerFingerprint, DeviceName peerName, DateTime expiresAt)

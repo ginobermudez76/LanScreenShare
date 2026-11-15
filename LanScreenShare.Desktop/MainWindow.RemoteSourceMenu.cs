@@ -19,7 +19,7 @@ namespace LanScreenShare.Desktop
 
         private async Task OpenRemoteSourceMenuAsync(Button? anchorButton)
         {
-            if (!_isViewing || !_currentDeviceAllowsRemoteControl)
+            if (!_isViewing || !_viewerPermissions.AllowSourceSwitch)
                 return;
 
             anchorButton ??= this.FindControl<Button>("SwitchMonitorButton");
@@ -166,7 +166,7 @@ namespace LanScreenShare.Desktop
         }
 
         private bool CanSendRemoteSourceCommand(string? sourceId = null) =>
-            (sourceId == null || !string.IsNullOrWhiteSpace(sourceId)) && _isViewing && _currentDeviceAllowsRemoteControl;
+            (sourceId == null || !string.IsNullOrWhiteSpace(sourceId)) && _isViewing && _viewerPermissions.AllowSourceSwitch;
 
         private async Task SelectRemoteSourceAsync(string sourceId)
         {
@@ -292,8 +292,8 @@ namespace LanScreenShare.Desktop
 
         private bool CanSynchronizeClipboard(out bool asHost, out bool asViewer)
         {
-            asHost = _isHosting && _allowRemoteControl && _controlServer.IsRunning;
-            asViewer = _isViewing && _remoteControlEnabled && _controlClient.IsConnected;
+            asHost = CanHostSyncClipboard() && _controlServer.IsRunning;
+            asViewer = CanViewerSyncClipboard() && _controlClient.IsConnected;
             return asHost || asViewer;
         }
 

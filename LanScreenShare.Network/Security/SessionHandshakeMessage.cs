@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using LanScreenShare.Core.Security;
 using LanScreenShare.Network.Streaming;
 
 namespace LanScreenShare.Network.Security;
@@ -24,6 +25,21 @@ public sealed class SessionHandshakeMessage
     public string FileTransferToken { get; set; } = string.Empty;
     public string HostFingerprint { get; set; } = string.Empty;
     public string ErrorMessage { get; set; } = string.Empty;
+    public bool AllowRemoteControl { get; set; } = true;
+    public bool AllowSourceSwitch { get; set; } = true;
+    public bool AllowFileTransfer { get; set; } = true;
+    public bool AllowClipboardSync { get; set; } = true;
+
+    public EffectiveSessionPermissions GetEffectivePermissions() =>
+        new(AllowRemoteControl, AllowSourceSwitch, AllowFileTransfer, AllowClipboardSync);
+
+    public void ApplyEffectivePermissions(EffectiveSessionPermissions permissions)
+    {
+        AllowRemoteControl = permissions.AllowRemoteControl;
+        AllowSourceSwitch = permissions.AllowSourceSwitch;
+        AllowFileTransfer = permissions.AllowFileTransfer;
+        AllowClipboardSync = permissions.AllowClipboardSync;
+    }
 
     public static async Task WriteAsync(Stream stream, SessionHandshakeMessage message, CancellationToken ct)
     {

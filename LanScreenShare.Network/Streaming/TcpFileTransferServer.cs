@@ -101,6 +101,7 @@ namespace LanScreenShare.Network.Streaming
             if (_sessionAuthority != null)
             {
                 _sessionAuthority.SessionTerminated += OnSessionTerminated;
+                _sessionAuthority.SessionPermissionsChanged += OnSessionPermissionsChanged;
             }
         }
 
@@ -109,6 +110,14 @@ namespace LanScreenShare.Network.Streaming
 
         private void OnSessionTerminated(object? sender, string sessionId) =>
             StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, sessionId, ForceDisconnectClient);
+
+        private void OnSessionPermissionsChanged(object? sender, SessionPermissionsChangedEventArgs e)
+        {
+            if (!e.Permissions.AllowFileTransfer)
+            {
+                StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, e.SessionId, ForceDisconnectClient);
+            }
+        }
 
         private void ForceDisconnectClient(string clientId)
         {
@@ -378,6 +387,7 @@ namespace LanScreenShare.Network.Streaming
             if (_sessionAuthority != null)
             {
                 _sessionAuthority.SessionTerminated -= OnSessionTerminated;
+                _sessionAuthority.SessionPermissionsChanged -= OnSessionPermissionsChanged;
             }
             Stop();
             _cts?.Dispose();

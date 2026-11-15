@@ -4,10 +4,16 @@ using System.Threading.Tasks;
 
 namespace LanScreenShare.Core.Security
 {
+    public sealed record SessionPermissionsChangedEventArgs(
+        string SessionId,
+        string PeerFingerprint,
+        EffectiveSessionPermissions Permissions);
+
     public interface ISessionAuthority
     {
         string? ActiveControllerSessionId { get; }
         event EventHandler<string>? SessionTerminated;
+        event EventHandler<SessionPermissionsChangedEventArgs>? SessionPermissionsChanged;
 
         ActiveSession CreateSession(DeviceFingerprint peerFingerprint, DeviceName peerName, TimeSpan? ttl = null);
         Task<(bool Success, ActiveSession? Session, string? FailureReason)> TryCreateSessionAsync(DeviceFingerprint peerFingerprint, DeviceName peerName = default, TimeSpan? ttl = null);

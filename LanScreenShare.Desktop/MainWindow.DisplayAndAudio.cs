@@ -463,9 +463,19 @@ namespace LanScreenShare.Desktop
                 Title = $"Visor Remoto - {_currentConnectedDeviceName ?? "LanScreenShare"}"
             };
 
-            popout.SetRemoteControlAllowed(_currentDeviceAllowsRemoteControl);
+            popout.ApplyPermissions(
+                _viewerPermissions.AllowRemoteControl,
+                _viewerPermissions.AllowSourceSwitch,
+                _viewerPermissions.AllowFileTransfer);
             popout.SetRemoteControlState(_remoteControlEnabled);
-            popout.SetGameModeState(_isGameMode);
+            if (_isGameMode)
+            {
+                popout.SetGameModeState(true);
+            }
+            else
+            {
+                popout.ExitGameModeSilently();
+            }
             popout.SetActiveMonitorLabel(_currentRemoteMonitorLabel);
             popout.SetVolume(_audioPlayerService?.Volume ?? 1.0f, _audioPlayerService?.IsMuted ?? false);
             popout.SetMicVolume(_micAudioPlayerService?.Volume ?? 1.0f, _micAudioPlayerService?.IsMuted ?? false);
@@ -493,6 +503,7 @@ namespace LanScreenShare.Desktop
             popout.RemoteControlToggled += HandlePopoutRemoteControlToggled;
             popout.GameModeToggled += async () =>
             {
+                if (!_viewerPermissions.AllowRemoteControl) return;
                 await ToggleGameModeAsync();
                 _popoutWindow?.SetGameModeState(_isGameMode);
             };
@@ -508,7 +519,7 @@ namespace LanScreenShare.Desktop
             popout.StretchModeChanged += HandlePopoutStretchModeChanged;
             popout.RemoteInputSent += async (input) =>
             {
-                if (_controlClient.IsConnected && _remoteControlEnabled)
+                if (_viewerPermissions.AllowRemoteControl && _controlClient.IsConnected && _remoteControlEnabled)
                 {
                     await _controlClient.SendInputAsync(input);
                 }
@@ -530,6 +541,14 @@ namespace LanScreenShare.Desktop
         private async Task EnablePopoutRemoteControlAsync()
         {
             var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
+            if (!_viewerPermissions.AllowRemoteControl)
+            {
+                _popoutWindow?.SetRemoteControlState(false);
+                if (remoteControlBtn != null) remoteControlBtn.IsChecked = false;
+                _remoteControlEnabled = false;
+                return;
+            }
+
             bool connected = await EnsureControlConnectedAsync();
             if (!connected)
             {

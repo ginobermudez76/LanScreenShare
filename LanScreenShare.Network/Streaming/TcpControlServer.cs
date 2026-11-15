@@ -37,6 +37,7 @@ namespace LanScreenShare.Network.Streaming
         public event EventHandler<string>? ClientConnected;
         public event EventHandler<string>? ClientDisconnected;
         public Func<string, Task<bool>>? ClientApprovalCallback { get; set; }
+        public Func<EffectiveSessionPermissions>? GlobalPermissionsProvider { get; set; }
 
         public bool IsRunning => _listener != null && _cts != null && !_cts.IsCancellationRequested;
 
@@ -52,6 +53,7 @@ namespace LanScreenShare.Network.Streaming
             if (_sessionAuthority != null)
             {
                 _sessionAuthority.SessionTerminated += OnSessionTerminated;
+                _sessionAuthority.SessionPermissionsChanged += OnSessionPermissionsChanged;
             }
         }
 
@@ -60,6 +62,33 @@ namespace LanScreenShare.Network.Streaming
 
         private void OnSessionTerminated(object? sender, string sessionId) =>
             StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, sessionId, RemoveClient);
+
+        private void OnSessionPermissionsChanged(object? sender, SessionPermissionsChangedEventArgs e)
+        {
+            var effective = e.Permissions.IntersectWith(GlobalPermissionsProvider?.Invoke() ?? EffectiveSessionPermissions.AllAllowed);
+            bool anyFeatureAllowed = effective.AllowRemoteControl || effective.AllowSourceSwitch || effective.AllowClipboardSync;
+            if (!anyFeatureAllowed)
+            {
+                StreamConnectionHelper.TerminateMatchingSessions(_clients, ctx => ctx.SessionId, e.SessionId, RemoveClient);
+                return;
+            }
+
+            TryReacquireControlForSession(e.SessionId, effective.AllowRemoteControl);
+        }
+
+        private void TryReacquireControlForSession(string sessionId, bool allowRemoteControl)
+        {
+            if (!allowRemoteControl || _sessionAuthority == null)
+                return;
+            if (!string.IsNullOrEmpty(_sessionAuthority.ActiveControllerSessionId))
+                return;
+
+            bool isClientConnected = _clients.Values.Any(c => string.Equals(c.SessionId, sessionId, StringComparison.Ordinal));
+            if (isClientConnected)
+            {
+                _sessionAuthority.TryAcquireControl(new SessionId(sessionId), out _);
+            }
+        }
 
         private sealed record ControlClientContext(string ClientId, TcpClient Client, Stream Stream, string? SessionId);
 
@@ -244,39 +273,62 @@ namespace LanScreenShare.Network.Streaming
             if (_sessionAuthority == null || assignedSessionId == null)
                 return true;
 
-            if (!_sessionAuthority.TryAcquireControl(assignedSessionId, out string? acquireError))
+            var effective = ResolveEffectivePermissions(assignedSessionId);
+            bool anyFeatureAllowed = effective.AllowRemoteControl || effective.AllowSourceSwitch || effective.AllowClipboardSync;
+            if (!anyFeatureAllowed)
             {
-                Console.WriteLine($"[ControlServer] Conflicto de controlador único para {clientId}: {acquireError}");
-                if (_sslServerOptions != null)
-                {
-                    try { stream.Write(new byte[] { (byte)AttachmentStatus.SessionNotFound }); } catch { /* Ignore write failure when rejecting duplicate controller */ }
-                }
-                try { client.Close(); } catch { /* Ignore client close error */ }
+                RejectControlAttachment(client, stream, $"[ControlServer] Sin permisos activos en canal 5003 para {clientId}");
+                return false;
+            }
+
+            if (effective.AllowRemoteControl && !_sessionAuthority.TryAcquireControl(assignedSessionId, out string? acquireError))
+            {
+                RejectControlAttachment(client, stream, $"[ControlServer] Conflicto de controlador único para {clientId}: {acquireError}");
                 return false;
             }
 
             return true;
         }
 
+        private void RejectControlAttachment(TcpClient client, Stream stream, string logMessage)
+        {
+            Console.WriteLine(logMessage);
+            if (_sslServerOptions != null)
+            {
+                try { stream.Write(new byte[] { (byte)AttachmentStatus.SessionNotFound }); } catch { /* Ignore write failure when rejecting attachment */ }
+            }
+            try { client.Close(); } catch { /* Ignore client close error */ }
+        }
+
+        private EffectiveSessionPermissions ResolveEffectivePermissions(string? sessionId)
+        {
+            var global = GlobalPermissionsProvider?.Invoke() ?? EffectiveSessionPermissions.AllAllowed;
+            if (_sessionAuthority == null || sessionId == null)
+                return global;
+
+            var session = _sessionAuthority.GetSession(new SessionId(sessionId));
+            if (session == null || session.State != SessionState.Active)
+                return default;
+
+            return session.GetEffectivePermissions().IntersectWith(global);
+        }
+
         private bool IsAuthorizedSession(string? sessionId)
         {
             if (_sessionAuthority == null || sessionId == null)
-                return true;
+                return ResolveEffectivePermissions(null).AllowRemoteControl;
+
+            if (!ResolveEffectivePermissions(sessionId).AllowRemoteControl)
+                return false;
 
             return _sessionAuthority.ActiveControllerSessionId == sessionId;
         }
 
-        private bool IsClipboardAuthorized(string? sessionId)
-        {
-            if (!IsAuthorizedSession(sessionId))
-                return false;
+        private bool IsSourceSwitchAuthorized(string? sessionId) =>
+            ResolveEffectivePermissions(sessionId).AllowSourceSwitch;
 
-            if (_sessionAuthority == null || sessionId == null)
-                return true;
-
-            var session = _sessionAuthority.GetSession(new SessionId(sessionId));
-            return session == null || session.ClipboardAuthorized;
-        }
+        private bool IsClipboardAuthorized(string? sessionId) =>
+            ResolveEffectivePermissions(sessionId).AllowClipboardSync;
 
         private async Task ProcessClientInputAsync(ControlClientContext ctx, CancellationToken token)
         {
@@ -383,7 +435,7 @@ namespace LanScreenShare.Network.Streaming
             if (sourceId == null)
                 return false;
 
-            if (!IsAuthorizedSession(ctx.SessionId))
+            if (!IsSourceSwitchAuthorized(ctx.SessionId))
                 return true;
 
             input.ClipboardText = sourceId;
@@ -399,7 +451,7 @@ namespace LanScreenShare.Network.Streaming
 
         private bool HandleSwitchMonitorPacket(ControlClientContext ctx, RemoteInputMessage input)
         {
-            if (!IsAuthorizedSession(ctx.SessionId))
+            if (!IsSourceSwitchAuthorized(ctx.SessionId))
                 return true;
 
             try { InputReceived?.Invoke(this, input); }
@@ -585,6 +637,7 @@ namespace LanScreenShare.Network.Streaming
             if (_sessionAuthority != null)
             {
                 _sessionAuthority.SessionTerminated -= OnSessionTerminated;
+                _sessionAuthority.SessionPermissionsChanged -= OnSessionPermissionsChanged;
             }
 
             Stop();

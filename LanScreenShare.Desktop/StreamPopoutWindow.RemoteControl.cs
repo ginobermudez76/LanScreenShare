@@ -256,8 +256,16 @@ namespace LanScreenShare.Desktop
         {
             if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.KeyModifiers.HasFlag(KeyModifiers.Alt))
             {
-                if (e.Key == Key.L) { GameModeToggled?.Invoke(); return true; }
-                if (e.Key == Key.M) { CycleMonitorRequested?.Invoke(); return true; }
+                if (e.Key == Key.L)
+                {
+                    if (_allowRemoteControl) GameModeToggled?.Invoke();
+                    return true;
+                }
+                if (e.Key == Key.M)
+                {
+                    if (_allowSourceSwitch) CycleMonitorRequested?.Invoke();
+                    return true;
+                }
             }
 
             if (e.Key == Key.F11) { ToggleFullscreen(); return true; }

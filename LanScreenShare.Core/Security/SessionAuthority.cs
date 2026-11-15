@@ -23,6 +23,7 @@ namespace LanScreenShare.Core.Security
         }
 
         public event EventHandler<string>? SessionTerminated;
+        public event EventHandler<SessionPermissionsChangedEventArgs>? SessionPermissionsChanged;
         public string? ActiveControllerSessionId => GetActiveControllerSessionId();
 
         public ActiveSession CreateSession(DeviceFingerprint peerFingerprint, DeviceName peerName, TimeSpan? ttl = null)
@@ -85,6 +86,7 @@ namespace LanScreenShare.Core.Security
         private static void ApplyPermissionsToSession(ActiveSession session, DevicePermissions permissions)
         {
             session.ControlPermissionAllowed = permissions.AllowRemoteControl;
+            session.SourceSwitchAuthorized = permissions.AllowSourceSwitch;
             session.ClipboardAuthorized = permissions.AllowClipboardSync;
             session.FileTransferAuthorized = permissions.AllowFileTransfer;
         }
@@ -215,7 +217,7 @@ namespace LanScreenShare.Core.Security
                     return RemoteControlState.Disabled;
                 }
 
-                if (!session.ControlPermissionAllowed)
+                if (!session.ControlPermissionAllowed || session.ControlState == RemoteControlState.Revoked)
                 {
                     return RemoteControlState.Revoked;
                 }
@@ -258,9 +260,13 @@ namespace LanScreenShare.Core.Security
 
         public void ReleaseRemoteControl(SessionId sessionId) => SetControlState(sessionId, RemoteControlState.Disabled);
 
-        public void RevokeControl(SessionId sessionId) => SetControlState(sessionId, RemoteControlState.Revoked);
+        public void RevokeControl(SessionId sessionId)
+        {
+            var session = SetControlState(sessionId, RemoteControlState.Revoked);
+            NotifySessionPermissionsChanged(session);
+        }
 
-        private void SetControlState(SessionId sessionId, RemoteControlState targetState)
+        private ActiveSession? SetControlState(SessionId sessionId, RemoteControlState targetState)
         {
             lock (_controlLock)
             {
@@ -272,8 +278,22 @@ namespace LanScreenShare.Core.Security
                 if (_sessions.TryGetValue(sessionId.Value, out var session))
                 {
                     session.ControlState = targetState;
+                    return session;
                 }
+
+                return null;
             }
+        }
+
+        private void NotifySessionPermissionsChanged(ActiveSession? session)
+        {
+            if (session == null) return;
+            SessionPermissionsChanged?.Invoke(
+                this,
+                new SessionPermissionsChangedEventArgs(
+                    session.SessionId.Value,
+                    session.PeerFingerprint.Value,
+                    session.GetEffectivePermissions()));
         }
 
         public string? GetActiveControllerSessionId()
@@ -355,8 +375,14 @@ namespace LanScreenShare.Core.Security
                 ApplyPermissionsToSession(session, permissions);
                 if (!permissions.AllowRemoteControl)
                 {
-                    RevokeControl(session.SessionId);
+                    SetControlState(session.SessionId, RemoteControlState.Revoked);
                 }
+                else if (session.ControlState == RemoteControlState.Revoked)
+                {
+                    SetControlState(session.SessionId, RemoteControlState.Disabled);
+                }
+
+                NotifySessionPermissionsChanged(session);
             }
         }
 

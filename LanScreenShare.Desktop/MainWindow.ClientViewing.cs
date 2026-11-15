@@ -13,6 +13,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using LanScreenShare.Core.Models;
+using LanScreenShare.Core.Security;
 using LanScreenShare.Network.Security;
 using LanScreenShare.Network.Streaming;
 
@@ -117,26 +118,158 @@ namespace LanScreenShare.Desktop
             if (!_streamClient.IsConnected || _currentConnectedDeviceIp != device.IPAddress)
                 return;
 
-            _currentDeviceAllowsRemoteControl = device.IsRemoteControlAllowed;
-            UpdateRemoteControlButtonsVisibility(_currentDeviceAllowsRemoteControl);
-            _popoutWindow?.SetRemoteControlAllowed(_currentDeviceAllowsRemoteControl);
-        }
-
-        private void SetToggleButtonState(string name, bool isVisible)
-        {
-            var btn = this.FindControl<ToggleButton>(name);
-            if (btn != null)
+            // El descubrimiento UDP solo actúa como límite global a la baja;
+            // nunca debe sobreescribir restricciones individuales de la sesión.
+            if (!device.IsRemoteControlAllowed)
             {
-                btn.IsVisible = isVisible;
-                if (!isVisible) btn.IsChecked = false;
+                var capped = _viewerPermissions with
+                {
+                    AllowRemoteControl = false,
+                    AllowSourceSwitch = false,
+                    AllowClipboardSync = false
+                };
+                if (capped != _viewerPermissions)
+                {
+                    _currentDeviceAllowsRemoteControl = false;
+                    ApplyViewerPermissions(capped, isLiveUpdate: true);
+                }
             }
         }
 
-        private void UpdateRemoteControlButtonsVisibility(bool allowed)
+        private void ApplyViewerPermissions(EffectiveSessionPermissions permissions, bool isLiveUpdate)
         {
-            SetToggleButtonState("RemoteControlButton", allowed);
-            SetToggleButtonState("GameModeButton", allowed);
-            SetViewerControlVisibility("SwitchMonitorButton", allowed);
+            var previous = _viewerPermissions;
+            _viewerPermissions = permissions;
+
+            ConfigureControlButtonsForPermissions(permissions);
+            SetViewerControlVisibility("SendFileButton", permissions.AllowFileTransfer);
+            _popoutWindow?.ApplyPermissions(
+                permissions.AllowRemoteControl,
+                permissions.AllowSourceSwitch,
+                permissions.AllowFileTransfer);
+
+            if (!permissions.AllowRemoteControl)
+            {
+                RevokeViewerRemoteControlUi();
+            }
+
+            if (!permissions.AllowSourceSwitch)
+            {
+                CloseAndClearRemoteSourceMenu();
+            }
+
+            if (isLiveUpdate)
+            {
+                NotifyRevokedPermissionsIfNeeded(previous, permissions);
+            }
+        }
+
+        private void ConfigureControlButtonsForPermissions(EffectiveSessionPermissions permissions)
+        {
+            var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
+            if (remoteControlBtn != null)
+            {
+                remoteControlBtn.IsVisible = permissions.AllowRemoteControl;
+                remoteControlBtn.IsEnabled = true;
+                if (!permissions.AllowRemoteControl)
+                {
+                    remoteControlBtn.IsChecked = false;
+                }
+                ToolTip.SetTip(remoteControlBtn, "Habilitar interacción con mouse y teclado");
+            }
+
+            var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
+            if (gameModeBtn != null)
+            {
+                gameModeBtn.IsVisible = permissions.AllowRemoteControl;
+                gameModeBtn.IsEnabled = true;
+                if (!permissions.AllowRemoteControl)
+                {
+                    gameModeBtn.IsChecked = false;
+                }
+            }
+
+            var switchMonitorBtn = this.FindControl<Button>("SwitchMonitorButton");
+            if (switchMonitorBtn != null)
+            {
+                switchMonitorBtn.IsVisible = permissions.AllowSourceSwitch;
+                switchMonitorBtn.IsEnabled = true;
+            }
+        }
+
+        private void RevokeViewerRemoteControlUi()
+        {
+            _remoteControlEnabled = false;
+            var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
+            if (remoteControlBtn != null)
+            {
+                remoteControlBtn.IsChecked = false;
+                remoteControlBtn.Background = new SolidColorBrush(Color.Parse("#27272A"));
+            }
+
+            if (_isGameMode)
+            {
+                ExitGameModeWithoutRecaptureHint();
+            }
+
+            _popoutWindow?.SetRemoteControlState(false);
+
+            bool anyChannel5003Feature = _viewerPermissions.AllowRemoteControl
+                || _viewerPermissions.AllowSourceSwitch
+                || _viewerPermissions.AllowClipboardSync;
+
+            if (!anyChannel5003Feature && _controlClient.IsConnected)
+            {
+                _ = _controlClient.DisconnectAsync();
+            }
+        }
+
+        private void CloseAndClearRemoteSourceMenu()
+        {
+            _remoteSourceMenu?.Close();
+            _remoteMonitorCatalog = null;
+        }
+
+        private void NotifyRevokedPermissionsIfNeeded(
+            EffectiveSessionPermissions previous,
+            EffectiveSessionPermissions current)
+        {
+            if (WasAnyPermissionRevoked(previous, current))
+            {
+                UpdateStatus("El anfitrión actualizó o revocó permisos de esta sesión", "#F59E0B");
+            }
+        }
+
+        private static bool WasAnyPermissionRevoked(
+            EffectiveSessionPermissions previous,
+            EffectiveSessionPermissions current)
+        {
+            ReadOnlySpan<bool> before = [previous.AllowRemoteControl, previous.AllowSourceSwitch, previous.AllowFileTransfer, previous.AllowClipboardSync];
+            ReadOnlySpan<bool> after = [current.AllowRemoteControl, current.AllowSourceSwitch, current.AllowFileTransfer, current.AllowClipboardSync];
+            for (int i = 0; i < before.Length; i++)
+            {
+                if (before[i] && !after[i])
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void StreamClient_PermissionsUpdated(object? sender, EffectiveSessionPermissions permissions)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!_isViewing || !_streamClient.IsConnected)
+                    return;
+
+                _currentDeviceAllowsRemoteControl = permissions.AllowRemoteControl;
+                ApplyViewerPermissions(permissions, isLiveUpdate: true);
+                if (permissions.AllowFileTransfer && !_fileTransferClient.IsConnected)
+                {
+                    ConnectFileTransferChannelIfAllowed(_currentConnectedDeviceIp, _streamClient.ActiveSessionHandshake);
+                }
+            });
         }
 
         private void DiscoveryService_OnDeviceDiscovered(object? sender, DeviceInfo device)
@@ -191,41 +324,13 @@ namespace LanScreenShare.Desktop
             SetViewerControlVisibility("ViewerVoiceChatPanel", true);
             UpdateViewerVoiceChatUI(_isViewerVoiceChatActive);
 
-            ConfigureRemoteControlButtons();
-            SetViewerControlVisibility("SendFileButton", true);
+            ApplyViewerPermissions(_viewerPermissions, isLiveUpdate: false);
         }
 
         private void SetViewerControlVisibility(string controlName, bool isVisible)
         {
             var control = this.FindControl<Control>(controlName);
             if (control != null) control.IsVisible = isVisible;
-        }
-
-        private void ConfigureRemoteControlButtons()
-        {
-            var remoteControlBtn = this.FindControl<ToggleButton>("RemoteControlButton");
-            if (remoteControlBtn != null)
-            {
-                remoteControlBtn.IsVisible = _currentDeviceAllowsRemoteControl;
-                remoteControlBtn.IsChecked = false;
-                remoteControlBtn.IsEnabled = true;
-                ToolTip.SetTip(remoteControlBtn, "Habilitar interacción con mouse y teclado");
-            }
-
-            var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
-            if (gameModeBtn != null)
-            {
-                gameModeBtn.IsVisible = _currentDeviceAllowsRemoteControl;
-                gameModeBtn.IsChecked = false;
-                gameModeBtn.IsEnabled = true;
-            }
-
-            var switchMonitorBtn = this.FindControl<Button>("SwitchMonitorButton");
-            if (switchMonitorBtn != null)
-            {
-                switchMonitorBtn.IsVisible = _currentDeviceAllowsRemoteControl;
-                switchMonitorBtn.IsEnabled = true;
-            }
         }
 
         private void StartViewerAuxiliaryChannels(string ipAddress, SessionHandshakeMessage? handshake)
@@ -249,6 +354,17 @@ namespace LanScreenShare.Desktop
                 }
             }, CancellationToken.None);
 
+            if (_viewerPermissions.AllowFileTransfer)
+            {
+                ConnectFileTransferChannelIfAllowed(ipAddress, handshake);
+            }
+        }
+
+        private void ConnectFileTransferChannelIfAllowed(string? ipAddress, SessionHandshakeMessage? handshake)
+        {
+            if (string.IsNullOrEmpty(ipAddress))
+                return;
+
             _ = Task.Run(async () =>
             {
                 try
@@ -270,6 +386,11 @@ namespace LanScreenShare.Desktop
             _currentConnectedDeviceName = device.Name;
             _currentConnectedDeviceIp = device.IPAddress;
             _currentDeviceAllowsRemoteControl = device.IsRemoteControlAllowed;
+            _viewerPermissions = new EffectiveSessionPermissions(
+                AllowRemoteControl: device.IsRemoteControlAllowed,
+                AllowSourceSwitch: device.IsRemoteControlAllowed,
+                AllowFileTransfer: true,
+                AllowClipboardSync: device.IsRemoteControlAllowed);
             UpdateStatus($"Conectando a {device.Name} ({device.IPAddress}:5001)...", "#F59E0B");
             ResetMetrics();
             SetConnectingPlaceholder(device.Name, device.IPAddress);
@@ -281,8 +402,14 @@ namespace LanScreenShare.Desktop
                 UpdateStreamStateBadge();
                 UpdateDevicesViewingState();
 
-                ShowViewerControls(device);
                 var handshake = _streamClient.ActiveSessionHandshake;
+                if (handshake != null)
+                {
+                    _viewerPermissions = handshake.GetEffectivePermissions();
+                    _currentDeviceAllowsRemoteControl = _viewerPermissions.AllowRemoteControl;
+                }
+
+                ShowViewerControls(device);
                 StartViewerAuxiliaryChannels(device.IPAddress, handshake);
             }
             catch (Exception ex)
@@ -461,7 +588,7 @@ namespace LanScreenShare.Desktop
                 SetViewerControlVisibility("ViewerVoiceChatPanel", true);
                 UpdateViewerVoiceChatUI(_isViewerVoiceChatActive);
 
-                ConfigureRemoteControlButtons();
+                ApplyViewerPermissions(_viewerPermissions, isLiveUpdate: false);
             });
         }
 

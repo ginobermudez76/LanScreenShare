@@ -17,6 +17,9 @@ namespace LanScreenShare.Desktop
 
         private async Task ToggleGameModeAsync()
         {
+            if (!_isGameMode && (!_isViewing || !_viewerPermissions.AllowRemoteControl))
+                return;
+
             if (!_isGameMode)
             {
                 bool connected = await EnsureControlConnectedAsync();
@@ -39,14 +42,7 @@ namespace LanScreenShare.Desktop
 
         private void UpdateGameModeUI()
         {
-            var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
-            if (gameModeBtn != null)
-            {
-                gameModeBtn.IsChecked = _isGameMode;
-                gameModeBtn.Background = _isGameMode
-                    ? new SolidColorBrush(Color.Parse("#2563EB"))
-                    : new SolidColorBrush(Color.Parse("#27272A"));
-            }
+            ApplyGameModeButtonAndCursor(_isGameMode);
 
             if (_isGameMode)
             {
@@ -55,6 +51,22 @@ namespace LanScreenShare.Desktop
             else
             {
                 DeactivateGameModeUi();
+            }
+        }
+
+        private void ApplyGameModeButtonAndCursor(bool isGameMode)
+        {
+            var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
+            if (gameModeBtn != null)
+            {
+                gameModeBtn.IsChecked = isGameMode;
+                gameModeBtn.Background = new SolidColorBrush(Color.Parse(isGameMode ? "#2563EB" : "#27272A"));
+            }
+
+            var screenImage = this.FindControl<Image>(ScreenImageControlName);
+            if (screenImage != null)
+            {
+                screenImage.Cursor = isGameMode ? new Cursor(StandardCursorType.None) : Cursor.Default;
             }
         }
 
@@ -68,12 +80,7 @@ namespace LanScreenShare.Desktop
                 remoteControlBtn.Background = new SolidColorBrush(Color.Parse("#2563EB"));
             }
 
-            var screenImage = this.FindControl<Image>(ScreenImageControlName);
-            if (screenImage != null)
-            {
-                screenImage.Focus();
-                screenImage.Cursor = new Cursor(StandardCursorType.None);
-            }
+            this.FindControl<Image>(ScreenImageControlName)?.Focus();
 
             if (OperatingSystem.IsWindows())
             {
@@ -89,13 +96,24 @@ namespace LanScreenShare.Desktop
                 "Modo Juego 3D Activo — Presiona Ctrl + Alt + L para liberar el mouse"));
         }
 
+        private void ExitGameModeWithoutRecaptureHint()
+        {
+            _isGameMode = false;
+            ApplyGameModeButtonAndCursor(false);
+
+            _gameModeBannerTimer?.Stop();
+            var banner = this.FindControl<Border>("GameModeBanner");
+            if (banner != null)
+            {
+                banner.IsVisible = false;
+            }
+
+            _popoutWindow?.ExitGameModeSilently();
+        }
+
         private void DeactivateGameModeUi()
         {
-            var screenImage = this.FindControl<Image>(ScreenImageControlName);
-            if (screenImage != null)
-            {
-                screenImage.Cursor = Cursor.Default;
-            }
+            ApplyGameModeButtonAndCursor(false);
 
             ShowGameModeBanner(new GameModeBannerStyle(
                 "IconLockOpen",
