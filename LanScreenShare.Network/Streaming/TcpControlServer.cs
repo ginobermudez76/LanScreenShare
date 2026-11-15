@@ -500,14 +500,15 @@ namespace LanScreenShare.Network.Streaming
                 return;
             }
 
+            var token = _cts?.Token ?? CancellationToken.None;
             try
             {
-                await ctx.SendLock.WaitAsync();
+                await ctx.SendLock.WaitAsync(token);
                 try
                 {
                     if (ctx.Client.Connected)
                     {
-                        await ctx.Stream.WriteAsync(packet.AsMemory(0, packet.Length));
+                        await ctx.Stream.WriteAsync(packet.AsMemory(0, packet.Length), token);
                     }
                 }
                 finally

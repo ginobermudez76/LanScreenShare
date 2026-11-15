@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -67,28 +68,34 @@ namespace LanScreenShare.Media
             return (vLeft, vTop, vWidth, vHeight);
         }
 
-        private static unsafe string ReadFixedString(char* buffer, int maxLength)
+        private static string ReadUtf16NullTerminated(ReadOnlySpan<byte> utf16Bytes)
         {
-            var span = new ReadOnlySpan<char>(buffer, maxLength);
-            int nullIdx = span.IndexOf('\0');
-            return (nullIdx >= 0 ? span[..nullIdx] : span).ToString();
+            ReadOnlySpan<char> chars = MemoryMarshal.Cast<byte, char>(utf16Bytes);
+            int nullIdx = chars.IndexOf('\0');
+            return (nullIdx >= 0 ? chars[..nullIdx] : chars).ToString();
         }
 
-        private static unsafe List<CaptureSource> EnumeratePhysicalMonitors()
+        private static List<CaptureSource> EnumeratePhysicalMonitors()
         {
             var monitors = new List<CaptureSource>();
             int monitorIndex = 0;
 
             MonitorEnumProc callback = (IntPtr hMonitor, IntPtr hdcMonitor, ref NativeRect lprcMonitor, IntPtr dwData) =>
             {
-                var mi = new MonitorInfoEx { cbSize = Marshal.SizeOf<MonitorInfoEx>() };
+                Span<byte> mi = stackalloc byte[MonitorInfoExByteSize];
+                BinaryPrimitives.WriteInt32LittleEndian(mi, MonitorInfoExByteSize);
 
-                if (GetMonitorInfo(hMonitor, ref mi))
+                if (GetMonitorInfo(hMonitor, mi))
                 {
-                    int w = mi.rcMonitor.Right - mi.rcMonitor.Left;
-                    int h = mi.rcMonitor.Bottom - mi.rcMonitor.Top;
-                    bool isPrimary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
-                    string devName = ReadFixedString(mi.szDevice, 32);
+                    int left = BinaryPrimitives.ReadInt32LittleEndian(mi[4..8]);
+                    int top = BinaryPrimitives.ReadInt32LittleEndian(mi[8..12]);
+                    int right = BinaryPrimitives.ReadInt32LittleEndian(mi[12..16]);
+                    int bottom = BinaryPrimitives.ReadInt32LittleEndian(mi[16..20]);
+                    uint dwFlags = BinaryPrimitives.ReadUInt32LittleEndian(mi[36..40]);
+                    int w = right - left;
+                    int h = bottom - top;
+                    bool isPrimary = (dwFlags & MONITORINFOF_PRIMARY) != 0;
+                    string devName = ReadUtf16NullTerminated(mi[40..]);
                     string cleanDevName = devName.Replace(@"\\.\", "").Trim();
 
                     monitors.Add(new CaptureSource
@@ -100,8 +107,8 @@ namespace LanScreenShare.Media
                         MonitorIndex = monitorIndex,
                         DeviceName = devName,
                         Handle = hMonitor,
-                        X = mi.rcMonitor.Left,
-                        Y = mi.rcMonitor.Top,
+                        X = left,
+                        Y = top,
                         Width = w,
                         Height = h,
                         IsPrimary = isPrimary
@@ -389,25 +396,33 @@ namespace LanScreenShare.Media
             return matchingPid;
         }
 
-        private static unsafe (Dictionary<uint, uint> ParentMap, Dictionary<uint, string> NameMap) ReadProcessHierarchy(IntPtr snapshot)
+        private static (Dictionary<uint, uint> ParentMap, Dictionary<uint, string> NameMap) ReadProcessHierarchy(IntPtr snapshot)
         {
             var parentMap = new Dictionary<uint, uint>();
             var nameMap = new Dictionary<uint, string>();
-            var pe = new ProcessEntry32 { dwSize = (uint)Marshal.SizeOf<ProcessEntry32>() };
 
-            if (Process32First(snapshot, ref pe))
+            var (entrySize, parentOffset, exeOffset) = IntPtr.Size == 8
+                ? (568, 32, 44)
+                : (556, 24, 36);
+
+            Span<byte> pe = stackalloc byte[entrySize];
+            BinaryPrimitives.WriteUInt32LittleEndian(pe, (uint)entrySize);
+
+            if (Process32First(snapshot, pe))
             {
                 do
                 {
-                    parentMap[pe.th32ProcessID] = pe.th32ParentProcessID;
-                    string exeName = ReadFixedString(pe.szExeFile, 260);
+                    uint pid = BinaryPrimitives.ReadUInt32LittleEndian(pe[8..12]);
+                    uint parentPid = BinaryPrimitives.ReadUInt32LittleEndian(pe.Slice(parentOffset, 4));
+                    parentMap[pid] = parentPid;
+                    string exeName = ReadUtf16NullTerminated(pe[exeOffset..]);
                     int dotIdx = exeName.LastIndexOf('.');
                     if (dotIdx > 0)
                     {
                         exeName = exeName.Substring(0, dotIdx);
                     }
-                    nameMap[pe.th32ProcessID] = exeName;
-                } while (Process32Next(snapshot, ref pe));
+                    nameMap[pid] = exeName;
+                } while (Process32Next(snapshot, pe));
             }
 
             return (parentMap, nameMap);
@@ -488,31 +503,18 @@ namespace LanScreenShare.Media
         private const int DWMWA_CLOAKED = 14;
         private const uint TH32CS_SNAPPROCESS = 0x00000002;
 
-        [StructLayout(LayoutKind.Sequential)]
-        private unsafe struct ProcessEntry32
-        {
-            public uint dwSize;
-            public uint cntUsage;
-            public uint th32ProcessID;
-            public IntPtr th32DefaultHeapID;
-            public uint th32ModuleID;
-            public uint cntThreads;
-            public uint th32ParentProcessID;
-            public int pcPriClassBase;
-            public uint dwFlags;
-            public fixed char szExeFile[260];
-        }
+        private const int MonitorInfoExByteSize = 104;
 
         [LibraryImport("kernel32.dll", SetLastError = true)]
         private static partial IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
 
         [LibraryImport("kernel32.dll", EntryPoint = "Process32FirstW", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static partial bool Process32First(IntPtr hSnapshot, ref ProcessEntry32 lppe);
+        private static partial bool Process32First(IntPtr hSnapshot, Span<byte> lppe);
 
         [LibraryImport("kernel32.dll", EntryPoint = "Process32NextW", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static partial bool Process32Next(IntPtr hSnapshot, ref ProcessEntry32 lppe);
+        private static partial bool Process32Next(IntPtr hSnapshot, Span<byte> lppe);
 
         [LibraryImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -525,16 +527,6 @@ namespace LanScreenShare.Media
             public int Top;
             public int Right;
             public int Bottom;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private unsafe struct MonitorInfoEx
-        {
-            public int cbSize;
-            public NativeRect rcMonitor;
-            public NativeRect rcWork;
-            public uint dwFlags;
-            public fixed char szDevice[32];
         }
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
@@ -554,7 +546,7 @@ namespace LanScreenShare.Media
 
         [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static partial bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfoEx lpmi);
+        private static partial bool GetMonitorInfo(IntPtr hMonitor, Span<byte> lpmi);
 
         [LibraryImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]

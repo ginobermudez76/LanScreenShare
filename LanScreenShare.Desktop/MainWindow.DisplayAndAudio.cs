@@ -491,9 +491,9 @@ namespace LanScreenShare.Desktop
             popout.ReattachRequested += ClosePopoutWindow;
             popout.DisconnectRequested += () => DisconnectButton_Click(null, null);
             popout.RemoteControlToggled += HandlePopoutRemoteControlToggled;
-            popout.GameModeToggled += () =>
+            popout.GameModeToggled += async () =>
             {
-                ToggleGameMode();
+                await ToggleGameModeAsync();
                 _popoutWindow?.SetGameModeState(_isGameMode);
             };
             popout.SwitchMonitorRequested += async () => await OpenRemoteSourceMenuAsync(_popoutWindow?.GetSwitchMonitorButton());

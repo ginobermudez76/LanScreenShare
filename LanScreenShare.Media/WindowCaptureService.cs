@@ -133,7 +133,7 @@ namespace LanScreenShare.Media
             _cts?.Cancel();
             try
             {
-                _captureTask?.Wait(800);
+                _captureTask?.Wait(800, CancellationToken.None);
             }
             catch
             {

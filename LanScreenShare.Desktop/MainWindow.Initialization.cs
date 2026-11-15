@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -292,9 +293,9 @@ namespace LanScreenShare.Desktop
             var gameModeBtn = this.FindControl<ToggleButton>("GameModeButton");
             if (gameModeBtn != null)
             {
-                gameModeBtn.IsCheckedChanged += (s, e) =>
+                gameModeBtn.IsCheckedChanged += async (s, e) =>
                 {
-                    if (_isGameMode != (gameModeBtn.IsChecked == true)) ToggleGameMode();
+                    if (_isGameMode != (gameModeBtn.IsChecked == true)) await ToggleGameModeAsync();
                 };
             }
         }
@@ -467,7 +468,7 @@ namespace LanScreenShare.Desktop
             {
                 try
                 {
-                    await _audioServer.StartAsync(5002);
+                    await _audioServer.StartAsync(5002, CancellationToken.None);
                     startAction();
                     Console.WriteLine($"[Host] Captura de {label} iniciada dinámicamente.");
                 }

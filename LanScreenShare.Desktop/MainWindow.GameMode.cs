@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -14,7 +15,7 @@ namespace LanScreenShare.Desktop
     {
         #region Game Mode & Cursor Centering
 
-        private async void ToggleGameMode()
+        private async Task ToggleGameModeAsync()
         {
             if (!_isGameMode)
             {

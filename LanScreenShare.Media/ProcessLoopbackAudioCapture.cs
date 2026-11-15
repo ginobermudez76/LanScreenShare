@@ -4,6 +4,7 @@ using System.Runtime.InteropServices.Marshalling;
 using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32.SafeHandles;
 using LanScreenShare.Core.Models;
 using NAudio.Wave;
 
@@ -35,8 +36,16 @@ namespace LanScreenShare.Media
         private Task? _captureTask;
         private IAudioClient? _audioClient;
         private IAudioCaptureClient? _captureClient;
-        private AutoResetEvent? _bufferEvent;
+        private WaitHandle? _bufferEvent;
         private bool _disposed;
+
+        private sealed class NativeWaitHandle : WaitHandle
+        {
+            public NativeWaitHandle(IntPtr rawHandle)
+            {
+                SafeWaitHandle = new SafeWaitHandle(rawHandle, ownsHandle: true);
+            }
+        }
 
         private static (IntPtr pProp, IntPtr pParams) CreateActivationPropVariant(uint targetPid, bool includeProcess)
         {
@@ -218,7 +227,7 @@ namespace LanScreenShare.Media
                     _captureClient = captureClient;
                     _cts = new CancellationTokenSource();
                     IsCapturing = true;
-                    _captureTask = Task.Run(() => CaptureLoop(waveFormat, _cts.Token));
+                    _captureTask = Task.Run(() => CaptureLoop(waveFormat, _cts.Token), _cts.Token);
                     string modeDesc = includeProcess ? $"PID {processId} (aislado)" : $"Escritorio completo (excluyendo PID {targetPid})";
                     Log($"[ProcessAudio] Captura iniciada: {modeDesc} ({waveFormat.SampleRate}Hz, {waveFormat.Channels}ch, {waveFormat.BitsPerSample}bits)");
                     return true;
@@ -245,8 +254,15 @@ namespace LanScreenShare.Media
                 return false;
             }
 
-            _bufferEvent = new AutoResetEvent(false);
-            hr = client.SetEventHandle(_bufferEvent.SafeWaitHandle.DangerousGetHandle());
+            IntPtr hEvent = CreateEvent(IntPtr.Zero, bManualReset: false, bInitialState: false, IntPtr.Zero);
+            if (hEvent == IntPtr.Zero)
+            {
+                Log("[ProcessAudio] CreateEventW falló al crear el evento de audio.");
+                return false;
+            }
+
+            _bufferEvent = new NativeWaitHandle(hEvent);
+            hr = client.SetEventHandle(hEvent);
             if (hr < 0)
             {
                 Log($"[ProcessAudio] SetEventHandle falló con HRESULT: 0x{hr:X8}");
@@ -363,7 +379,7 @@ namespace LanScreenShare.Media
 
             try
             {
-                _captureTask?.Wait(200);
+                _captureTask?.Wait(200, CancellationToken.None);
             }
             catch
             {
@@ -567,6 +583,13 @@ namespace LanScreenShare.Media
             [PreserveSig]
             int GetNextPacketSize(out uint pNumFramesInNextPacket);
         }
+
+        [LibraryImport("kernel32.dll", EntryPoint = "CreateEventW", SetLastError = true)]
+        private static partial IntPtr CreateEvent(
+            IntPtr lpEventAttributes,
+            [MarshalAs(UnmanagedType.Bool)] bool bManualReset,
+            [MarshalAs(UnmanagedType.Bool)] bool bInitialState,
+            IntPtr lpName);
 
         [LibraryImport("mmdevapi.dll", StringMarshalling = StringMarshalling.Utf16)]
         private static partial int ActivateAudioInterfaceAsync(

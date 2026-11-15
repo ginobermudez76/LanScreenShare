@@ -171,7 +171,7 @@ namespace LanScreenShare.Media
             _cts?.Cancel();
             try
             {
-                _captureTask?.Wait(1000);
+                _captureTask?.Wait(1000, CancellationToken.None);
             }
             catch
             {
