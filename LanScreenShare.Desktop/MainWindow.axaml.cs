@@ -266,7 +266,8 @@ namespace LanScreenShare.Desktop
             {
                 try
                 {
-                    Task.Run(() => _secureHostServiceManager.StopServiceAsync(removeIfTemporary: true)).Wait(1500);
+                    Task.Run(() => _secureHostServiceManager.StopServiceAsync(removeIfTemporary: true, CancellationToken.None), CancellationToken.None)
+                        .Wait(1500, CancellationToken.None);
                 }
                 catch
                 {

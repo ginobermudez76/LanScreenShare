@@ -170,8 +170,8 @@ namespace LanScreenShare.Desktop
         private async Task EnableSecureDesktopServiceFromUiAsync(CheckBox toggle, TextBlock? label)
         {
             string exePath = System.IO.Path.Combine(AppContext.BaseDirectory, "LanScreenShare.SecureHost.exe");
-            bool started = await Task.Run(() => _secureHostServiceManager.EnsureServiceRunningAsync(exePath));
-            var client = started ? await Task.Run(TryConnectSecureAgentClient) : null;
+            bool started = await Task.Run(() => _secureHostServiceManager.EnsureServiceRunningAsync(exePath, CancellationToken.None), CancellationToken.None);
+            var client = started ? await Task.Run(TryConnectSecureAgentClient, CancellationToken.None) : null;
             if (client == null)
             {
                 SetSecureDesktopSwitchState(toggle, false);
@@ -207,7 +207,7 @@ namespace LanScreenShare.Desktop
                 SwitchCaptureSource(_currentSource, GetSelectedEngine(), BuildCurrentCaptureProfile());
             }
 
-            await Task.Run(() => _secureHostServiceManager.StopServiceAsync(removeIfTemporary: true));
+            await Task.Run(() => _secureHostServiceManager.StopServiceAsync(removeIfTemporary: true, CancellationToken.None), CancellationToken.None);
             UpdateSecureDesktopServiceStatusLabel(_secureHostServiceManager.GetStatus(), active: false);
         }
 

@@ -14,12 +14,14 @@ public enum SecureHostServiceStatus
     Running
 }
 
+public readonly record struct ElevatedProcessCommand(string FileName, string Arguments);
+
 public interface IServiceControlBackend
 {
     SecureHostServiceStatus QueryStatus(string serviceName);
     bool TryStartService(string serviceName);
     bool TryStopService(string serviceName);
-    bool TryRunElevatedCommand(string fileName, string arguments);
+    bool TryRunElevatedCommand(in ElevatedProcessCommand command);
     bool IsAgentPipeReady();
 }
 
@@ -76,16 +78,14 @@ public sealed class SecureHostServiceManager
 
         if (status == SecureHostServiceStatus.Running && !_backend.TryStopService(_serviceName))
         {
-            string scPath = GetScExePath();
-            _backend.TryRunElevatedCommand(scPath, $"stop {_serviceName}");
+            _backend.TryRunElevatedCommand(new ElevatedProcessCommand(GetScExePath(), $"stop {_serviceName}"));
         }
 
         await WaitUntilServiceStoppedAsync(TimeSpan.FromMilliseconds(3500), ct).ConfigureAwait(false);
 
         if (RegisteredTemporarily && removeIfTemporary)
         {
-            string scPath = GetScExePath();
-            _backend.TryRunElevatedCommand(scPath, $"delete {_serviceName}");
+            _backend.TryRunElevatedCommand(new ElevatedProcessCommand(GetScExePath(), $"delete {_serviceName}"));
             RegisteredTemporarily = false;
         }
 
@@ -97,7 +97,7 @@ public sealed class SecureHostServiceManager
         if (_backend.TryStartService(_serviceName))
             return true;
 
-        return _backend.TryRunElevatedCommand(GetScExePath(), $"start {_serviceName}");
+        return _backend.TryRunElevatedCommand(new ElevatedProcessCommand(GetScExePath(), $"start {_serviceName}"));
     }
 
     private bool TryInstallAndStartPortable(string? secureHostExePath)
@@ -110,7 +110,7 @@ public sealed class SecureHostServiceManager
         string binPathArg = $"\\\"{secureHostExePath}\\\" --service";
         string script = $"/c \"\"{scPath}\" create {_serviceName} binPath= \"{binPathArg}\" start= demand DisplayName= \"LanScreenShare Secure Desktop Service\" && \"{scPath}\" start {_serviceName}\"";
 
-        if (!_backend.TryRunElevatedCommand(cmdPath, script))
+        if (!_backend.TryRunElevatedCommand(new ElevatedProcessCommand(cmdPath, script)))
             return false;
 
         RegisteredTemporarily = true;
@@ -167,7 +167,7 @@ public sealed class SecureHostServiceManager
         public SecureHostServiceStatus QueryStatus(string serviceName) => SecureHostServiceStatus.UnsupportedPlatform;
         public bool TryStartService(string serviceName) => false;
         public bool TryStopService(string serviceName) => false;
-        public bool TryRunElevatedCommand(string fileName, string arguments) => false;
+        public bool TryRunElevatedCommand(in ElevatedProcessCommand command) => false;
         public bool IsAgentPipeReady() => false;
     }
 
@@ -183,14 +183,14 @@ public sealed class SecureHostServiceManager
 
         public bool TryStopService(string serviceName) => RunScCommand($"stop {serviceName}").ExitCode == 0;
 
-        public bool TryRunElevatedCommand(string fileName, string arguments)
+        public bool TryRunElevatedCommand(in ElevatedProcessCommand command)
         {
             try
             {
                 using var proc = Process.Start(new ProcessStartInfo
                 {
-                    FileName = fileName,
-                    Arguments = arguments,
+                    FileName = command.FileName,
+                    Arguments = command.Arguments,
                     UseShellExecute = true,
                     Verb = "runas",
                     WindowStyle = ProcessWindowStyle.Hidden

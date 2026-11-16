@@ -275,6 +275,36 @@ public class SecureDesktopArchitectureTests
         Assert.AreEqual(SecureHostServiceStatus.Stopped, SecureHostServiceManager.ParseScQueryOutput(0, "STATE : 1 STOPPED"));
     }
 
+    [TestMethod]
+    public async Task SecureHostServiceManager_HandlesFallbacksTimeoutsAndDefaultBackendSafely()
+    {
+        var fallbackBackend = new FakeServiceControlBackend
+        {
+            Status = SecureHostServiceStatus.Stopped,
+            FailUnelevatedStartStop = true
+        };
+        var manager = new SecureHostServiceManager(fallbackBackend, "TestSvc");
+
+        bool startedElevated = await manager.EnsureServiceRunningAsync(null);
+        bool alreadyRunning = await manager.EnsureServiceRunningAsync(null);
+        bool stoppedElevated = await manager.StopServiceAsync(removeIfTemporary: false);
+
+        fallbackBackend.Status = SecureHostServiceStatus.NotInstalled;
+        bool missingExe = await manager.EnsureServiceRunningAsync("C:\\missing-file-12345.exe");
+        bool stopNotInstalled = await manager.StopServiceAsync(removeIfTemporary: true);
+
+        using var fallbackInput = new FakeInputEngine();
+        using var swappableInput = new AgentBackedInputSimulatorService(fallbackInput);
+        swappableInput.SetClient(null);
+        swappableInput.SimulateInput(new RemoteInputMessage { Type = InputEventType.KeyUp, KeyCode = 27 });
+
+        var defaultManager = new SecureHostServiceManager(serviceName: $"LssMissingSvc_{Guid.NewGuid():N}");
+        var realStatus = defaultManager.GetStatus();
+
+        Assert.AreEqual((true, true, true, false, true), (startedElevated, alreadyRunning, stoppedElevated, missingExe, stopNotInstalled));
+        Assert.AreEqual((2, 1, false), (fallbackBackend.ElevatedCalls, fallbackInput.SimulatedInputs.Count, realStatus == SecureHostServiceStatus.Running));
+    }
+
     private static async Task<bool> ConnectWithRetryAsync(SecureAgentClient client)
     {
         for (int i = 0; i < 15; i++)
@@ -393,6 +423,7 @@ public class SecureDesktopArchitectureTests
     private sealed class FakeServiceControlBackend : IServiceControlBackend
     {
         public SecureHostServiceStatus Status { get; set; } = SecureHostServiceStatus.NotInstalled;
+        public bool FailUnelevatedStartStop { get; set; }
         public int StartCalls { get; private set; }
         public int StopCalls { get; private set; }
         public int ElevatedCalls { get; private set; }
@@ -401,6 +432,9 @@ public class SecureDesktopArchitectureTests
 
         public bool TryStartService(string serviceName)
         {
+            if (FailUnelevatedStartStop)
+                return false;
+
             StartCalls++;
             Status = SecureHostServiceStatus.Running;
             return true;
@@ -408,20 +442,27 @@ public class SecureDesktopArchitectureTests
 
         public bool TryStopService(string serviceName)
         {
+            if (FailUnelevatedStartStop)
+                return false;
+
             StopCalls++;
             Status = SecureHostServiceStatus.Stopped;
             return true;
         }
 
-        public bool TryRunElevatedCommand(string fileName, string arguments)
+        public bool TryRunElevatedCommand(in ElevatedProcessCommand command)
         {
             ElevatedCalls++;
-            if (arguments.Contains("create", StringComparison.OrdinalIgnoreCase) ||
-                arguments.Contains("start", StringComparison.OrdinalIgnoreCase))
+            if (command.Arguments.Contains("create", StringComparison.OrdinalIgnoreCase) ||
+                command.Arguments.Contains("start", StringComparison.OrdinalIgnoreCase))
             {
                 Status = SecureHostServiceStatus.Running;
             }
-            else if (arguments.Contains("delete", StringComparison.OrdinalIgnoreCase))
+            else if (command.Arguments.Contains("stop", StringComparison.OrdinalIgnoreCase))
+            {
+                Status = SecureHostServiceStatus.Stopped;
+            }
+            else if (command.Arguments.Contains("delete", StringComparison.OrdinalIgnoreCase))
             {
                 Status = SecureHostServiceStatus.NotInstalled;
             }
