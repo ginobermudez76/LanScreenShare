@@ -117,18 +117,8 @@ namespace LanScreenShare.Media.Display
                 ct);
 
         public string? FindVirtualDisplayDeviceName() =>
-            VirtualDriversVddBackend.SelectVddDeviceName(EnumerateDisplayAdapters());
-
-        private static System.Collections.Generic.IEnumerable<VirtualDriversVddBackend.DisplayAdapterEntry> EnumerateDisplayAdapters()
-        {
-            for (uint index = 0; index < 64; index++)
-            {
-                if (!TryReadDisplayAdapter(index, out var entry))
-                    yield break;
-
-                yield return entry;
-            }
-        }
+            VirtualDriversVddBackend.SelectVddDeviceName(
+                VirtualDriversVddBackend.EnumerateAdaptersCore((index, buffer) => EnumDisplayDevicesW(null, index, buffer, 0)));
 
         private static bool RunScheduledTask(string taskName)
         {
@@ -194,19 +184,6 @@ namespace LanScreenShare.Media.Display
             {
                 return false;
             }
-        }
-
-        private static bool TryReadDisplayAdapter(uint index, out VirtualDriversVddBackend.DisplayAdapterEntry entry)
-        {
-            byte[] buffer = VirtualDriversVddBackend.CreateDisplayDeviceBuffer();
-            if (!EnumDisplayDevicesW(null, index, buffer, 0))
-            {
-                entry = default!;
-                return false;
-            }
-
-            entry = VirtualDriversVddBackend.ParseDisplayDeviceFields(buffer);
-            return true;
         }
 
         [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
@@ -301,6 +278,19 @@ namespace LanScreenShare.Media.Display
             byte[] buffer = new byte[bufferSize];
             BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(0, 4), bufferSize);
             return buffer;
+        }
+
+        internal static System.Collections.Generic.IEnumerable<DisplayAdapterEntry> EnumerateAdaptersCore(
+            Func<uint, byte[], bool> queryAdapter)
+        {
+            for (uint index = 0; index < 64; index++)
+            {
+                byte[] buffer = CreateDisplayDeviceBuffer();
+                if (!queryAdapter(index, buffer))
+                    yield break;
+
+                yield return ParseDisplayDeviceFields(buffer);
+            }
         }
 
         internal sealed record DisplayAdapterEntry(

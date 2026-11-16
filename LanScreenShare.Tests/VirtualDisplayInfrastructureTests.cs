@@ -433,8 +433,8 @@ public class VirtualDisplayInfrastructureTests
 
         var realTopology = new WindowsDisplayTopologyManager();
         var realSnap = realTopology.CaptureSnapshot();
-        var ccdPaths = new WindowsDisplayTopologyManager.Win32CcdAdapter.DisplayConfigPathInfo[1];
-        var ccdModes = new WindowsDisplayTopologyManager.Win32CcdAdapter.DisplayConfigModeInfo[2];
+        var ccdPaths = new WindowsDisplayTopologyManager.DisplayConfigPathInfo[1];
+        var ccdModes = new WindowsDisplayTopologyManager.DisplayConfigModeInfo[2];
         var sampleSnap = new DisplayPathSnapshot
         {
             AdapterLuidLow = 42,
@@ -448,8 +448,8 @@ public class VirtualDisplayInfrastructureTests
             RefreshRateNumerator = 120,
             RefreshRateDenominator = 1
         };
-        WindowsDisplayTopologyManager.Win32CcdAdapter.PopulateNativePathAndModes(sampleSnap, 0, ccdPaths, ccdModes);
-        var unpackedSnap = WindowsDisplayTopologyManager.Win32CcdAdapter.ToSnapshot(ccdPaths[0], ccdModes);
+        WindowsDisplayTopologyManager.PopulateNativePathAndModes(sampleSnap, 0, ccdPaths, ccdModes);
+        var unpackedSnap = WindowsDisplayTopologyManager.ToSnapshot(ccdPaths[0], ccdModes);
 
         using var watchdogProc = StartSelfCheckProcess(settingsPath);
         using var defaultParsec = new ParsecVddBackend();
@@ -632,6 +632,32 @@ public class VirtualDisplayInfrastructureTests
         Assert.AreEqual((true, (VirtualDisplayInstance?)null, (VirtualDisplayInstance?)null, 0, 0), (pipeFlipped, failedEnableCreate, failedPipeCreate, VddSettingsXmlHelper.ReadMonitorCount(envEnableFail.Xml!), VddSettingsXmlHelper.ReadMonitorCount(envPipeFail.Xml!)));
         Assert.AreEqual((1, false, true, true, false), (envPipeFail.DisableCalls, extendFailed, extendWithoutQuery, extendSameMode, singleInternalFail));
         Assert.IsNull(ccd.LastApplied);
+    }
+
+    [TestMethod]
+    public void VddAdapterEnumerationAndCcdNativePreparation_WorkCrossPlatform()
+    {
+        var enumerated = VirtualDriversVddBackend.EnumerateAdaptersCore((index, buffer) =>
+        {
+            if (index > 0)
+                return false;
+
+            Encoding.Unicode.GetBytes(@"\\.\DISPLAY14" + '\0').CopyTo(buffer, 4);
+            Encoding.Unicode.GetBytes("Virtual Display Driver\0").CopyTo(buffer, 68);
+            BitConverter.TryWriteBytes(buffer.AsSpan(324, 4), 1);
+            Encoding.Unicode.GetBytes(@"Root\MttVDD" + '\0').CopyTo(buffer, 328);
+            return true;
+        }).ToList();
+
+        string? selected = VirtualDriversVddBackend.SelectVddDeviceName(enumerated);
+        var (nativePaths, nativeModes) = WindowsDisplayTopologyManager.PrepareSuppliedNativeArrays([
+            new DisplayPathSnapshot { AdapterLuidLow = 7, SourceId = 1, TargetId = 2, Width = 1920, Height = 1080 }
+        ]);
+        var roundTrip = WindowsDisplayTopologyManager.ToSnapshot(nativePaths[0], nativeModes);
+        WindowsDisplayTopologyManager.ClearTargetModeIndices(nativePaths);
+        bool firstPassOk = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(() => true, () => { }, () => false, 1);
+
+        Assert.AreEqual((1, @"\\.\DISPLAY14", 2, uint.MaxValue, true, 1920), (enumerated.Count, selected, nativeModes.Length, nativePaths[0].TargetInfo.ModeInfoIdx, firstPassOk, roundTrip.Width));
     }
 
     private static IDisposable? StartSelfCheckProcess(string snapshotPath)
