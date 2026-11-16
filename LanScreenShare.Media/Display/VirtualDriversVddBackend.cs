@@ -120,31 +120,10 @@ namespace LanScreenShare.Media.Display
             VirtualDriversVddBackend.SelectVddDeviceName(
                 VirtualDriversVddBackend.EnumerateAdaptersCore((index, buffer) => EnumDisplayDevicesW(null, index, buffer, 0)));
 
-        private static bool RunScheduledTask(string taskName)
-        {
-            try
-            {
-                string schtasksPath = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
-                using var proc = Process.Start(new ProcessStartInfo
-                {
-                    FileName = schtasksPath,
-                    Arguments = $"/Run /TN \"{taskName}\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                });
-                if (proc == null)
-                    return false;
-
-                proc.WaitForExit(3000);
-                return proc.ExitCode == 0;
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        private static bool RunScheduledTask(string taskName) =>
+            VirtualDriversVddBackend.RunProcessExitZeroCore(
+                Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
+                $"/Run /TN \"{taskName}\"");
 
         private static bool IsNamedPipeAvailable(string pipeName)
         {
@@ -290,6 +269,31 @@ namespace LanScreenShare.Media.Display
                     yield break;
 
                 yield return ParseDisplayDeviceFields(buffer);
+            }
+        }
+
+        internal static bool RunProcessExitZeroCore(string fileName, string arguments, int timeoutMs = 3000)
+        {
+            try
+            {
+                using var proc = Process.Start(new ProcessStartInfo
+                {
+                    FileName = fileName,
+                    Arguments = arguments,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                });
+                if (proc == null)
+                    return false;
+
+                proc.WaitForExit(timeoutMs);
+                return proc.ExitCode == 0;
+            }
+            catch
+            {
+                return false;
             }
         }
 

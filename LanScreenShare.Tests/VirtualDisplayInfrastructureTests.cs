@@ -657,7 +657,21 @@ public class VirtualDisplayInfrastructureTests
         WindowsDisplayTopologyManager.ClearTargetModeIndices(nativePaths);
         bool firstPassOk = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(() => true, () => { }, () => false, 1);
 
+        var allAdapters = VirtualDriversVddBackend.EnumerateAdaptersCore((_, buffer) =>
+        {
+            Encoding.Unicode.GetBytes(@"\\.\DISPLAY14" + '\0').CopyTo(buffer, 4);
+            return true;
+        }).ToList();
+
+        string successBin = OperatingSystem.IsWindows()
+            ? Path.Combine(Environment.SystemDirectory, "cmd.exe")
+            : (File.Exists("/bin/true") ? "/bin/true" : "/usr/bin/true");
+        string successArgs = OperatingSystem.IsWindows() ? "/c exit 0" : "";
+        bool procOk = VirtualDriversVddBackend.RunProcessExitZeroCore(successBin, successArgs);
+        bool procMissing = VirtualDriversVddBackend.RunProcessExitZeroCore(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.exe"), "");
+
         Assert.AreEqual((1, @"\\.\DISPLAY14", 2, uint.MaxValue, true, 1920), (enumerated.Count, selected, nativeModes.Length, nativePaths[0].TargetInfo.ModeInfoIdx, firstPassOk, roundTrip.Width));
+        Assert.AreEqual((64, true, false), (allAdapters.Count, procOk, procMissing));
     }
 
     private static IDisposable? StartSelfCheckProcess(string snapshotPath)
