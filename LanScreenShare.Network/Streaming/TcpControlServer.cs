@@ -276,29 +276,39 @@ namespace LanScreenShare.Network.Streaming
             return true;
         }
 
+        private readonly record struct ControlAttachmentTarget(TcpClient Client, Stream Stream, string ClientId);
+
         private bool TryAcquireControlSession(TcpClient client, Stream stream, string clientId, string? assignedSessionId)
         {
             if (_sessionAuthority == null || assignedSessionId == null)
                 return true;
 
             var effective = ResolveEffectivePermissions(assignedSessionId);
-            bool anyFeatureAllowed = AllowDisplayControlMessages ||
-                                     effective.AllowRemoteControl ||
-                                     effective.AllowSourceSwitch ||
-                                     effective.AllowClipboardSync;
-            if (!anyFeatureAllowed)
+            var target = new ControlAttachmentTarget(client, stream, clientId);
+            if (!HasAnyControlFeatureAllowed(effective))
             {
                 RejectControlAttachment(client, stream, $"[ControlServer] Sin permisos activos en canal 5003 para {clientId}");
                 return false;
             }
 
-            if (effective.AllowRemoteControl && !_sessionAuthority.TryAcquireControl(assignedSessionId, out string? acquireError))
-            {
-                RejectControlAttachment(client, stream, $"[ControlServer] Conflicto de controlador único para {clientId}: {acquireError}");
-                return false;
-            }
+            return !effective.AllowRemoteControl || TryAcquireRemoteControlLock(target, assignedSessionId);
+        }
 
-            return true;
+        private bool HasAnyControlFeatureAllowed(EffectiveSessionPermissions effective)
+        {
+            if (AllowDisplayControlMessages || effective.AllowRemoteControl)
+                return true;
+
+            return effective.AllowSourceSwitch || effective.AllowClipboardSync;
+        }
+
+        private bool TryAcquireRemoteControlLock(ControlAttachmentTarget target, string assignedSessionId)
+        {
+            if (_sessionAuthority!.TryAcquireControl(assignedSessionId, out string? acquireError))
+                return true;
+
+            RejectControlAttachment(target.Client, target.Stream, $"[ControlServer] Conflicto de controlador único para {target.ClientId}: {acquireError}");
+            return false;
         }
 
         private void RejectControlAttachment(TcpClient client, Stream stream, string logMessage)
