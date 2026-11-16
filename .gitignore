@@ -47,3 +47,9 @@ $RECYCLE.BIN/
 ## Tooling and indexing
 .codegraph/
 .gemini/
+
+## Installer build staging and outputs
+publish/
+installer/stage/
+installer/output/
+Drivers/

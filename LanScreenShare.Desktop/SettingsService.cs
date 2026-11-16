@@ -6,6 +6,11 @@ using LanScreenShare.Core.Models;
 
 namespace LanScreenShare.Desktop
 {
+    public sealed record InstallDefaultsConfig
+    {
+        public string DefaultDownloadDirectory { get; init; } = string.Empty;
+    }
+
     public static class SettingsService
     {
         private static readonly string SettingsDirectory = Path.Combine(
@@ -14,6 +19,11 @@ namespace LanScreenShare.Desktop
 
         private static readonly string SettingsFilePath = Path.Combine(SettingsDirectory, "settings.json");
 
+        private static readonly string DefaultInstallDefaultsFilePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "LanScreenShare",
+            "install-defaults.json");
+
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             WriteIndented = true
@@ -21,27 +31,46 @@ namespace LanScreenShare.Desktop
 
         private static readonly Lock FileLock = new();
 
-        public static AppSettings Load(string? filePath = null)
+        public static AppSettings Load(string? filePath = null) =>
+            Load(filePath, DefaultInstallDefaultsFilePath);
+
+        internal static AppSettings Load(string? filePath, string? installDefaultsPath)
         {
             string targetPath = string.IsNullOrWhiteSpace(filePath) ? SettingsFilePath : filePath;
             lock (FileLock)
             {
-                try
-                {
-                    if (File.Exists(targetPath))
-                    {
-                        string json = File.ReadAllText(targetPath);
-                        var settings = JsonSerializer.Deserialize<AppSettings>(json);
-                        if (settings != null)
-                            return settings;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[Settings] Error cargando configuración: {ex.Message}");
-                }
+                var settings = TryDeserialize<AppSettings>(targetPath, "configuración") ?? new AppSettings();
+                ApplyInstallDefaults(settings, installDefaultsPath);
+                return settings;
+            }
+        }
 
-                return new AppSettings();
+        private static void ApplyInstallDefaults(AppSettings settings, string? installDefaultsPath)
+        {
+            if (!string.IsNullOrWhiteSpace(settings.DownloadDirectory) || string.IsNullOrWhiteSpace(installDefaultsPath))
+                return;
+
+            var defaults = TryDeserialize<InstallDefaultsConfig>(installDefaultsPath, "defaults de instalación");
+            if (!string.IsNullOrWhiteSpace(defaults?.DefaultDownloadDirectory))
+            {
+                settings.DownloadDirectory = defaults.DefaultDownloadDirectory.Trim();
+            }
+        }
+
+        private static T? TryDeserialize<T>(string path, string label) where T : class
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    return null;
+
+                string json = File.ReadAllText(path);
+                return JsonSerializer.Deserialize<T>(json);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Settings] Error cargando {label}: {ex.Message}");
+                return null;
             }
         }
 
