@@ -126,6 +126,21 @@ namespace LanScreenShare.Media.Display
                 : baseDirectory;
 
             string? localInf = ResolveLocalInfPath(root);
+            string setupScript = Path.Combine(root, "Configure-LanScreenShareSetup.ps1");
+            string rootInstaller = Path.Combine(root, "VddRootDeviceInstaller.cs.txt");
+            if (!string.IsNullOrEmpty(localInf) && _fileExists(setupScript) && _fileExists(rootInstaller))
+            {
+                string trimmedRoot = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return new VddInstallPlan
+                {
+                    Source = VddInstallSource.LocalInfPackage,
+                    Executable = "powershell.exe",
+                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{setupScript}\" -Action RepairVdd -InstallDir \"{trimmedRoot}\"",
+                    PackagePath = localInf,
+                    RequiresElevation = true
+                };
+            }
+
             if (!string.IsNullOrEmpty(localInf))
             {
                 return new VddInstallPlan

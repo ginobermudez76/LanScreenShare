@@ -130,7 +130,10 @@ public sealed class DisplaySignalingServer : IDisposable
         TcpClient client,
         CancellationToken ct)
     {
-        string senderIp = (client.Client.RemoteEndPoint as System.Net.IPEndPoint)?.Address.ToString() ?? string.Empty;
+        var remoteAddress = (client.Client.RemoteEndPoint as System.Net.IPEndPoint)?.Address;
+        if (remoteAddress?.IsIPv4MappedToIPv6 == true)
+            remoteAddress = remoteAddress.MapToIPv4();
+        string senderIp = remoteAddress?.ToString() ?? string.Empty;
         System.IO.Stream rawStream = client.GetStream();
 
         if (_sslServerOptions == null)

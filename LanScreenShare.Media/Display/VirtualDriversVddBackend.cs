@@ -89,13 +89,44 @@ namespace LanScreenShare.Media.Display
 
         public bool IsDriverPresent()
         {
-            if (File.Exists(_infPath) || File.Exists(_settingsPath))
+            if (IsNamedPipeAvailable("MTTVirtualDisplayPipe"))
                 return true;
 
+            if (!File.Exists(_infPath) && !File.Exists(_settingsPath))
+                return false;
+
+            return HasRegisteredMttVddDevice();
+        }
+
+        private static bool IsNamedPipeAvailable(string pipeName)
+        {
+            try
+            {
+                return Directory.GetFiles(@"\\.\pipe\", pipeName).Length > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool HasRegisteredMttVddDevice()
+        {
             try
             {
                 using var rootKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\ROOT\DISPLAY");
-                return rootKey != null && rootKey.SubKeyCount > 0;
+                if (rootKey == null)
+                    return false;
+
+                foreach (string subKeyName in rootKey.GetSubKeyNames())
+                {
+                    using var devKey = rootKey.OpenSubKey(subKeyName);
+                    var hwIds = devKey?.GetValue("HardwareID") as string[];
+                    if (VirtualDriversVddBackend.HasMttVddHardwareId(hwIds))
+                        return true;
+                }
+
+                return false;
             }
             catch
             {
@@ -154,6 +185,23 @@ namespace LanScreenShare.Media.Display
             OperatingSystem.IsWindows() ? new WindowsVddEnvironment() : new NullVddEnvironment();
 
         public bool IsDriverInstalled() => _environment.IsDriverPresent();
+
+        internal static bool HasMttVddHardwareId(string[]? hardwareIds)
+        {
+            if (hardwareIds == null || hardwareIds.Length == 0)
+                return false;
+
+            foreach (string id in hardwareIds)
+            {
+                if (string.Equals(id, @"Root\MttVDD", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(id, "MttVDD", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         public async Task<VirtualDisplayInstance?> CreateVirtualMonitorAsync(
             VirtualDisplayMode mode,

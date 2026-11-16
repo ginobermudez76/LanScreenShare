@@ -140,4 +140,34 @@ public class VirtualDisplayDriverInstallerTests
         Assert.AreEqual(VirtualDisplayPowerEvent.None, MainWindow.ParsePowerBroadcast(0x0218, 0x000A));
         Assert.AreEqual(VirtualDisplayPowerEvent.None, MainWindow.ParsePowerBroadcast(0x0010, 0x0004));
     }
+
+    [TestMethod]
+    public void BuildInstallPlan_PrefersRepairVddScriptWhenInstallerAssetsExist()
+    {
+        string baseDir = Path.Combine(Path.GetTempPath(), "lss-vdd-repair-test");
+        string expectedInf = Path.Combine(baseDir, "Drivers", "VDD", "MttVDD.inf");
+        string setupScript = Path.Combine(baseDir, "Configure-LanScreenShareSetup.ps1");
+        string rootInstaller = Path.Combine(baseDir, "VddRootDeviceInstaller.cs.txt");
+
+        var repairInstaller = new VirtualDisplayDriverInstallerService(
+            new StubElevatedRunner(new ElevatedProcessOutcome(true)),
+            path => string.Equals(path, expectedInf, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, setupScript, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, rootInstaller, StringComparison.OrdinalIgnoreCase),
+            isWindows: true);
+
+        var repairPlan = repairInstaller.BuildInstallPlan(baseDir);
+        Assert.AreEqual((VddInstallSource.LocalInfPackage, "powershell.exe", true), (repairPlan.Source, repairPlan.Executable, repairPlan.RequiresElevation));
+        Assert.IsTrue(repairPlan.Arguments.Contains("-Action RepairVdd", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void VirtualDriversVddBackend_HasMttVddHardwareId_RejectsUnrelatedDrivers()
+    {
+        Assert.IsFalse(VirtualDriversVddBackend.HasMttVddHardwareId(null));
+        Assert.IsFalse(VirtualDriversVddBackend.HasMttVddHardwareId(Array.Empty<string>()));
+        Assert.IsFalse(VirtualDriversVddBackend.HasMttVddHardwareId(new[] { @"root\wvmd", @"PCI\VEN_1002" }));
+        Assert.IsTrue(VirtualDriversVddBackend.HasMttVddHardwareId(new[] { @"Root\MttVDD" }));
+        Assert.IsTrue(VirtualDriversVddBackend.HasMttVddHardwareId(new[] { "mttvdd" }));
+    }
 }

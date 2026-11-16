@@ -64,7 +64,7 @@ public static class VddRootDeviceInstaller
 
         try
         {
-            var devData = new SP_DEVINFO_DATA { cbSize = Marshal.SizeOf<SP_DEVINFO_DATA>() };
+            var devData = new SP_DEVINFO_DATA { cbSize = Marshal.SizeOf(typeof(SP_DEVINFO_DATA)) };
             if (!SetupDiCreateDeviceInfo(devInfoSet, "MttVDD", ref displayGuid, "Virtual Display Driver", IntPtr.Zero, DICD_GENERATE_ID, ref devData))
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
 
@@ -75,7 +75,8 @@ public static class VddRootDeviceInstaller
             if (!SetupDiCallClassInstaller(DIF_REGISTERDEVICE, devInfoSet, ref devData))
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
 
-            if (!UpdateDriverForPlugAndPlayDevices(IntPtr.Zero, hardwareId, infPath, INSTALLFLAG_FORCE, out _))
+            bool rebootRequired;
+            if (!UpdateDriverForPlugAndPlayDevices(IntPtr.Zero, hardwareId, infPath, INSTALLFLAG_FORCE, out rebootRequired))
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         }
         finally

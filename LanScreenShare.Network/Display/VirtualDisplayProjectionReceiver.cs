@@ -116,7 +116,7 @@ public sealed class VirtualDisplayProjectionReceiver : IAsyncDisposable
 
     private async Task ConnectStreamWithRetryAsync(StreamClientConnectionOptions options, CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow.AddSeconds(8);
         while (true)
         {
             try

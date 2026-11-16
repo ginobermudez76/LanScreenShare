@@ -42,6 +42,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "firewall"; Description: "Configurar reglas en Windows Defender Firewall (UDP 5000, TCP 5001-5005)"; GroupDescription: "Red y Firewall:"
 Name: "firewallpublic"; Description: "Permitir también en redes Públicas (solo si usas Hotspot LAN)"; GroupDescription: "Red y Firewall:"; Flags: unchecked
 Name: "installvdd"; Description: "Instalar controlador de Pantalla Inalámbrica (Virtual-Display-Driver MIT)"; GroupDescription: "Modo Pantalla Inalámbrica:"
+Name: "uacinteractive"; Description: "Permitir ver e interactuar con diálogos UAC en remoto (sin atenuar al Escritorio Seguro)"; GroupDescription: "Control Remoto UAC (Opcional):"; Flags: unchecked
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -55,7 +56,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Configure-LanScreenShareSetup.ps1"" -Action Install -InstallDir ""{app}"" -DownloadDirectory ""{code:GetSelectedDownloadDir}"" -TempWorkDir ""{tmp}\lss-setup""{code:GetSetupOptionSwitches}"; StatusMsg: "Configurando certificado uiAccess, reglas de Firewall y Pantalla Inalámbrica..."; Flags: runhidden waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent runasoriginaluser shellexec
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\Configure-LanScreenShareSetup.ps1"" -Action Uninstall -InstallDir ""{app}"""; Flags: runhidden waituntilterminated; RunOnceId: "LanScreenShareCleanup"
@@ -100,4 +101,6 @@ begin
     Result := Result + ' -AllowPublicNetwork';
   if WizardIsTaskSelected('installvdd') then
     Result := Result + ' -InstallVirtualDisplayDriver';
+  if WizardIsTaskSelected('uacinteractive') then
+    Result := Result + ' -AllowInteractiveUac';
 end;
