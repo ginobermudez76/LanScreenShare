@@ -61,7 +61,7 @@ namespace LanScreenShare.Network.Streaming
             StatusChanged?.Invoke(this, $"Conectando a {options.HostIp}:{options.Port}...");
 
             _client = new TcpClient { NoDelay = true };
-            await ConnectTcpWithTimeoutAsync(_client, options, token, TimeSpan.FromSeconds(5));
+            await ConnectTcpWithTimeoutAsync(_client, options, TimeSpan.FromSeconds(5), token);
             Stream stream = _client.GetStream();
 
             if (options.SslOptions != null)
@@ -78,8 +78,8 @@ namespace LanScreenShare.Network.Streaming
         internal static async Task ConnectTcpWithTimeoutAsync(
             TcpClient client,
             StreamClientConnectionOptions options,
-            CancellationToken sessionToken,
-            TimeSpan timeout)
+            TimeSpan timeout,
+            CancellationToken sessionToken)
         {
             using var attemptTimeoutCts = new CancellationTokenSource(timeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(sessionToken, attemptTimeoutCts.Token);

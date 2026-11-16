@@ -442,6 +442,6 @@ public class VirtualDisplayProjectionMtlsTests
         using var client = new TcpClient();
         var options = new StreamClientConnectionOptions("192.0.2.1", 5001);
         await Assert.ThrowsExceptionAsync<SocketException>(() =>
-            TcpStreamClient.ConnectTcpWithTimeoutAsync(client, options, CancellationToken.None, TimeSpan.FromMilliseconds(25)));
+            TcpStreamClient.ConnectTcpWithTimeoutAsync(client, options, TimeSpan.FromMilliseconds(25), CancellationToken.None));
     }
 }
