@@ -197,14 +197,14 @@ namespace LanScreenShare.Network
             }
         }
 
-        private static DeviceInfo? TryParseHostDevice(IReadOnlyList<string> parts, string remoteIp)
+        private static DeviceInfo? TryParseHostDevice(string[] parts, string remoteIp)
         {
             var senderName = parts[1];
             var reportedIp = parts[2];
             if (string.IsNullOrWhiteSpace(senderName) || IsSelfMessage(senderName, reportedIp, remoteIp))
                 return null;
 
-            bool isRemoteControlAllowed = parts.Count < 4 || parts[3] == "1";
+            bool isRemoteControlAllowed = parts.Length < 4 || parts[3] == "1";
             return new DeviceInfo
             {
                 Name = senderName,
@@ -215,9 +215,9 @@ namespace LanScreenShare.Network
             };
         }
 
-        private static DeviceInfo? TryParseWirelessDisplayDevice(IReadOnlyList<string> parts, string remoteIp)
+        private static DeviceInfo? TryParseWirelessDisplayDevice(string[] parts, string remoteIp)
         {
-            if (parts.Count < 4)
+            if (parts.Length < 4)
                 return null;
 
             var senderName = parts[1];
@@ -225,10 +225,10 @@ namespace LanScreenShare.Network
             if (string.IsNullOrWhiteSpace(senderName) || IsSelfMessage(senderName, reportedIp, remoteIp))
                 return null;
 
-            if (!int.TryParse(parts[3], out int signalingPort) || signalingPort < 1024 || signalingPort > 65535)
+            if (!TryParseValidSignalingPort(parts[3], out int signalingPort))
                 return null;
 
-            bool isBusy = parts.Count >= 5 && parts[4] == "1";
+            bool isBusy = parts.Length >= 5 && parts[4] == "1";
             return new DeviceInfo
             {
                 Name = senderName,
@@ -239,6 +239,16 @@ namespace LanScreenShare.Network
                 DisplaySignalingPort = signalingPort,
                 IsWirelessDisplayBusy = isBusy
             };
+        }
+
+        private static bool TryParseValidSignalingPort(string rawPort, out int port)
+        {
+            if (!int.TryParse(rawPort, out port))
+                return false;
+            if (port < 1024)
+                return false;
+
+            return port <= 65535;
         }
 
         internal static string ResolveFinalIp(string reportedIp, string remoteIp)

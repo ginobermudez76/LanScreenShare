@@ -381,6 +381,14 @@ namespace LanScreenShare.Network.Streaming
                 return await HandleDisplayControlPacketAsync(ctx, packetBuffer, token);
             }
 
+            return await DispatchLsi2PacketAsync(ctx, packetBuffer, token);
+        }
+
+        private async Task<bool> DispatchLsi2PacketAsync(
+            ControlClientContext ctx,
+            byte[] packetBuffer,
+            CancellationToken token)
+        {
             if (!Lsi2ControlPacket.TryReadPacket(
                     packetBuffer,
                     out _,

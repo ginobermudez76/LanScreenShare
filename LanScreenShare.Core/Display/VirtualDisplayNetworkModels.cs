@@ -119,12 +119,9 @@ namespace LanScreenShare.Core.Display
         public void PruneExpired()
         {
             DateTime nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-            foreach (var kvp in _invitations)
+            foreach (var kvp in _invitations.Where(entry => entry.Value.IsExpired(nowUtc)))
             {
-                if (kvp.Value.IsExpired(nowUtc))
-                {
-                    _invitations.TryRemove(kvp.Key, out _);
-                }
+                _invitations.TryRemove(kvp.Key, out _);
             }
         }
     }

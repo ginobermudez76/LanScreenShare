@@ -274,7 +274,6 @@ namespace LanScreenShare.Network.Streaming
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, authCts.Token);
 
             await sslStream.AuthenticateAsServerAsync(_sslServerOptions!, linkedCts.Token);
-
             if (sslStream.RemoteCertificate == null)
             {
                 Console.WriteLine($"[StreamServer] Conexión rechazada para {clientId}: Falta certificado de cliente.");
@@ -283,11 +282,8 @@ namespace LanScreenShare.Network.Streaming
             }
 
             using var peerCert = new X509Certificate2(sslStream.RemoteCertificate);
-            string peerFingerprint = TlsConfigurationHelper.ComputeFingerprint(peerCert);
-            string peerDeviceName = peerCert.GetNameInfo(X509NameType.SimpleName, false) ?? "RemotePeer";
-            var peer = new PeerEndpointInfo(clientId, peerFingerprint, peerDeviceName);
-
-            bool requireExplicitApproval = await RequiresExplicitApprovalAsync(peerFingerprint);
+            var peer = CreatePeerEndpointInfo(clientId, peerCert);
+            bool requireExplicitApproval = await RequiresExplicitApprovalAsync(peer.Fingerprint);
 
             if (!await EnsureDevicePairedAsync(sslStream, peerCert, peer, linkedCts.Token))
             {
@@ -295,39 +291,63 @@ namespace LanScreenShare.Network.Streaming
                 return null;
             }
 
-            string? claimedProjectionSessionId = null;
-            if (RequireProjectionInvitation)
+            var (claimOk, claimedSessionId) = await TryVerifyRequiredProjectionClaimAsync(sslStream, peer.Fingerprint, linkedCts.Token);
+            if (!claimOk)
             {
-                var (claimAccepted, sessionIdFromClaim) = await VerifyProjectionInvitationClaimAsync(sslStream, peerFingerprint, linkedCts.Token);
-                if (!claimAccepted)
-                {
-                    client.Close();
-                    return null;
-                }
-
-                claimedProjectionSessionId = sessionIdFromClaim;
+                client.Close();
+                return null;
             }
 
-            string? assignedSessionId = null;
+            var (sessionOk, assignedSessionId) = await TryAssignAuthorizedSessionAsync(sslStream, peer, claimedSessionId, linkedCts.Token);
+            if (!sessionOk)
+            {
+                client.Close();
+                return null;
+            }
+
+            return new HandshakeResult(sslStream, assignedSessionId, peer.Fingerprint, requireExplicitApproval);
+        }
+
+        private static PeerEndpointInfo CreatePeerEndpointInfo(string clientId, X509Certificate2 peerCert)
+        {
+            string peerFingerprint = TlsConfigurationHelper.ComputeFingerprint(peerCert);
+            string peerDeviceName = peerCert.GetNameInfo(X509NameType.SimpleName, false) ?? "RemotePeer";
+            return new PeerEndpointInfo(clientId, peerFingerprint, peerDeviceName);
+        }
+
+        private Task<(bool Accepted, string? SessionId)> TryVerifyRequiredProjectionClaimAsync(
+            SslStream sslStream,
+            string peerFingerprint,
+            CancellationToken ct)
+        {
+            if (!RequireProjectionInvitation)
+                return Task.FromResult<(bool, string?)>((true, null));
+
+            return VerifyProjectionInvitationClaimAsync(sslStream, peerFingerprint, ct);
+        }
+
+        private async Task<(bool Ok, string? SessionId)> TryAssignAuthorizedSessionAsync(
+            SslStream sslStream,
+            PeerEndpointInfo peer,
+            string? claimedProjectionSessionId,
+            CancellationToken ct)
+        {
             if (_sessionAuthority != null)
             {
-                assignedSessionId = await AuthorizeSessionAsync(sslStream, peer, linkedCts.Token);
-                if (assignedSessionId == null)
-                {
-                    client.Close();
-                    return null;
-                }
+                string? assigned = await AuthorizeSessionAsync(sslStream, peer, ct);
+                return (assigned != null, assigned);
             }
-            else if (RequireProjectionInvitation)
+
+            if (RequireProjectionInvitation)
             {
                 await SessionHandshakeMessage.WriteAsync(sslStream, new SessionHandshakeMessage
                 {
                     Type = "SESSION_OK",
                     SessionId = claimedProjectionSessionId ?? string.Empty
-                }, linkedCts.Token);
+                }, ct);
             }
 
-            return new HandshakeResult(sslStream, assignedSessionId, peerFingerprint, requireExplicitApproval);
+            return (true, null);
         }
 
         private async Task<(bool Accepted, string? SessionId)> VerifyProjectionInvitationClaimAsync(

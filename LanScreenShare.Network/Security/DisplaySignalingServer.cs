@@ -118,7 +118,10 @@ public sealed class DisplaySignalingServer : IDisposable
         }
         finally
         {
-            try { stream?.Dispose(); } catch { /* Ignore stream disposal error */ }
+            if (stream != null)
+            {
+                try { await stream.DisposeAsync(); } catch { /* Ignore stream disposal error */ }
+            }
             try { client.Close(); client.Dispose(); } catch { /* Ignore client disposal error */ }
         }
     }
