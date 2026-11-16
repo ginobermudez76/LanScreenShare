@@ -23,7 +23,23 @@
     <ProjectReference Include="..\LanScreenShare.Core\LanScreenShare.Core.csproj" />
     <ProjectReference Include="..\LanScreenShare.Network\LanScreenShare.Network.csproj" />
     <ProjectReference Include="..\LanScreenShare.Media\LanScreenShare.Media.csproj" />
+    <ProjectReference Include="..\LanScreenShare.DisplayWatchdog\LanScreenShare.DisplayWatchdog.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Target Name="CopyDisplayWatchdogToOutput" AfterTargets="Build">
+    <ItemGroup>
+      <_WatchdogFiles Include="..\LanScreenShare.DisplayWatchdog\bin\$(Configuration)\$(TargetFramework)\LanScreenShare.DisplayWatchdog.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WatchdogFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyDisplayWatchdogToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_WatchdogPublishFiles Include="$(OutputPath)LanScreenShare.DisplayWatchdog.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WatchdogPublishFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
