@@ -505,7 +505,7 @@ public class VirtualDisplayInfrastructureTests
     }
 
     [TestMethod]
-    public async Task VddBufferParsersAndCcdFallbackStrategy_HandlePacketsAndRetriesCleanly()
+    public void VddBufferParsersAndCcdFallbackStrategy_HandlePacketsAndRetriesCleanly()
     {
         byte[] ddBuf = VirtualDriversVddBackend.CreateDisplayDeviceBuffer();
         Encoding.Unicode.GetBytes(@"\\.\DISPLAY14" + '\0').CopyTo(ddBuf, 4);
@@ -544,6 +544,12 @@ public class VirtualDisplayInfrastructureTests
             () => true,
             2);
 
+        Assert.AreEqual((true, true, true, false), (retrySucceeded, cleared, internalFallback, multiPathFail));
+    }
+
+    [TestMethod]
+    public async Task VirtualDriversVddBackend_CorePollingAndSelection_WorkCrossPlatform()
+    {
         IVddEnvironment defaultEnv = new VirtualDriversVddBackend.NullVddEnvironment();
         bool enabledDefault = await defaultEnv.EnsureDriverEnabledAsync();
         await defaultEnv.DisableDriverAsync();
@@ -579,8 +585,7 @@ public class VirtualDisplayInfrastructureTests
             new VirtualDriversVddBackend.VddToggleOptions(true, TimeSpan.FromMilliseconds(70), 25),
             CancellationToken.None);
 
-        Assert.AreEqual((true, true, true, false, true), (retrySucceeded, cleared, internalFallback, multiPathFail, enabledDefault));
-        Assert.AreEqual((true, false, true, @"\\.\DISPLAY14", @"\\.\DISPLAY12"), (alreadyUp, enableTaskFails, enableBecomesReady, selectedAttached, selectedFallback));
+        Assert.AreEqual((true, true, false, true, @"\\.\DISPLAY14", @"\\.\DISPLAY12"), (enabledDefault, alreadyUp, enableTaskFails, enableBecomesReady, selectedAttached, selectedFallback));
         Assert.AreEqual((@"\\.\DISPLAY14", (string?)null, false), (polledDevice, timedOutDevice, pipeTimedOut));
         Assert.IsNull(defaultEnv.FindVirtualDisplayDeviceName());
     }
