@@ -428,9 +428,9 @@ public class SecureDesktopArchitectureTests
         public int StopCalls { get; private set; }
         public int ElevatedCalls { get; private set; }
 
-        public SecureHostServiceStatus QueryStatus(string serviceName) => Status;
+        public SecureHostServiceStatus QueryStatus() => Status;
 
-        public bool TryStartService(string serviceName)
+        public bool TryStartService()
         {
             if (FailUnelevatedStartStop)
                 return false;
@@ -440,7 +440,7 @@ public class SecureDesktopArchitectureTests
             return true;
         }
 
-        public bool TryStopService(string serviceName)
+        public bool TryStopService()
         {
             if (FailUnelevatedStartStop)
                 return false;
