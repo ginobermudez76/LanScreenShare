@@ -590,6 +590,50 @@ public class VirtualDisplayInfrastructureTests
         Assert.IsNull(defaultEnv.FindVirtualDisplayDeviceName());
     }
 
+    [TestMethod]
+    public async Task VirtualDriversVddBackend_RollbackAndTopologyExtendBranches_AreHandledSafely()
+    {
+        bool presPipe = VirtualDriversVddBackend.ResolveDriverPresence(true, false, () => false);
+        bool presNoFiles = VirtualDriversVddBackend.ResolveDriverPresence(false, false, () => true);
+        bool presDevice = VirtualDriversVddBackend.ResolveDriverPresence(false, true, () => true);
+        bool nullHw = VirtualDriversVddBackend.HasMttVddHardwareId(null);
+        bool shortHw = VirtualDriversVddBackend.HasMttVddHardwareId(["MttVDD"]);
+
+        int pipeFlip = 0;
+        bool pipeFlipped = await VirtualDriversVddBackend.WaitForPipeStateCoreAsync(
+            () => ++pipeFlip >= 2,
+            new VirtualDriversVddBackend.VddToggleOptions(true, TimeSpan.FromMilliseconds(350), 25),
+            CancellationToken.None);
+        await VirtualDriversVddBackend.DisableDriverCoreAsync(() => true, () => false, TimeSpan.FromMilliseconds(50), CancellationToken.None);
+
+        const string initialXml = "<vdd_settings><monitors><count>0</count></monitors></vdd_settings>";
+        var envEnableFail = new FakeVddEnvironment { Present = true, FailEnable = true, Xml = initialXml };
+        var backendEnableFail = new VirtualDriversVddBackend(new FakeVddPipeTransport(), envEnableFail);
+        var failedEnableCreate = await backendEnableFail.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
+
+        var envPipeFail = new FakeVddEnvironment { Present = true, Xml = initialXml };
+        var backendPipeFail = new VirtualDriversVddBackend(new FakeVddPipeTransport { ShouldFail = true }, envPipeFail);
+        var failedPipeCreate = await backendPipeFail.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
+
+        var ccd = new FakeCcdAdapter { FailExtend = true };
+        var manager = new WindowsDisplayTopologyManager(ccd);
+        bool extendFailed = manager.ApplyExtendTopology(null, VirtualDisplayMode.Default);
+
+        ccd.FailExtend = false;
+        ccd.FailQueryPaths = true;
+        bool extendWithoutQuery = manager.ApplyExtendTopology(null, VirtualDisplayMode.Default);
+
+        ccd.FailQueryPaths = false;
+        ccd.Paths = [new DisplayPathSnapshot { Width = 1920, Height = 1080, DeviceName = @"\\.\DISPLAY14" }];
+        bool extendSameMode = manager.ApplyExtendTopology(@"\\.\DISPLAY14", VirtualDisplayMode.Default);
+        bool singleInternalFail = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(() => false, () => { }, () => false, 1);
+
+        Assert.AreEqual((true, false, true, false, true), (presPipe, presNoFiles, presDevice, nullHw, shortHw));
+        Assert.AreEqual((true, (VirtualDisplayInstance?)null, (VirtualDisplayInstance?)null, 0, 0), (pipeFlipped, failedEnableCreate, failedPipeCreate, VddSettingsXmlHelper.ReadMonitorCount(envEnableFail.Xml!), VddSettingsXmlHelper.ReadMonitorCount(envPipeFail.Xml!)));
+        Assert.AreEqual((1, false, true, true, false), (envPipeFail.DisableCalls, extendFailed, extendWithoutQuery, extendSameMode, singleInternalFail));
+        Assert.IsNull(ccd.LastApplied);
+    }
+
     private static IDisposable? StartSelfCheckProcess(string snapshotPath)
     {
         string cmdPath = Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");
@@ -664,17 +708,19 @@ public class VirtualDisplayInfrastructureTests
         public IReadOnlyList<DisplayPathSnapshot> Paths { get; set; } = Array.Empty<DisplayPathSnapshot>();
         public IReadOnlyList<DisplayPathSnapshot>? LastApplied { get; private set; }
         public int ExtendCalls { get; private set; }
+        public bool FailExtend { get; set; }
+        public bool FailQueryPaths { get; set; }
 
         public bool TryQueryActiveDisplayPaths(out IReadOnlyList<DisplayPathSnapshot> paths)
         {
             paths = Paths;
-            return true;
+            return !FailQueryPaths;
         }
 
         public bool ApplyExtendTopology()
         {
             ExtendCalls++;
-            return true;
+            return !FailExtend;
         }
 
         public bool ApplySuppliedConfig(IReadOnlyList<DisplayPathSnapshot> paths)
