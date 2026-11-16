@@ -172,7 +172,7 @@ namespace LanScreenShare.Media.Display
         private static partial bool DeviceIoControl(
             IntPtr hDevice,
             uint dwIoControlCode,
-            byte[] lpInBuffer,
+            [In] byte[] lpInBuffer,
             uint nInBufferSize,
             ref int lpOutBuffer,
             uint nOutBufferSize,

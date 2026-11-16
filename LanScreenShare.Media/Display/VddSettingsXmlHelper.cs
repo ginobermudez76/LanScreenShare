@@ -36,10 +36,10 @@ namespace LanScreenShare.Media.Display
             return doc.ToString();
         }
 
+        public const string ReloadDriverCommand = "RELOAD_DRIVER";
+
         public static string BuildSetDisplayCountCommand(int count) =>
             $"SETDISPLAYCOUNT {Math.Max(0, count)}";
-
-        public static string BuildReloadDriverCommand() => "RELOAD_DRIVER";
 
         private static XDocument ParseOrCreateRoot(string? existingXml)
         {

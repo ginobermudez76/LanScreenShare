@@ -21,42 +21,60 @@ namespace LanScreenShare.Core.Display
 
     public static class VirtualDisplayWatchdogRunner
     {
+        private sealed class ArgsAccumulator
+        {
+            public int Pid;
+            public string Snapshot = string.Empty;
+            public string MonitorId = string.Empty;
+            public string BackendId = string.Empty;
+        }
+
         public static bool TryParseArgs(string[] args, out WatchdogCommandOptions options)
         {
             options = new WatchdogCommandOptions();
             if (args.Length == 0)
                 return false;
 
-            int pid = 0;
-            string snapshot = string.Empty;
-            string monitorId = string.Empty;
-            string backendId = string.Empty;
-
+            var acc = new ArgsAccumulator();
             for (int i = 0; i < args.Length - 1; i++)
             {
-                string key = args[i];
-                string val = args[i + 1];
-                if (string.Equals(key, "--parent-pid", StringComparison.OrdinalIgnoreCase) && int.TryParse(val, out int parsed))
-                    pid = parsed;
-                else if (string.Equals(key, "--snapshot", StringComparison.OrdinalIgnoreCase))
-                    snapshot = val;
-                else if (string.Equals(key, "--monitor-id", StringComparison.OrdinalIgnoreCase))
-                    monitorId = val;
-                else if (string.Equals(key, "--backend", StringComparison.OrdinalIgnoreCase))
-                    backendId = val;
+                ApplyArgPair(acc, args[i], args[i + 1]);
             }
 
-            if (pid <= 0 || string.IsNullOrWhiteSpace(snapshot))
+            if (acc.Pid <= 0 || string.IsNullOrWhiteSpace(acc.Snapshot))
                 return false;
 
             options = new WatchdogCommandOptions
             {
-                ParentPid = pid,
-                SnapshotPath = snapshot,
-                MonitorId = monitorId,
-                BackendId = backendId
+                ParentPid = acc.Pid,
+                SnapshotPath = acc.Snapshot,
+                MonitorId = acc.MonitorId,
+                BackendId = acc.BackendId
             };
             return true;
+        }
+
+        private static void ApplyArgPair(ArgsAccumulator acc, string key, string value)
+        {
+            if (string.Equals(key, "--parent-pid", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out int parsed))
+            {
+                acc.Pid = parsed;
+                return;
+            }
+            if (string.Equals(key, "--snapshot", StringComparison.OrdinalIgnoreCase))
+            {
+                acc.Snapshot = value;
+                return;
+            }
+            if (string.Equals(key, "--monitor-id", StringComparison.OrdinalIgnoreCase))
+            {
+                acc.MonitorId = value;
+                return;
+            }
+            if (string.Equals(key, "--backend", StringComparison.OrdinalIgnoreCase))
+            {
+                acc.BackendId = value;
+            }
         }
 
         public static async Task<bool> WaitAndRecoverAsync(

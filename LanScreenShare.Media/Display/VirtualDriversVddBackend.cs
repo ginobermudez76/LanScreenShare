@@ -58,19 +58,32 @@ namespace LanScreenShare.Media.Display
     }
 
     [SupportedOSPlatform("windows")]
+    internal sealed record VddEnvironmentPaths
+    {
+        public string? SettingsPath { get; init; }
+        public string? InfPath { get; init; }
+    }
+
+    [SupportedOSPlatform("windows")]
     internal sealed class WindowsVddEnvironment : IVddEnvironment
     {
-        public const string DefaultInstallDir = @"C:\VirtualDisplayDriver";
-        public const string DefaultSettingsFile = @"C:\VirtualDisplayDriver\vdd_settings.xml";
-        public const string DefaultInfFile = @"C:\VirtualDisplayDriver\MttVDD.inf";
-
         private readonly string _settingsPath;
         private readonly string _infPath;
 
-        public WindowsVddEnvironment(string? settingsPath = null, string? infPath = null)
+        public WindowsVddEnvironment(VddEnvironmentPaths? paths = null)
         {
-            _settingsPath = settingsPath ?? DefaultSettingsFile;
-            _infPath = infPath ?? DefaultInfFile;
+            string baseDir = GetDefaultInstallDirectory();
+            _settingsPath = paths?.SettingsPath ?? Path.Combine(baseDir, "vdd_settings.xml");
+            _infPath = paths?.InfPath ?? Path.Combine(baseDir, "MttVDD.inf");
+        }
+
+        public static string GetDefaultInstallDirectory()
+        {
+            string? root = Path.GetPathRoot(Environment.SystemDirectory);
+            string baseRoot = string.IsNullOrEmpty(root)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)
+                : root;
+            return Path.Combine(baseRoot, "VirtualDisplayDriver");
         }
 
         public bool IsDriverPresent()
@@ -184,7 +197,7 @@ namespace LanScreenShare.Media.Display
             _environment.WriteSettingsXml(updatedXml);
 
             return await _pipeTransport.SendCommandAsync(
-                VddSettingsXmlHelper.BuildReloadDriverCommand(),
+                VddSettingsXmlHelper.ReloadDriverCommand,
                 ct);
         }
 

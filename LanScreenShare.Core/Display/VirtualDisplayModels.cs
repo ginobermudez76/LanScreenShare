@@ -176,24 +176,38 @@ namespace LanScreenShare.Core.Display
         public DateTime StartedAtUtc { get; init; } = DateTime.UtcNow;
     }
 
+    public enum VirtualDisplayErrorCode
+    {
+        None = 0,
+        InvalidMode,
+        DisplayBusy,
+        DriverNotInstalled,
+        CreateFailed,
+        TopologyFailed,
+        NoSession,
+        ModeUpdateFailed
+    }
+
     public sealed record VirtualDisplayOperationResult
     {
         public bool Success { get; init; }
-        public string? ErrorCode { get; init; }
+        public VirtualDisplayErrorCode ErrorCode { get; init; }
         public string? Message { get; init; }
         public VirtualDisplaySessionInfo? Session { get; init; }
 
         public static VirtualDisplayOperationResult Ok(VirtualDisplaySessionInfo? session = null, string? message = null) =>
-            new() { Success = true, Session = session, Message = message };
+            new() { Success = true, ErrorCode = VirtualDisplayErrorCode.None, Session = session, Message = message };
 
-        public static VirtualDisplayOperationResult Fail(string errorCode, string message) =>
+        public static VirtualDisplayOperationResult Fail(VirtualDisplayErrorCode errorCode, string message) =>
             new() { Success = false, ErrorCode = errorCode, Message = message };
     }
 
-    public sealed record VirtualDisplayStateChangedEventArgs(
-        VirtualDisplayState PreviousState,
-        VirtualDisplayState CurrentState,
-        string? Reason = null);
+    public sealed record VirtualDisplayStateChangedEventArgs
+    {
+        public VirtualDisplayState PreviousState { get; init; }
+        public VirtualDisplayState CurrentState { get; init; }
+        public string? Reason { get; init; }
+    }
 
     public sealed record VirtualDisplayWatchdogLaunchOptions
     {

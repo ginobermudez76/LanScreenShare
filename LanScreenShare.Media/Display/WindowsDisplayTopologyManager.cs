@@ -14,7 +14,7 @@ namespace LanScreenShare.Media.Display
         bool ApplySuppliedConfig(IReadOnlyList<DisplayPathSnapshot> paths);
     }
 
-    public sealed class WindowsDisplayTopologyManager : IDisplayTopologyManager
+    public sealed partial class WindowsDisplayTopologyManager : IDisplayTopologyManager
     {
         private readonly ICcdPlatformAdapter _adapter;
 
@@ -107,7 +107,7 @@ namespace LanScreenShare.Media.Display
         }
 
         [SupportedOSPlatform("windows")]
-        private sealed unsafe class Win32CcdAdapter : ICcdPlatformAdapter
+        private sealed partial class Win32CcdAdapter : ICcdPlatformAdapter
         {
             private const uint QdcOnlyActivePaths = 0x00000002;
             private const uint SdcApply = 0x00000080;
@@ -129,12 +129,24 @@ namespace LanScreenShare.Media.Display
 
                 var pathInfos = new DisplayConfigPathInfo[pathCount];
                 var modeInfos = new DisplayConfigModeInfo[modeCount];
-                fixed (DisplayConfigPathInfo* pPaths = pathInfos)
-                fixed (DisplayConfigModeInfo* pModes = modeInfos)
+                var pathsHandle = GCHandle.Alloc(pathInfos, GCHandleType.Pinned);
+                var modesHandle = GCHandle.Alloc(modeInfos, GCHandleType.Pinned);
+                try
                 {
-                    int err = QueryDisplayConfig(QdcOnlyActivePaths, ref pathCount, pPaths, ref modeCount, pModes, IntPtr.Zero);
+                    int err = QueryDisplayConfig(
+                        QdcOnlyActivePaths,
+                        ref pathCount,
+                        pathsHandle.AddrOfPinnedObject(),
+                        ref modeCount,
+                        modesHandle.AddrOfPinnedObject(),
+                        IntPtr.Zero);
                     if (err != 0)
                         return false;
+                }
+                finally
+                {
+                    pathsHandle.Free();
+                    modesHandle.Free();
                 }
 
                 var result = new List<DisplayPathSnapshot>((int)pathCount);
@@ -148,7 +160,7 @@ namespace LanScreenShare.Media.Display
             }
 
             public bool ApplyExtendTopology() =>
-                SetDisplayConfig(0, null, 0, null, SdcApply | SdcTopologyExtend) == 0;
+                SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SdcApply | SdcTopologyExtend) == 0;
 
             public bool ApplySuppliedConfig(IReadOnlyList<DisplayPathSnapshot> paths)
             {
@@ -163,11 +175,22 @@ namespace LanScreenShare.Media.Display
                     PopulateNativePathAndModes(paths[i], i, nativePaths, nativeModes);
                 }
 
-                fixed (DisplayConfigPathInfo* pPaths = nativePaths)
-                fixed (DisplayConfigModeInfo* pModes = nativeModes)
+                var pathsHandle = GCHandle.Alloc(nativePaths, GCHandleType.Pinned);
+                var modesHandle = GCHandle.Alloc(nativeModes, GCHandleType.Pinned);
+                try
                 {
                     uint flags = SdcApply | SdcUseSuppliedDisplayConfig | SdcAllowChanges | SdcSaveToDatabase;
-                    return SetDisplayConfig((uint)nativePaths.Length, pPaths, (uint)nativeModes.Length, pModes, flags) == 0;
+                    return SetDisplayConfig(
+                        (uint)nativePaths.Length,
+                        pathsHandle.AddrOfPinnedObject(),
+                        (uint)nativeModes.Length,
+                        modesHandle.AddrOfPinnedObject(),
+                        flags) == 0;
+                }
+                finally
+                {
+                    pathsHandle.Free();
+                    modesHandle.Free();
                 }
             }
 
@@ -292,38 +315,39 @@ namespace LanScreenShare.Media.Display
                 [FieldOffset(4)] public uint Id;
                 [FieldOffset(8)] public Luid AdapterId;
 
-                // Source mode fields (starting at offset 16)
                 [FieldOffset(16)] public uint SourceWidth;
                 [FieldOffset(20)] public uint SourceHeight;
                 [FieldOffset(24)] public uint SourcePixelFormat;
                 [FieldOffset(28)] public int PositionX;
                 [FieldOffset(32)] public int PositionY;
 
-                // Target video signal info overlap (starting at offset 16)
                 [FieldOffset(32)] public uint TargetVSyncNumerator;
                 [FieldOffset(36)] public uint TargetVSyncDenominator;
                 [FieldOffset(40)] public uint TargetActiveWidth;
                 [FieldOffset(44)] public uint TargetActiveHeight;
             }
 
-            [DllImport("user32.dll")]
-            private static extern int GetDisplayConfigBufferSizes(uint flags, out uint numPathArrayElements, out uint numModeInfoArrayElements);
+            [LibraryImport("user32.dll")]
+            private static partial int GetDisplayConfigBufferSizes(
+                uint flags,
+                out uint numPathArrayElements,
+                out uint numModeInfoArrayElements);
 
-            [DllImport("user32.dll")]
-            private static extern int QueryDisplayConfig(
+            [LibraryImport("user32.dll")]
+            private static partial int QueryDisplayConfig(
                 uint flags,
                 ref uint numPathArrayElements,
-                DisplayConfigPathInfo* pathArray,
+                IntPtr pathArray,
                 ref uint numModeInfoArrayElements,
-                DisplayConfigModeInfo* modeInfoArray,
+                IntPtr modeInfoArray,
                 IntPtr currentTopologyId);
 
-            [DllImport("user32.dll")]
-            private static extern int SetDisplayConfig(
+            [LibraryImport("user32.dll")]
+            private static partial int SetDisplayConfig(
                 uint numPathArrayElements,
-                DisplayConfigPathInfo* pathArray,
+                IntPtr pathArray,
                 uint numModeInfoArrayElements,
-                DisplayConfigModeInfo* modeInfoArray,
+                IntPtr modeInfoArray,
                 uint flags);
         }
 

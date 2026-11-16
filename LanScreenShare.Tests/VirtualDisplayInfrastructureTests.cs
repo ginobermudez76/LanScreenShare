@@ -181,7 +181,7 @@ public class VirtualDisplayInfrastructureTests
             bool backupExistedWhileActive = File.Exists(snapshotPath);
             await coordinator.StopExtendedDisplayAsync();
 
-            Assert.AreEqual(("ERROR_INVALID_MODE", true, "ERROR_DISPLAY_BUSY"), (badModeResult.ErrorCode, okResult.Success, busyResult.ErrorCode));
+            Assert.AreEqual((VirtualDisplayErrorCode.InvalidMode, true, VirtualDisplayErrorCode.DisplayBusy), (badModeResult.ErrorCode, okResult.Success, busyResult.ErrorCode));
             Assert.AreEqual((true, 2560, true), (modeChange.Success, coordinator.CurrentSession == null ? topology.LastAppliedMode?.Width ?? 0 : 0, backupExistedWhileActive));
             Assert.AreEqual((VirtualDisplayState.Inactive, 1, 1, 1, 1, false), (coordinator.State, backend.DestroyCalls, topology.RestoreCalls, watchdog.LaunchCount, watchdog.DisposedCount, File.Exists(snapshotPath)));
             Assert.IsTrue(backend.HeartbeatCalls >= 1);
@@ -204,12 +204,43 @@ public class VirtualDisplayInfrastructureTests
 
             await using var coordinator = new VirtualDisplayCoordinator([backend], topology, null, options);
             var noDriver = await coordinator.StartExtendedDisplayAsync(VirtualDisplayMode.Default);
+            var noSessionMode = await coordinator.ChangeDisplayModeAsync(VirtualDisplayMode.Default);
 
             backend.Installed = true;
+            backend.FailCreate = true;
+            var createFail = await coordinator.StartExtendedDisplayAsync(VirtualDisplayMode.Default);
+
+            backend.FailCreate = false;
             var topoFail = await coordinator.StartExtendedDisplayAsync(VirtualDisplayMode.Default);
 
-            Assert.AreEqual(("ERROR_DRIVER_NOT_INSTALLED", "ERROR_TOPOLOGY_FAILED"), (noDriver.ErrorCode, topoFail.ErrorCode));
-            Assert.AreEqual((VirtualDisplayState.Inactive, 1, 1, false), (coordinator.State, backend.DestroyCalls, topology.RestoreCalls, File.Exists(snapshotPath)));
+            Assert.AreEqual((VirtualDisplayErrorCode.DriverNotInstalled, VirtualDisplayErrorCode.NoSession, VirtualDisplayErrorCode.CreateFailed, VirtualDisplayErrorCode.TopologyFailed), (noDriver.ErrorCode, noSessionMode.ErrorCode, createFail.ErrorCode, topoFail.ErrorCode));
+            Assert.AreEqual((VirtualDisplayState.Inactive, 1, 2, false), (coordinator.State, backend.DestroyCalls, topology.RestoreCalls, File.Exists(snapshotPath)));
+        }
+        finally
+        {
+            CleanupSnapshotDir(snapshotPath);
+        }
+    }
+
+    [TestMethod]
+    public async Task Coordinator_FailedResumeAndFailedModeUpdate_HandleErrorsSafely()
+    {
+        string snapshotPath = CreateTempSnapshotPath("vdd-resume-fail");
+        try
+        {
+            var backend = new FakeVddBackend { FailUpdateMode = true };
+            var topology = new FakeTopologyManager();
+            var options = new VirtualDisplayCoordinatorOptions { SnapshotFilePath = snapshotPath };
+
+            await using var coordinator = new VirtualDisplayCoordinator([backend], topology, null, options);
+            await coordinator.StartExtendedDisplayAsync(VirtualDisplayMode.Default);
+
+            var modeUpdateFailed = await coordinator.ChangeDisplayModeAsync(new VirtualDisplayMode(2560, 1440, 60));
+            await coordinator.HandleSystemSuspendAsync();
+            topology.FailApplyExtend = true;
+            await coordinator.HandleSystemResumeAsync();
+
+            Assert.AreEqual((VirtualDisplayErrorCode.ModeUpdateFailed, VirtualDisplayState.Inactive, 1, 1), (modeUpdateFailed.ErrorCode, coordinator.State, backend.DestroyCalls, topology.RestoreCalls));
         }
         finally
         {
@@ -320,7 +351,7 @@ public class VirtualDisplayInfrastructureTests
 
         Assert.AreEqual((0, 2), (VddSettingsXmlHelper.ReadMonitorCount(initialXml), VddSettingsXmlHelper.ReadMonitorCount(updatedTwice)));
         Assert.IsTrue(updatedTwice.Contains("<HardwareCursor>true</HardwareCursor>", StringComparison.Ordinal));
-        Assert.AreEqual(("SETDISPLAYCOUNT 2", "RELOAD_DRIVER"), (VddSettingsXmlHelper.BuildSetDisplayCountCommand(2), VddSettingsXmlHelper.BuildReloadDriverCommand()));
+        Assert.AreEqual(("SETDISPLAYCOUNT 2", "RELOAD_DRIVER"), (VddSettingsXmlHelper.BuildSetDisplayCountCommand(2), VddSettingsXmlHelper.ReloadDriverCommand));
     }
 
     [TestMethod]
@@ -383,7 +414,11 @@ public class VirtualDisplayInfrastructureTests
         try
         {
             string settingsPath = Path.Combine(tempDir, "vdd_settings.xml");
-            var env = new WindowsVddEnvironment(settingsPath, Path.Combine(tempDir, "missing.inf"));
+            var env = new WindowsVddEnvironment(new VddEnvironmentPaths
+            {
+                SettingsPath = settingsPath,
+                InfPath = Path.Combine(tempDir, "missing.inf")
+            });
             env.WriteSettingsXml(VddSettingsXmlHelper.UpdateMonitorCountAndMode(null, 1, VirtualDisplayMode.Default));
             string? readBack = env.ReadSettingsXml();
 
@@ -403,6 +438,15 @@ public class VirtualDisplayInfrastructureTests
 
             var realTopology = new WindowsDisplayTopologyManager();
             var realSnap = realTopology.CaptureSnapshot();
+            var missingLauncher = new ProcessWatchdogLauncher(Path.Combine(tempDir, "missing.exe"));
+            var nullWatchdog = missingLauncher.StartWatchdog(new VirtualDisplayWatchdogLaunchOptions
+            {
+                ParentPid = 123,
+                SnapshotPath = settingsPath,
+                MonitorId = "1",
+                BackendId = VirtualDriversVddBackend.Id
+            });
+
             string args = ProcessWatchdogLauncher.BuildArguments(new VirtualDisplayWatchdogLaunchOptions
             {
                 ParentPid = 123,
@@ -411,14 +455,80 @@ public class VirtualDisplayInfrastructureTests
                 BackendId = VirtualDriversVddBackend.Id
             });
 
+            var resolvedExe = ProcessWatchdogLauncher.ResolveExecutablePath(tempDir);
+            using var realWatchdogLauncher = StartSelfCheckProcess(settingsPath);
+            using var defaultParsec = new ParsecVddBackend();
+            var defaultVdd = new VirtualDriversVddBackend();
+            bool parsecInstalled = defaultParsec.IsDriverInstalled();
+            var parsecFailCreate = await defaultParsec.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
+            bool parsecHeartbeat = await defaultParsec.SendHeartbeatAsync("0");
+
             Assert.AreEqual((true, "SETDISPLAYCOUNT 1"), (sent && readBack != null, receivedCommand));
-            Assert.IsTrue(realSnap.Paths.Count >= 0);
-            Assert.IsTrue(args.Contains("--parent-pid 123", StringComparison.Ordinal));
+            Assert.IsNull(nullWatchdog);
+            Assert.IsTrue(realSnap.Paths.Count >= 0 && args.Contains("--parent-pid 123", StringComparison.Ordinal));
+            Assert.IsTrue(resolvedExe.EndsWith(ProcessWatchdogLauncher.ExecutableName, StringComparison.Ordinal));
+            Assert.IsNotNull(realWatchdogLauncher);
+            if (!parsecInstalled)
+            {
+                Assert.AreEqual((null, false), (parsecFailCreate, parsecHeartbeat));
+            }
+            Assert.IsNotNull(defaultVdd);
         }
         finally
         {
             CleanupSnapshotDir(Path.Combine(tempDir, "dummy"));
         }
+    }
+
+    [TestMethod]
+    public async Task SafeFallbacksAndEdgeCases_HandleInvalidInputsAndEmptyConfigs()
+    {
+        string tempFile = CreateTempSnapshotPath("vdd-badjson");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(tempFile)!);
+            await File.WriteAllTextAsync(tempFile, "{ invalid json");
+            var invalidSnap = await DisplayTopologySnapshot.TryLoadFromFileAsync(tempFile);
+            DisplayTopologySnapshot.DeleteFileIfExists(tempFile);
+
+            var vdd = new VirtualDriversVddBackend(new FakeVddPipeTransport(), new FakeVddEnvironment { Present = false });
+            var missingDriverCreate = await vdd.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
+            bool badModeUpdate = await vdd.UpdateModeAsync("1", new VirtualDisplayMode(100, 100, 60));
+
+            using var parsec = new ParsecVddBackend(new FakeParsecTransport { Installed = false });
+            bool parsecMissingMode = await parsec.UpdateModeAsync("0", VirtualDisplayMode.Default);
+            bool parsecMissingDestroy = await parsec.DestroyVirtualMonitorAsync("not-a-number");
+
+            var nullXmlCount = VddSettingsXmlHelper.ReadMonitorCount("<broken");
+            string recreatedXml = VddSettingsXmlHelper.UpdateMonitorCountAndMode("<broken", 1, new VirtualDisplayMode(100, 100, 60));
+            var topologyManager = new WindowsDisplayTopologyManager(new FakeCcdAdapter());
+            bool emptyRestore = topologyManager.RestoreSnapshot(new DisplayTopologySnapshot());
+            var nullModeUpdate = WindowsDisplayTopologyManager.ApplyModeToTargetPath([], null, VirtualDisplayMode.Default);
+
+            Assert.AreEqual((null, (VirtualDisplayInstance?)null, false), (invalidSnap, missingDriverCreate, badModeUpdate));
+            Assert.AreEqual((true, true, 0), (parsecMissingMode, parsecMissingDestroy, nullXmlCount));
+            Assert.AreEqual((true, null, 1), (emptyRestore, nullModeUpdate, VddSettingsXmlHelper.ReadMonitorCount(recreatedXml)));
+        }
+        finally
+        {
+            CleanupSnapshotDir(tempFile);
+        }
+    }
+
+    private static IDisposable? StartSelfCheckProcess(string settingsPath)
+    {
+        string cmdPath = Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        if (!File.Exists(cmdPath))
+            return null;
+
+        var launcher = new ProcessWatchdogLauncher(cmdPath);
+        return launcher.StartWatchdog(new VirtualDisplayWatchdogLaunchOptions
+        {
+            ParentPid = Environment.ProcessId,
+            SnapshotPath = settingsPath,
+            MonitorId = "1",
+            BackendId = VirtualDriversVddBackend.Id
+        });
     }
 
     private sealed class FakeVddPipeTransport : IVddPipeTransport

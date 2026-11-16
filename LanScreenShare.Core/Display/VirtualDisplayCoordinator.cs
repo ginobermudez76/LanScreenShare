@@ -43,13 +43,13 @@ namespace LanScreenShare.Core.Display
             CancellationToken ct = default)
         {
             if (!VirtualDisplayModeValidator.IsSupported(in requestedMode))
-                return VirtualDisplayOperationResult.Fail("ERROR_INVALID_MODE", "Modo de pantalla fuera de los límites permitidos.");
+                return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.InvalidMode, "Modo de pantalla fuera de los límites permitidos.");
 
             await _lifecycleLock.WaitAsync(ct);
             try
             {
                 if (IsSessionActive())
-                    return VirtualDisplayOperationResult.Fail("ERROR_DISPLAY_BUSY", "Ya existe un monitor virtual extendido activo.");
+                    return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.DisplayBusy, "Ya existe un monitor virtual extendido activo.");
 
                 return await StartExtendedDisplayCoreAsync(requestedMode, ct);
             }
@@ -71,7 +71,7 @@ namespace LanScreenShare.Core.Display
             if (backend == null)
             {
                 TransitionState(VirtualDisplayState.Error, "No se encontró ningún controlador IDDCx instalado");
-                return VirtualDisplayOperationResult.Fail("ERROR_DRIVER_NOT_INSTALLED", "No se encontró un controlador de pantalla virtual instalado.");
+                return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.DriverNotInstalled, "No se encontró un controlador de pantalla virtual instalado.");
             }
 
             _activeBackend = backend;
@@ -80,28 +80,11 @@ namespace LanScreenShare.Core.Display
             TransitionState(VirtualDisplayState.CreatingDisplay, $"Creando monitor virtual con {backend.Capabilities.BackendId}");
             var instance = await TryCreateVirtualMonitorAsync(backend, requestedMode, ct);
             if (instance == null)
-                return await AbortStartAsync("ERROR_CREATE_FAILED", "No se pudo inicializar el monitor virtual.", baseSnapshot, ct);
+                return await AbortStartAsync(VirtualDisplayErrorCode.CreateFailed, "No se pudo inicializar el monitor virtual.", baseSnapshot, ct);
 
-            _activeInstance = instance;
-            _savedSnapshot = baseSnapshot with
-            {
-                BackendId = backend.Capabilities.BackendId,
-                VirtualMonitorId = instance.MonitorId,
-                VirtualDeviceName = instance.DeviceName
-            };
-            await _savedSnapshot.SaveToFileAsync(_options.SnapshotFilePath, ct);
-
-            _watchdogHandle = _watchdogLauncher?.StartWatchdog(new VirtualDisplayWatchdogLaunchOptions
-            {
-                ParentPid = Environment.ProcessId,
-                SnapshotPath = _options.SnapshotFilePath,
-                MonitorId = instance.MonitorId,
-                BackendId = backend.Capabilities.BackendId
-            });
-
-            TransitionState(VirtualDisplayState.ConfiguringTopology, "Aplicando topología Extendida (CCD)");
-            if (!_topologyManager.ApplyExtendTopology(instance.DeviceName, requestedMode))
-                return await AbortStartAsync("ERROR_TOPOLOGY_FAILED", "No se pudo aplicar la topología extendida en Windows.", _savedSnapshot, ct);
+            await PersistAndConfigureDisplayAsync(backend, instance, baseSnapshot, requestedMode, ct);
+            if (_activeInstance == null)
+                return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.TopologyFailed, "No se pudo aplicar la topología extendida en Windows.");
 
             CurrentSession = new VirtualDisplaySessionInfo
             {
@@ -123,7 +106,39 @@ namespace LanScreenShare.Core.Display
             return VirtualDisplayOperationResult.Ok(CurrentSession);
         }
 
-        private async Task<VirtualDisplayInstance?> TryCreateVirtualMonitorAsync(
+        private async Task PersistAndConfigureDisplayAsync(
+            IVirtualDisplayBackend backend,
+            VirtualDisplayInstance instance,
+            DisplayTopologySnapshot baseSnapshot,
+            VirtualDisplayMode requestedMode,
+            CancellationToken ct)
+        {
+            _activeInstance = instance;
+            _savedSnapshot = baseSnapshot with
+            {
+                BackendId = backend.Capabilities.BackendId,
+                VirtualMonitorId = instance.MonitorId,
+                VirtualDeviceName = instance.DeviceName
+            };
+            await _savedSnapshot.SaveToFileAsync(_options.SnapshotFilePath, ct);
+
+            _watchdogHandle = _watchdogLauncher?.StartWatchdog(new VirtualDisplayWatchdogLaunchOptions
+            {
+                ParentPid = Environment.ProcessId,
+                SnapshotPath = _options.SnapshotFilePath,
+                MonitorId = instance.MonitorId,
+                BackendId = backend.Capabilities.BackendId
+            });
+
+            TransitionState(VirtualDisplayState.ConfiguringTopology, "Aplicando topología Extendida (CCD)");
+            if (!_topologyManager.ApplyExtendTopology(instance.DeviceName, requestedMode))
+            {
+                await TeardownActiveResourcesAsync(_savedSnapshot, ct);
+                TransitionState(VirtualDisplayState.Inactive, "No se pudo aplicar la topología extendida en Windows.");
+            }
+        }
+
+        private static async Task<VirtualDisplayInstance?> TryCreateVirtualMonitorAsync(
             IVirtualDisplayBackend backend,
             VirtualDisplayMode mode,
             CancellationToken ct)
@@ -139,7 +154,7 @@ namespace LanScreenShare.Core.Display
         }
 
         private async Task<VirtualDisplayOperationResult> AbortStartAsync(
-            string errorCode,
+            VirtualDisplayErrorCode errorCode,
             string message,
             DisplayTopologySnapshot rollbackSnapshot,
             CancellationToken ct)
@@ -155,9 +170,9 @@ namespace LanScreenShare.Core.Display
             try
             {
                 if (CurrentSession == null)
-                    return VirtualDisplayOperationResult.Fail("ERROR_NO_SESSION", "No existe una sesión de pantalla extendida.");
+                    return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.NoSession, "No existe una sesión de pantalla extendida.");
 
-                CancelReconnectTimer();
+                ResetCts(ref _reconnectCts);
                 TransitionState(VirtualDisplayState.Streaming, "Receptor conectado al monitor virtual");
                 return VirtualDisplayOperationResult.Ok(CurrentSession);
             }
@@ -172,32 +187,38 @@ namespace LanScreenShare.Core.Display
             CancellationToken ct = default)
         {
             if (!VirtualDisplayModeValidator.IsSupported(in newMode))
-                return VirtualDisplayOperationResult.Fail("ERROR_INVALID_MODE", "Modo solicitado fuera de rango.");
+                return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.InvalidMode, "Modo solicitado fuera de rango.");
 
             await _lifecycleLock.WaitAsync(ct);
             try
             {
-                if (_activeBackend == null || _activeInstance == null || CurrentSession == null)
-                    return VirtualDisplayOperationResult.Fail("ERROR_NO_SESSION", "No hay monitor virtual activo.");
+                if (!HasActiveSessionContext())
+                    return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.NoSession, "No hay monitor virtual activo.");
 
-                if (_activeBackend.Capabilities.SupportsDynamicModeChange)
-                {
-                    bool backendUpdated = await _activeBackend.UpdateModeAsync(_activeInstance.MonitorId, newMode, ct);
-                    if (!backendUpdated)
-                        return VirtualDisplayOperationResult.Fail("ERROR_MODE_UPDATE_FAILED", "El controlador rechazó el cambio de modo.");
-                }
+                var backend = _activeBackend!;
+                var instance = _activeInstance!;
+                if (backend.Capabilities.SupportsDynamicModeChange && !await backend.UpdateModeAsync(instance.MonitorId, newMode, ct))
+                    return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.ModeUpdateFailed, "El controlador rechazó el cambio de modo.");
 
-                if (!_topologyManager.ApplyExtendTopology(_activeInstance.DeviceName, newMode))
-                    return VirtualDisplayOperationResult.Fail("ERROR_TOPOLOGY_FAILED", "No se pudo aplicar el nuevo modo en CCD.");
+                if (!_topologyManager.ApplyExtendTopology(instance.DeviceName, newMode))
+                    return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.TopologyFailed, "No se pudo aplicar el nuevo modo en CCD.");
 
-                _activeInstance = _activeInstance with { Mode = newMode };
-                CurrentSession = CurrentSession with { ActiveMode = newMode };
+                _activeInstance = instance with { Mode = newMode };
+                CurrentSession = CurrentSession! with { ActiveMode = newMode };
                 return VirtualDisplayOperationResult.Ok(CurrentSession);
             }
             finally
             {
                 _lifecycleLock.Release();
             }
+        }
+
+        private bool HasActiveSessionContext()
+        {
+            if (_activeBackend == null || _activeInstance == null)
+                return false;
+
+            return CurrentSession != null;
         }
 
         public async Task HandleNetworkDisconnectedAsync(CancellationToken ct = default)
@@ -225,7 +246,7 @@ namespace LanScreenShare.Core.Display
                 if (State != VirtualDisplayState.Reconnecting)
                     return;
 
-                CancelReconnectTimer();
+                ResetCts(ref _reconnectCts);
                 TransitionState(VirtualDisplayState.Streaming, "Conectividad recuperada");
             }
             finally
@@ -239,10 +260,11 @@ namespace LanScreenShare.Core.Display
             await _lifecycleLock.WaitAsync(ct);
             try
             {
-                if (State != VirtualDisplayState.Streaming && State != VirtualDisplayState.Reconnecting)
+                bool canSuspend = State == VirtualDisplayState.Streaming || State == VirtualDisplayState.Reconnecting;
+                if (!canSuspend)
                     return;
 
-                CancelReconnectTimer();
+                ResetCts(ref _reconnectCts);
                 TransitionState(VirtualDisplayState.Suspended, "Sistema en suspensión");
             }
             finally
@@ -331,8 +353,8 @@ namespace LanScreenShare.Core.Display
 
         private async Task TeardownActiveResourcesAsync(DisplayTopologySnapshot? snapshotToRestore, CancellationToken ct)
         {
-            CancelReconnectTimer();
-            StopHeartbeatLoop();
+            ResetCts(ref _reconnectCts);
+            ResetCts(ref _heartbeatCts);
 
             if (_activeBackend != null && _activeInstance != null)
             {
@@ -370,14 +392,12 @@ namespace LanScreenShare.Core.Display
 
         private void StartHeartbeatLoop(IVirtualDisplayBackend backend, string monitorId)
         {
-            StopHeartbeatLoop();
-            var cts = new CancellationTokenSource();
-            _heartbeatCts = cts;
             var interval = _options.HeartbeatInterval > TimeSpan.Zero
                 ? _options.HeartbeatInterval
                 : TimeSpan.FromMilliseconds(200);
 
-            _ = Task.Run(() => RunHeartbeatAsync(backend, monitorId, interval, cts.Token), CancellationToken.None);
+            var token = ReplaceCts(ref _heartbeatCts);
+            _ = Task.Run(() => RunHeartbeatAsync(backend, monitorId, interval, token), CancellationToken.None);
         }
 
         private static async Task RunHeartbeatAsync(
@@ -404,23 +424,14 @@ namespace LanScreenShare.Core.Display
             }
         }
 
-        private void StopHeartbeatLoop()
-        {
-            _heartbeatCts?.Cancel();
-            _heartbeatCts?.Dispose();
-            _heartbeatCts = null;
-        }
-
         private void StartReconnectTimer()
         {
-            CancelReconnectTimer();
-            var cts = new CancellationTokenSource();
-            _reconnectCts = cts;
             var timeout = _options.ReconnectTimeout > TimeSpan.Zero
                 ? _options.ReconnectTimeout
                 : TimeSpan.FromSeconds(15);
 
-            _ = Task.Run(() => RunReconnectExpiryAsync(timeout, cts.Token), CancellationToken.None);
+            var token = ReplaceCts(ref _reconnectCts);
+            _ = Task.Run(() => RunReconnectExpiryAsync(timeout, token), CancellationToken.None);
         }
 
         private async Task RunReconnectExpiryAsync(TimeSpan timeout, CancellationToken token)
@@ -428,7 +439,7 @@ namespace LanScreenShare.Core.Display
             try
             {
                 await Task.Delay(timeout, token);
-                await StopExtendedDisplayIfReconnectingAsync();
+                await StopExtendedDisplayIfReconnectingAsync(token);
             }
             catch (OperationCanceledException)
             {
@@ -436,16 +447,16 @@ namespace LanScreenShare.Core.Display
             }
         }
 
-        private async Task StopExtendedDisplayIfReconnectingAsync()
+        private async Task StopExtendedDisplayIfReconnectingAsync(CancellationToken token)
         {
-            await _lifecycleLock.WaitAsync();
+            await _lifecycleLock.WaitAsync(token);
             try
             {
                 if (State != VirtualDisplayState.Reconnecting)
                     return;
 
                 TransitionState(VirtualDisplayState.Destroying, "Timeout de reconexión agotado");
-                await TeardownActiveResourcesAsync(_savedSnapshot, CancellationToken.None);
+                await TeardownActiveResourcesAsync(_savedSnapshot, token);
                 TransitionState(VirtualDisplayState.Inactive, "Monitor virtual destruido por timeout");
             }
             finally
@@ -454,18 +465,31 @@ namespace LanScreenShare.Core.Display
             }
         }
 
-        private void CancelReconnectTimer()
+        private static CancellationToken ReplaceCts(ref CancellationTokenSource? field)
         {
-            _reconnectCts?.Cancel();
-            _reconnectCts?.Dispose();
-            _reconnectCts = null;
+            ResetCts(ref field);
+            var cts = new CancellationTokenSource();
+            field = cts;
+            return cts.Token;
+        }
+
+        private static void ResetCts(ref CancellationTokenSource? field)
+        {
+            field?.Cancel();
+            field?.Dispose();
+            field = null;
         }
 
         private void TransitionState(VirtualDisplayState nextState, string? reason)
         {
             var previous = State;
             State = nextState;
-            StateChanged?.Invoke(this, new VirtualDisplayStateChangedEventArgs(previous, nextState, reason));
+            StateChanged?.Invoke(this, new VirtualDisplayStateChangedEventArgs
+            {
+                PreviousState = previous,
+                CurrentState = nextState,
+                Reason = reason
+            });
         }
 
         public async ValueTask DisposeAsync()
