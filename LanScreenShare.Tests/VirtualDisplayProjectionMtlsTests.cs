@@ -26,11 +26,17 @@ public class VirtualDisplayProjectionMtlsTests
         public VirtualDisplayState State => _state;
         public VirtualDisplaySessionInfo? CurrentSession { get; private set; }
         public int DisconnectNotifications { get; private set; }
+        public bool ShouldFailStart { get; set; }
 
         public event EventHandler<VirtualDisplayStateChangedEventArgs>? StateChanged;
 
         public Task<VirtualDisplayOperationResult> StartExtendedDisplayAsync(VirtualDisplayMode requestedMode, CancellationToken ct = default)
         {
+            if (ShouldFailStart)
+            {
+                return Task.FromResult(VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.DriverNotInstalled, "MttVDD no disponible"));
+            }
+
             CurrentSession = new VirtualDisplaySessionInfo
             {
                 BackendId = "stub-vdd",
@@ -387,5 +393,41 @@ public class VirtualDisplayProjectionMtlsTests
         await host.StopProjectionAsync();
         Assert.IsFalse(host.IsProjecting);
         Assert.AreEqual(VirtualDisplayState.Inactive, displayService.State);
+    }
+
+    [TestMethod]
+    public async Task ProjectionHost_CleansUpServersWhenVirtualDisplayStartFails()
+    {
+        using var peers = await CreatePairedPeersAsync();
+        var displayService = new StubVirtualDisplayService { ShouldFailStart = true };
+        var invitationStore = new ProjectionInvitationStore();
+        var captureInstances = new List<StubCaptureService>();
+
+        var authority = new SessionAuthority(peers.SenderStore);
+        using var streamServer = new TcpStreamServer(authority, TlsConfigurationHelper.CreateServerOptions(peers.SenderCert, peers.SenderStore), peers.SenderStore);
+        using var controlServer = new TcpControlServer(authority, null, TlsConfigurationHelper.CreateServerOptions(peers.SenderCert, peers.SenderStore));
+
+        await using var host = CreateProjectionHost(new HostCreationArgs(displayService, invitationStore, streamServer, controlServer, captureInstances));
+        using var streamClient = new TcpStreamClient();
+        using var controlClient = new TcpControlClient();
+        var acceptedTcs = new TaskCompletionSource<DisplayInvitationAcceptanceContext>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var receiver = CreateProjectionReceiver(new ReceiverCreationArgs(peers, acceptedTcs, streamClient, controlClient));
+        int signalingPort = GetAvailableTcpPort();
+        await receiver.StartListeningAsync(signalingPort);
+
+        var start = await host.StartProjectionAsync(new DisplayNegotiationRequest
+        {
+            TargetIp = "127.0.0.1",
+            TargetPort = signalingPort,
+            SslOptions = TlsConfigurationHelper.CreateClientOptions(peers.SenderCert, "localhost", peers.SenderStore),
+            InvitationStore = invitationStore,
+            HostStreamPort = GetAvailableTcpPort(),
+            HostControlPort = GetAvailableTcpPort()
+        });
+
+        Assert.IsFalse(start.Success || host.IsProjecting);
+        Assert.IsFalse(streamServer.IsRunning);
+        Assert.AreEqual(VirtualDisplayErrorCode.DriverNotInstalled.ToString(), start.ErrorCode);
     }
 }

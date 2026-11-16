@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("Install", "Uninstall", "RepairVdd")]
@@ -175,9 +175,29 @@ function Test-MttVddPipeAvailable {
     return [System.IO.Directory]::GetFiles("\\.\pipe\", "MTTVirtualDisplayPipe").Length -gt 0
 }
 
+function Test-MttVddDeviceHealthy($Device) {
+    if ($null -eq $Device) {
+        return $false
+    }
+    return $Device.Status -eq "OK"
+}
+
+function Wait-ForMttVddReady {
+    $deadline = (Get-Date).AddSeconds(4)
+    do {
+        $dev = Find-MttVddDevice
+        if ((Test-MttVddDeviceHealthy $dev) -and (Test-MttVddPipeAvailable)) {
+            return $dev
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+
+    return Find-MttVddDevice
+}
+
 function Ensure-RootMttVddDeviceNode([string]$InfPath) {
     $existing = Find-MttVddDevice
-    if ($null -ne $existing -and $existing.Status -eq "OK") {
+    if (Test-MttVddDeviceHealthy $existing) {
         Write-SetupLog "Dispositivo Root\MttVDD ya presente ($($existing.InstanceId), Status=$($existing.Status)); actualizando INF."
         & pnputil.exe /add-driver $InfPath /install | Out-Null
         return
@@ -189,20 +209,11 @@ function Ensure-RootMttVddDeviceNode([string]$InfPath) {
     Add-Type -TypeDefinition $typeDefinition
     [VddRootDeviceInstaller]::InstallRootDevice("Root\MttVDD", $InfPath)
 
-    $deadline = (Get-Date).AddSeconds(4)
-    do {
-        $dev = Find-MttVddDevice
-        if ($null -ne $dev -and $dev.Status -eq "OK" -and (Test-MttVddPipeAvailable)) {
-            break
-        }
-        Start-Sleep -Milliseconds 250
-    } while ((Get-Date) -lt $deadline)
-
-    $finalDev = Find-MttVddDevice
-    $pipeReady = Test-MttVddPipeAvailable
+    $finalDev = Wait-ForMttVddReady
     if ($null -eq $finalDev) {
         throw "No se detectó el adaptador Root\MttVDD después de instalar el INF."
     }
+    $pipeReady = Test-MttVddPipeAvailable
     Write-SetupLog "Root\MttVDD instalado: InstanceId=$($finalDev.InstanceId), Status=$($finalDev.Status), PipeReady=$pipeReady"
 }
 
@@ -265,55 +276,70 @@ function Install-VirtualDisplayDriverPackage([string]$AppDir, [string]$ScratchDi
     Ensure-RootMttVddDeviceNode (Join-Path $targetVddDir "MttVDD.inf")
 }
 
-$scratch = Resolve-TempDirectory
-try {
-    if ($Action -eq "Install") {
-        New-Item -ItemType Directory -Path $ProgramDataDir -Force | Out-Null
-        Grant-UsersModifyAcl $ProgramDataDir
-        Write-SetupLog "Iniciando configuración de instalación en '$InstallDir'."
-
-        $exePath = Join-Path $InstallDir "LanScreenShare.Desktop.exe"
-        Ensure-TrustedLocalSigningAndSign -ExePath $exePath -ScratchDir $scratch
-        Write-SetupLog "Certificado confiable uiAccess y firma Authenticode verificados."
-
-        if ($ConfigureFirewall) {
-            Install-LanScreenShareFirewallRules -ExePath $exePath -IncludePublic $AllowPublicNetwork.IsPresent
-            Write-SetupLog "Reglas de Firewall configuradas (Public=$($AllowPublicNetwork.IsPresent))."
-        }
-
-        Configure-SharedDownloadDirectory -RequestedDir $DownloadDirectory
-        Write-SetupLog "Carpeta de descargas configurada ('$DownloadDirectory')."
-
-        if ($InstallVirtualDisplayDriver) {
-            Install-VirtualDisplayDriverPackage -AppDir $InstallDir -ScratchDir $scratch
-        }
-
-        if ($AllowInteractiveUac) {
-            Enable-InteractiveUacOnDefaultDesktop
-        }
-
-        Write-SetupLog "Configuración de instalación completada exitosamente."
-    } elseif ($Action -eq "RepairVdd") {
-        New-Item -ItemType Directory -Path $ProgramDataDir -Force | Out-Null
-        Grant-UsersModifyAcl $ProgramDataDir
-        Write-SetupLog "Ejecutando reparación/instalación de Virtual-Display-Driver desde '$InstallDir'."
-        Install-VirtualDisplayDriverPackage -AppDir $InstallDir -ScratchDir $scratch
-        Write-SetupLog "Reparación de Virtual-Display-Driver completada."
-    } else {
-        Get-Process -Name "LanScreenShare.Desktop", "LanScreenShare.DisplayWatchdog" -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-
-        Remove-LanScreenShareFirewallRules
-        Remove-TrustedLocalSigningCerts
-        Remove-Item -Path $DefaultsJsonPath -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path $SetupLogPath -Force -ErrorAction SilentlyContinue
-        if ((Test-Path $ProgramDataDir) -and ((Get-ChildItem $ProgramDataDir -Force).Count -eq 0)) {
-            Remove-Item -Path $ProgramDataDir -Force -ErrorAction SilentlyContinue
-        }
-    }
-} catch {
-    Write-SetupLog "ERROR: $($_.Exception.Message)"
-    throw
-} finally {
-    Remove-Item -Path $scratch -Recurse -Force -ErrorAction SilentlyContinue
+function Initialize-SetupProgramData {
+    New-Item -ItemType Directory -Path $ProgramDataDir -Force | Out-Null
+    Grant-UsersModifyAcl $ProgramDataDir
 }
+
+function Invoke-InstallAction([string]$ScratchDir) {
+    Initialize-SetupProgramData
+    Write-SetupLog "Iniciando configuración de instalación en '$InstallDir'."
+
+    $exePath = Join-Path $InstallDir "LanScreenShare.Desktop.exe"
+    Ensure-TrustedLocalSigningAndSign -ExePath $exePath -ScratchDir $ScratchDir
+    Write-SetupLog "Certificado confiable uiAccess y firma Authenticode verificados."
+
+    if ($ConfigureFirewall) {
+        Install-LanScreenShareFirewallRules -ExePath $exePath -IncludePublic $AllowPublicNetwork.IsPresent
+        Write-SetupLog "Reglas de Firewall configuradas (Public=$($AllowPublicNetwork.IsPresent))."
+    }
+
+    Configure-SharedDownloadDirectory -RequestedDir $DownloadDirectory
+    Write-SetupLog "Carpeta de descargas configurada ('$DownloadDirectory')."
+
+    if ($InstallVirtualDisplayDriver) {
+        Install-VirtualDisplayDriverPackage -AppDir $InstallDir -ScratchDir $ScratchDir
+    }
+    if ($AllowInteractiveUac) {
+        Enable-InteractiveUacOnDefaultDesktop
+    }
+    Write-SetupLog "Configuración de instalación completada exitosamente."
+}
+
+function Invoke-RepairVddAction([string]$ScratchDir) {
+    Initialize-SetupProgramData
+    Write-SetupLog "Ejecutando reparación/instalación de Virtual-Display-Driver desde '$InstallDir'."
+    Install-VirtualDisplayDriverPackage -AppDir $InstallDir -ScratchDir $ScratchDir
+    Write-SetupLog "Reparación de Virtual-Display-Driver completada."
+}
+
+function Invoke-UninstallAction {
+    Get-Process -Name "LanScreenShare.Desktop", "LanScreenShare.DisplayWatchdog" -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+
+    Remove-LanScreenShareFirewallRules
+    Remove-TrustedLocalSigningCerts
+    Remove-Item -Path $DefaultsJsonPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $SetupLogPath -Force -ErrorAction SilentlyContinue
+    if ((Test-Path $ProgramDataDir) -and ((Get-ChildItem $ProgramDataDir -Force).Count -eq 0)) {
+        Remove-Item -Path $ProgramDataDir -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-SetupEntrypoint {
+    $scratch = Resolve-TempDirectory
+    try {
+        switch ($Action) {
+            "Install" { Invoke-InstallAction -ScratchDir $scratch }
+            "RepairVdd" { Invoke-RepairVddAction -ScratchDir $scratch }
+            "Uninstall" { Invoke-UninstallAction }
+        }
+    } catch {
+        Write-SetupLog "ERROR: $($_.Exception.Message)"
+        throw
+    } finally {
+        Remove-Item -Path $scratch -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Invoke-SetupEntrypoint

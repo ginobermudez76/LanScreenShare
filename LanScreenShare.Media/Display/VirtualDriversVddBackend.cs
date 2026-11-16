@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.IO.Pipes;
+using System.Linq;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Threading;
@@ -186,22 +187,12 @@ namespace LanScreenShare.Media.Display
 
         public bool IsDriverInstalled() => _environment.IsDriverPresent();
 
-        internal static bool HasMttVddHardwareId(string[]? hardwareIds)
-        {
-            if (hardwareIds == null || hardwareIds.Length == 0)
-                return false;
+        internal static bool HasMttVddHardwareId(string[]? hardwareIds) =>
+            hardwareIds != null && hardwareIds.Any(IsMttVddId);
 
-            foreach (string id in hardwareIds)
-            {
-                if (string.Equals(id, @"Root\MttVDD", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(id, "MttVDD", StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
+        private static bool IsMttVddId(string id) =>
+            string.Equals(id, @"Root\MttVDD", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(id, "MttVDD", StringComparison.OrdinalIgnoreCase);
 
         public async Task<VirtualDisplayInstance?> CreateVirtualMonitorAsync(
             VirtualDisplayMode mode,

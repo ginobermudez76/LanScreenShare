@@ -161,13 +161,17 @@ public class VirtualDisplayDriverInstallerTests
         Assert.IsTrue(repairPlan.Arguments.Contains("-Action RepairVdd", StringComparison.Ordinal));
     }
 
+    private static readonly string[] UnrelatedDisplayIds = [@"root\wvmd", @"PCI\VEN_1002"];
+    private static readonly string[] RootMttVddIds = [@"Root\MttVDD"];
+    private static readonly string[] ShortMttVddIds = ["mttvdd"];
+
     [TestMethod]
     public void VirtualDriversVddBackend_HasMttVddHardwareId_RejectsUnrelatedDrivers()
     {
         Assert.IsFalse(VirtualDriversVddBackend.HasMttVddHardwareId(null));
         Assert.IsFalse(VirtualDriversVddBackend.HasMttVddHardwareId(Array.Empty<string>()));
-        Assert.IsFalse(VirtualDriversVddBackend.HasMttVddHardwareId(new[] { @"root\wvmd", @"PCI\VEN_1002" }));
-        Assert.IsTrue(VirtualDriversVddBackend.HasMttVddHardwareId(new[] { @"Root\MttVDD" }));
-        Assert.IsTrue(VirtualDriversVddBackend.HasMttVddHardwareId(new[] { "mttvdd" }));
+        Assert.IsFalse(VirtualDriversVddBackend.HasMttVddHardwareId(UnrelatedDisplayIds));
+        Assert.IsTrue(VirtualDriversVddBackend.HasMttVddHardwareId(RootMttVddIds));
+        Assert.IsTrue(VirtualDriversVddBackend.HasMttVddHardwareId(ShortMttVddIds));
     }
 }
