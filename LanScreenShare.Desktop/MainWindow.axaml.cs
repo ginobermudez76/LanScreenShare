@@ -45,7 +45,7 @@ namespace LanScreenShare.Desktop
 
         // Seguridad, autoridad de sesiones e identidad mTLS
         private IIdentityKeyStorage _identityKeyStorage = null!;
-        private IPairedDeviceStore _pairedDeviceStore = null!;
+        private JsonPairedDeviceStore _pairedDeviceStore = null!;
         private ISessionAuthority _sessionAuthority = null!;
         private TrustedDeviceManager _trustedDeviceManager = null!;
         private X509Certificate2? _identityCertificate;
@@ -164,6 +164,7 @@ namespace LanScreenShare.Desktop
             InitializeAudioControls();
             InitializeAccessAndApproval();
             InitializeEncoderAndSettingsControls();
+            InitializeVirtualDisplaySubsystem();
             InitializeTimersAndLifecycle();
             if (!string.IsNullOrEmpty(_appSettings.TransmissionPreset) && _appSettings.TransmissionPreset != "custom")
             {
@@ -263,6 +264,7 @@ namespace LanScreenShare.Desktop
 
             _discoveryService.StopHosting();
             _discoveryService.StopListening();
+            DisposeVirtualDisplaySubsystemSync();
         }
 
         #endregion

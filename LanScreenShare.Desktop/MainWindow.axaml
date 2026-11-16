@@ -81,6 +81,20 @@
             <Setter Property="BorderBrush" Value="#22C55E"/>
             <Setter Property="BorderThickness" Value="1"/>
         </Style>
+
+        <!-- Device Extend Screen Button Style -->
+        <Style Selector="Button.deviceExtendBtn">
+            <Setter Property="Background" Value="#4F46E5"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#6366F1"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style Selector="Button.deviceExtendBtn.extending">
+            <Setter Property="Background" Value="#14291F"/>
+            <Setter Property="Foreground" Value="#4ADE80"/>
+            <Setter Property="BorderBrush" Value="#22C55E"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
     </Window.Styles>
 
     <Grid x:Name="RootOuterGrid" RowDefinitions="Auto,*">
@@ -173,6 +187,24 @@
                         <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                             <PathIcon Data="{StaticResource IconHelpCircle}" Width="15" Height="15" Foreground="#94A3B8" VerticalAlignment="Center"/>
                             <TextBlock Text="Ayuda" FontSize="12.5" FontWeight="Medium" Foreground="#CBD5E1" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Independent Wireless Display Mode CTA (Equipo B) -->
+                    <Button x:Name="WirelessDisplayModeButton"
+                            Background="#1A2230"
+                            BorderBrush="#2E3B52"
+                            BorderThickness="1"
+                            Foreground="#E2E8F0"
+                            FontWeight="SemiBold"
+                            FontSize="12"
+                            Padding="12,8"
+                            CornerRadius="8"
+                            Cursor="Hand"
+                            ToolTip.Tip="Activa el Modo Pantalla Inalámbrica para recibir una pantalla extendida desde otro equipo.">
+                        <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                            <PathIcon x:Name="WirelessDisplayModeIcon" Data="{StaticResource IconAllScreens}" Width="14" Height="14" Foreground="#A5B4FC" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="WirelessDisplayModeButtonText" Text="Modo Pantalla Inalámbrica" FontSize="12" FontWeight="SemiBold" Foreground="#E2E8F0" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
 
@@ -1090,6 +1122,22 @@
                                                 <TextBlock Text="Elegir fuente" FontSize="13" FontWeight="SemiBold" Foreground="#E2E8F0" VerticalAlignment="Center"/>
                                             </StackPanel>
                                         </Button>
+
+                                        <Button x:Name="CenterWirelessDisplayButton"
+                                                Background="#1E1B4B"
+                                                BorderBrush="#4338CA"
+                                                BorderThickness="1"
+                                                Foreground="#E0E7FF"
+                                                CornerRadius="8"
+                                                Padding="16,10"
+                                                FontWeight="SemiBold"
+                                                FontSize="13"
+                                                Cursor="Hand">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <PathIcon Data="{StaticResource IconAllScreens}" Width="14" Height="14" Foreground="#A5B4FC" VerticalAlignment="Center"/>
+                                                <TextBlock x:Name="CenterWirelessDisplayButtonText" Text="Modo Pantalla Inalámbrica" FontSize="13" FontWeight="SemiBold" Foreground="#E0E7FF" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
                                     </StackPanel>
                                 </StackPanel>
                             </Grid>
@@ -1469,26 +1517,55 @@
                                                 CornerRadius="10"
                                                 Padding="12,10"
                                                 Margin="0,0,0,6">
-                                            <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-                                                <Border Grid.Column="0" Width="34" Height="34" CornerRadius="8" Background="#161E2B" BorderBrush="#243044" BorderThickness="1" Margin="0,0,10,0">
-                                                    <PathIcon Data="{StaticResource IconTv}" Width="15" Height="15" Foreground="#60A5FA" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                </Border>
-                                                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center" Margin="0,0,8,0">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12.5" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Text="{Binding IPAddress}" FontSize="11" Foreground="#7C8B9E"/>
+                                            <StackPanel Spacing="8">
+                                                <Grid ColumnDefinitions="Auto,*" VerticalAlignment="Center">
+                                                    <Border Grid.Column="0" Width="34" Height="34" CornerRadius="8" Background="#161E2B" BorderBrush="#243044" BorderThickness="1" Margin="0,0,10,0">
+                                                        <PathIcon Data="{StaticResource IconTv}" Width="15" Height="15" Foreground="#60A5FA" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12.5" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding IPAddress}" FontSize="11" Foreground="#7C8B9E"/>
+                                                        <Border IsVisible="{Binding IsWirelessDisplay}"
+                                                                Background="#1E1B4B"
+                                                                BorderBrush="#4338CA"
+                                                                BorderThickness="1"
+                                                                CornerRadius="6"
+                                                                Padding="6,2"
+                                                                HorizontalAlignment="Left"
+                                                                Margin="0,2,0,0">
+                                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                                <PathIcon Data="{StaticResource IconAllScreens}" Width="10" Height="10" Foreground="#A5B4FC" VerticalAlignment="Center"/>
+                                                                <TextBlock Text="Monitor inalámbrico" FontSize="10" FontWeight="SemiBold" Foreground="#C7D2FE" VerticalAlignment="Center"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </StackPanel>
+                                                </Grid>
+                                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right">
+                                                    <Button IsVisible="{Binding SupportsScreenHost}"
+                                                            Classes="deviceConnectBtn"
+                                                            Classes.viewing="{Binding IsViewing}"
+                                                            Content="{Binding ActionButtonText}"
+                                                            Tag="{Binding}"
+                                                            Click="ConnectDevice_Click"
+                                                            FontWeight="SemiBold"
+                                                            FontSize="11.5"
+                                                            Padding="12,6"
+                                                            CornerRadius="6"
+                                                            Cursor="Hand"/>
+                                                    <Button IsVisible="{Binding IsWirelessDisplay}"
+                                                            IsEnabled="{Binding CanExtendToDevice}"
+                                                            Classes="deviceExtendBtn"
+                                                            Classes.extending="{Binding IsExtending}"
+                                                            Content="{Binding ExtendButtonText}"
+                                                            Tag="{Binding}"
+                                                            Click="ExtendToDevice_Click"
+                                                            FontWeight="SemiBold"
+                                                            FontSize="11.5"
+                                                            Padding="12,6"
+                                                            CornerRadius="6"
+                                                            Cursor="Hand"/>
                                                 </StackPanel>
-                                                <Button Grid.Column="2"
-                                                        Classes="deviceConnectBtn"
-                                                        Classes.viewing="{Binding IsViewing}"
-                                                        Content="{Binding ActionButtonText}"
-                                                        Tag="{Binding}"
-                                                        Click="ConnectDevice_Click"
-                                                        FontWeight="SemiBold"
-                                                        FontSize="11.5"
-                                                        Padding="12,6"
-                                                        CornerRadius="6"
-                                                        Cursor="Hand"/>
-                                            </Grid>
+                                            </StackPanel>
                                         </Border>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
