@@ -348,7 +348,7 @@ public class VirtualDisplayInfrastructureTests
     public async Task VddAndParsecBackends_WithFakeTransports_CreateUpdateDestroyAndRollbackCleanly()
     {
         var pipeTransport = new FakeVddPipeTransport();
-        var env = new FakeVddEnvironment { Present = true };
+        var env = new FakeVddEnvironment { Present = true, DeviceName = @"\\.\DISPLAY14" };
         var vddBackend = new VirtualDriversVddBackend(pipeTransport, env);
 
         var vddMonitor = await vddBackend.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
@@ -360,14 +360,18 @@ public class VirtualDisplayInfrastructureTests
         pipeTransport.ShouldFail = true;
         var failedCreate = await vddBackend.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
 
+        pipeTransport.ShouldFail = false;
+        env.FailEnable = true;
+        var failedEnable = await vddBackend.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
+
         var parsecTransport = new FakeParsecTransport { Installed = true, NextAddIndex = 3 };
         using var parsecBackend = new ParsecVddBackend(parsecTransport);
         var parsecMonitor = await parsecBackend.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
         bool heartbeatOk = await parsecBackend.SendHeartbeatAsync(parsecMonitor!.MonitorId);
         bool parsecDestroyed = await parsecBackend.DestroyVirtualMonitorAsync(parsecMonitor.MonitorId);
 
-        Assert.AreEqual((true, true, true, (VirtualDisplayInstance?)null), (vddUpdated, vddHeartbeat, vddDestroyed, failedCreate));
-        Assert.AreEqual((0, VddCommandKind.SetDisplayCount, 0), (VddSettingsXmlHelper.ReadMonitorCount(env.Xml ?? string.Empty), commandAfterDestroy.Kind, commandAfterDestroy.Count));
+        Assert.AreEqual((@"\\.\DISPLAY14", true, true, true, (VirtualDisplayInstance?)null, (VirtualDisplayInstance?)null), (vddMonitor.DeviceName, vddUpdated, vddHeartbeat, vddDestroyed, failedCreate, failedEnable));
+        Assert.AreEqual((0, VddCommandKind.SetDisplayCount, 0, true), (VddSettingsXmlHelper.ReadMonitorCount(env.Xml ?? string.Empty), commandAfterDestroy.Kind, commandAfterDestroy.Count, env.DisableCalls >= 1));
         Assert.AreEqual(("3", true, true, 3), (parsecMonitor.MonitorId, heartbeatOk, parsecDestroyed, parsecTransport.LastRemovedIndex));
     }
 
@@ -429,8 +433,8 @@ public class VirtualDisplayInfrastructureTests
 
         var realTopology = new WindowsDisplayTopologyManager();
         var realSnap = realTopology.CaptureSnapshot();
-        var ccdPaths = new WindowsDisplayTopologyManager.Win32CcdAdapter.DisplayConfigPathInfo[1];
-        var ccdModes = new WindowsDisplayTopologyManager.Win32CcdAdapter.DisplayConfigModeInfo[2];
+        var ccdPaths = new WindowsDisplayTopologyManager.DisplayConfigPathInfo[1];
+        var ccdModes = new WindowsDisplayTopologyManager.DisplayConfigModeInfo[2];
         var sampleSnap = new DisplayPathSnapshot
         {
             AdapterLuidLow = 42,
@@ -444,8 +448,8 @@ public class VirtualDisplayInfrastructureTests
             RefreshRateNumerator = 120,
             RefreshRateDenominator = 1
         };
-        WindowsDisplayTopologyManager.Win32CcdAdapter.PopulateNativePathAndModes(sampleSnap, 0, ccdPaths, ccdModes);
-        var unpackedSnap = WindowsDisplayTopologyManager.Win32CcdAdapter.ToSnapshot(ccdPaths[0], ccdModes);
+        WindowsDisplayTopologyManager.PopulateNativePathAndModes(sampleSnap, 0, ccdPaths, ccdModes);
+        var unpackedSnap = WindowsDisplayTopologyManager.ToSnapshot(ccdPaths[0], ccdModes);
 
         using var watchdogProc = StartSelfCheckProcess(settingsPath);
         using var defaultParsec = new ParsecVddBackend();
@@ -500,6 +504,176 @@ public class VirtualDisplayInfrastructureTests
         Assert.AreEqual((true, null, 1, false, false), (emptyRestore, nullModeUpdate, VddSettingsXmlHelper.ReadMonitorCount(recreatedXml), nullPipeSent, nullEnv.IsDriverPresent()));
     }
 
+    [TestMethod]
+    public void VddBufferParsersAndCcdFallbackStrategy_HandlePacketsAndRetriesCleanly()
+    {
+        byte[] ddBuf = VirtualDriversVddBackend.CreateDisplayDeviceBuffer();
+        Encoding.Unicode.GetBytes(@"\\.\DISPLAY14" + '\0').CopyTo(ddBuf, 4);
+        Encoding.Unicode.GetBytes("Virtual Display Driver\0").CopyTo(ddBuf, 68);
+        BitConverter.TryWriteBytes(ddBuf.AsSpan(324, 4), 1);
+        Encoding.Unicode.GetBytes(@"Root\MttVDD" + '\0').CopyTo(ddBuf, 328);
+
+        var parsed = VirtualDriversVddBackend.ParseDisplayDeviceFields(ddBuf);
+        Assert.AreEqual((@"\\.\DISPLAY14", "Virtual Display Driver", @"Root\MttVDD", 1), (parsed.DeviceName, parsed.DeviceString, parsed.DeviceId, parsed.StateFlags));
+        Assert.IsTrue(VirtualDriversVddBackend.IsMatchingVddAdapter(@"Root\MttVDD", ""));
+        Assert.IsTrue(VirtualDriversVddBackend.IsMatchingVddAdapter("PCI\\VEN", "Virtual Display Driver"));
+        Assert.IsFalse(VirtualDriversVddBackend.IsMatchingVddAdapter(@"root\wvmd", "Sharing Monitor"));
+
+        byte[] reqPacket = WindowsDisplayTopologyManager.BuildSourceDeviceNameRequest(42u, 1, 7u);
+        Assert.AreEqual((uint)WindowsDisplayTopologyManager.SourceDeviceNamePacketSize, BitConverter.ToUInt32(reqPacket, 4));
+        Encoding.Unicode.GetBytes(@"\\.\DISPLAY14" + '\0').CopyTo(reqPacket, 20);
+        Assert.AreEqual(@"\\.\DISPLAY14", WindowsDisplayTopologyManager.ParseSourceDeviceNameResponse(reqPacket));
+        Assert.IsNull(WindowsDisplayTopologyManager.ParseSourceDeviceNameResponse(new byte[10]));
+        Assert.IsNull(WindowsDisplayTopologyManager.ParseSourceDeviceNameResponse(new byte[WindowsDisplayTopologyManager.SourceDeviceNamePacketSize]));
+
+        int attempts = 0;
+        bool cleared = false;
+        bool retrySucceeded = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(
+            () => ++attempts > 1,
+            () => cleared = true,
+            () => false,
+            2);
+        bool internalFallback = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(
+            () => false,
+            () => { },
+            () => true,
+            1);
+        bool multiPathFail = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(
+            () => false,
+            () => { },
+            () => true,
+            2);
+
+        Assert.AreEqual((true, true, true, false), (retrySucceeded, cleared, internalFallback, multiPathFail));
+    }
+
+    [TestMethod]
+    public async Task VirtualDriversVddBackend_CorePollingAndSelection_WorkCrossPlatform()
+    {
+        IVddEnvironment defaultEnv = new VirtualDriversVddBackend.NullVddEnvironment();
+        bool enabledDefault = await defaultEnv.EnsureDriverEnabledAsync();
+        await defaultEnv.DisableDriverAsync();
+
+        bool alreadyUp = await VirtualDriversVddBackend.EnsureDriverEnabledCoreAsync(() => true, () => false, TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        bool enableTaskFails = await VirtualDriversVddBackend.EnsureDriverEnabledCoreAsync(() => false, () => false, TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        int enablePolls = 0;
+        bool enableBecomesReady = await VirtualDriversVddBackend.EnsureDriverEnabledCoreAsync(() => ++enablePolls >= 2, () => true, TimeSpan.FromMilliseconds(400), CancellationToken.None);
+        int disablePolls = 0;
+        await VirtualDriversVddBackend.DisableDriverCoreAsync(() => ++disablePolls < 2, () => true, TimeSpan.FromMilliseconds(400), CancellationToken.None);
+        await VirtualDriversVddBackend.DisableDriverCoreAsync(() => false, () => true, TimeSpan.FromMilliseconds(50), CancellationToken.None);
+
+        var selectedAttached = VirtualDriversVddBackend.SelectVddDeviceName([
+            new VirtualDriversVddBackend.DisplayAdapterEntry(@"\\.\DISPLAY1", "AMD Radeon", @"PCI\VEN_1002", 1),
+            new VirtualDriversVddBackend.DisplayAdapterEntry(@"\\.\DISPLAY13", "Virtual Display Driver", @"Root\MttVDD", 0),
+            new VirtualDriversVddBackend.DisplayAdapterEntry(@"\\.\DISPLAY14", "Virtual Display Driver", @"Root\MttVDD", 1)
+        ]);
+        var selectedFallback = VirtualDriversVddBackend.SelectVddDeviceName([
+            new VirtualDriversVddBackend.DisplayAdapterEntry(@"\\.\DISPLAY12", "Virtual Display Driver", @"Root\MttVDD", 0)
+        ]);
+
+        int lookupPolls = 0;
+        string? polledDevice = await VirtualDriversVddBackend.WaitForVirtualDeviceNameCoreAsync(
+            () => ++lookupPolls >= 2 ? @"\\.\DISPLAY14" : null,
+            TimeSpan.FromMilliseconds(350),
+            CancellationToken.None);
+        string? timedOutDevice = await VirtualDriversVddBackend.WaitForVirtualDeviceNameCoreAsync(
+            () => null,
+            TimeSpan.FromMilliseconds(70),
+            CancellationToken.None);
+        bool pipeTimedOut = await VirtualDriversVddBackend.WaitForPipeStateCoreAsync(
+            () => false,
+            new VirtualDriversVddBackend.VddToggleOptions(true, TimeSpan.FromMilliseconds(70), 25),
+            CancellationToken.None);
+
+        Assert.AreEqual((true, true, false, true, @"\\.\DISPLAY14", @"\\.\DISPLAY12"), (enabledDefault, alreadyUp, enableTaskFails, enableBecomesReady, selectedAttached, selectedFallback));
+        Assert.AreEqual((@"\\.\DISPLAY14", (string?)null, false), (polledDevice, timedOutDevice, pipeTimedOut));
+        Assert.IsNull(defaultEnv.FindVirtualDisplayDeviceName());
+    }
+
+    [TestMethod]
+    public async Task VirtualDriversVddBackend_RollbackAndTopologyExtendBranches_AreHandledSafely()
+    {
+        bool presPipe = VirtualDriversVddBackend.ResolveDriverPresence(true, false, () => false);
+        bool presNoFiles = VirtualDriversVddBackend.ResolveDriverPresence(false, false, () => true);
+        bool presDevice = VirtualDriversVddBackend.ResolveDriverPresence(false, true, () => true);
+        bool nullHw = VirtualDriversVddBackend.HasMttVddHardwareId(null);
+        bool shortHw = VirtualDriversVddBackend.HasMttVddHardwareId(["MttVDD"]);
+
+        int pipeFlip = 0;
+        bool pipeFlipped = await VirtualDriversVddBackend.WaitForPipeStateCoreAsync(
+            () => ++pipeFlip >= 2,
+            new VirtualDriversVddBackend.VddToggleOptions(true, TimeSpan.FromMilliseconds(350), 25),
+            CancellationToken.None);
+        await VirtualDriversVddBackend.DisableDriverCoreAsync(() => true, () => false, TimeSpan.FromMilliseconds(50), CancellationToken.None);
+
+        const string initialXml = "<vdd_settings><monitors><count>0</count></monitors></vdd_settings>";
+        var envEnableFail = new FakeVddEnvironment { Present = true, FailEnable = true, Xml = initialXml };
+        var backendEnableFail = new VirtualDriversVddBackend(new FakeVddPipeTransport(), envEnableFail);
+        var failedEnableCreate = await backendEnableFail.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
+
+        var envPipeFail = new FakeVddEnvironment { Present = true, Xml = initialXml };
+        var backendPipeFail = new VirtualDriversVddBackend(new FakeVddPipeTransport { ShouldFail = true }, envPipeFail);
+        var failedPipeCreate = await backendPipeFail.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
+
+        var ccd = new FakeCcdAdapter { FailExtend = true };
+        var manager = new WindowsDisplayTopologyManager(ccd);
+        bool extendFailed = manager.ApplyExtendTopology(null, VirtualDisplayMode.Default);
+
+        ccd.FailExtend = false;
+        ccd.FailQueryPaths = true;
+        bool extendWithoutQuery = manager.ApplyExtendTopology(null, VirtualDisplayMode.Default);
+
+        ccd.FailQueryPaths = false;
+        ccd.Paths = [new DisplayPathSnapshot { Width = 1920, Height = 1080, DeviceName = @"\\.\DISPLAY14" }];
+        bool extendSameMode = manager.ApplyExtendTopology(@"\\.\DISPLAY14", VirtualDisplayMode.Default);
+        bool singleInternalFail = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(() => false, () => { }, () => false, 1);
+
+        Assert.AreEqual((true, false, true, false, true), (presPipe, presNoFiles, presDevice, nullHw, shortHw));
+        Assert.AreEqual((true, (VirtualDisplayInstance?)null, (VirtualDisplayInstance?)null, 0, 0), (pipeFlipped, failedEnableCreate, failedPipeCreate, VddSettingsXmlHelper.ReadMonitorCount(envEnableFail.Xml!), VddSettingsXmlHelper.ReadMonitorCount(envPipeFail.Xml!)));
+        Assert.AreEqual((1, false, true, true, false), (envPipeFail.DisableCalls, extendFailed, extendWithoutQuery, extendSameMode, singleInternalFail));
+        Assert.IsNull(ccd.LastApplied);
+    }
+
+    [TestMethod]
+    public void VddAdapterEnumerationAndCcdNativePreparation_WorkCrossPlatform()
+    {
+        var enumerated = VirtualDriversVddBackend.EnumerateAdaptersCore((index, buffer) =>
+        {
+            if (index > 0)
+                return false;
+
+            Encoding.Unicode.GetBytes(@"\\.\DISPLAY14" + '\0').CopyTo(buffer, 4);
+            Encoding.Unicode.GetBytes("Virtual Display Driver\0").CopyTo(buffer, 68);
+            BitConverter.TryWriteBytes(buffer.AsSpan(324, 4), 1);
+            Encoding.Unicode.GetBytes(@"Root\MttVDD" + '\0').CopyTo(buffer, 328);
+            return true;
+        }).ToList();
+
+        string? selected = VirtualDriversVddBackend.SelectVddDeviceName(enumerated);
+        var (nativePaths, nativeModes) = WindowsDisplayTopologyManager.PrepareSuppliedNativeArrays([
+            new DisplayPathSnapshot { AdapterLuidLow = 7, SourceId = 1, TargetId = 2, Width = 1920, Height = 1080 }
+        ]);
+        var roundTrip = WindowsDisplayTopologyManager.ToSnapshot(nativePaths[0], nativeModes);
+        WindowsDisplayTopologyManager.ClearTargetModeIndices(nativePaths);
+        bool firstPassOk = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(() => true, () => { }, () => false, 1);
+
+        var allAdapters = VirtualDriversVddBackend.EnumerateAdaptersCore((_, buffer) =>
+        {
+            Encoding.Unicode.GetBytes(@"\\.\DISPLAY14" + '\0').CopyTo(buffer, 4);
+            return true;
+        }).ToList();
+
+        string successBin = OperatingSystem.IsWindows()
+            ? Path.Combine(Environment.SystemDirectory, "cmd.exe")
+            : (File.Exists("/bin/true") ? "/bin/true" : "/usr/bin/true");
+        string successArgs = OperatingSystem.IsWindows() ? "/c exit 0" : "";
+        bool procOk = VirtualDriversVddBackend.RunProcessExitZeroCore(successBin, successArgs);
+        bool procMissing = VirtualDriversVddBackend.RunProcessExitZeroCore(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.exe"), "");
+
+        Assert.AreEqual((1, @"\\.\DISPLAY14", 2, uint.MaxValue, true, 1920), (enumerated.Count, selected, nativeModes.Length, nativePaths[0].TargetInfo.ModeInfoIdx, firstPassOk, roundTrip.Width));
+        Assert.AreEqual((64, true, false), (allAdapters.Count, procOk, procMissing));
+    }
+
     private static IDisposable? StartSelfCheckProcess(string snapshotPath)
     {
         string cmdPath = Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");
@@ -532,10 +706,20 @@ public class VirtualDisplayInfrastructureTests
     {
         public bool Present { get; set; }
         public string? Xml { get; set; }
+        public string? DeviceName { get; set; }
+        public bool FailEnable { get; set; }
+        public int DisableCalls { get; private set; }
 
         public bool IsDriverPresent() => Present;
         public string? ReadSettingsXml() => Xml;
         public void WriteSettingsXml(string xmlContent) => Xml = xmlContent;
+        public Task<bool> EnsureDriverEnabledAsync(CancellationToken ct = default) => Task.FromResult(!FailEnable);
+        public Task DisableDriverAsync(CancellationToken ct = default)
+        {
+            DisableCalls++;
+            return Task.CompletedTask;
+        }
+        public string? FindVirtualDisplayDeviceName() => DeviceName;
     }
 
     private sealed class FakeParsecTransport : IParsecDeviceTransport
@@ -564,17 +748,19 @@ public class VirtualDisplayInfrastructureTests
         public IReadOnlyList<DisplayPathSnapshot> Paths { get; set; } = Array.Empty<DisplayPathSnapshot>();
         public IReadOnlyList<DisplayPathSnapshot>? LastApplied { get; private set; }
         public int ExtendCalls { get; private set; }
+        public bool FailExtend { get; set; }
+        public bool FailQueryPaths { get; set; }
 
         public bool TryQueryActiveDisplayPaths(out IReadOnlyList<DisplayPathSnapshot> paths)
         {
             paths = Paths;
-            return true;
+            return !FailQueryPaths;
         }
 
         public bool ApplyExtendTopology()
         {
             ExtendCalls++;
-            return true;
+            return !FailExtend;
         }
 
         public bool ApplySuppliedConfig(IReadOnlyList<DisplayPathSnapshot> paths)

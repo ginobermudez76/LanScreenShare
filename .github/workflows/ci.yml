@@ -69,3 +69,14 @@ jobs:
         with:
           name: desktop-app-release
           path: publish/LanScreenShare.Desktop/**
+
+      - name: Build Windows Installer (Inno Setup)
+        shell: pwsh
+        run: ./installer/Build-Installer.ps1 -Version "1.0.0"
+
+      - name: Upload Windows Installer Artifact
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: windows-installer-setup
+          path: installer/output/LanScreenShare-Setup.exe

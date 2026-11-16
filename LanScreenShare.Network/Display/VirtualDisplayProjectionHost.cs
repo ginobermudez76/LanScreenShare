@@ -97,16 +97,18 @@ public sealed class VirtualDisplayProjectionHost : IAsyncDisposable
         CaptureProfile profile,
         CancellationToken ct)
     {
+        await ConfigureServersAsync(invitation, ct);
+
         var displayResult = await _deps.DisplayService.StartExtendedDisplayAsync(invitation.NegotiatedMode, ct);
         if (!displayResult.Success || displayResult.Session == null)
         {
+            await CleanupProjectionResourcesAsync(CancellationToken.None);
             return ProjectionStartResult.Fail(
                 displayResult.ErrorCode.ToString(),
                 displayResult.Message ?? "No se pudo inicializar el monitor virtual.");
         }
 
         _baseProfile = profile;
-        await ConfigureServersAsync(invitation, ct);
         StartIsolatedCapture(displayResult.Session, profile);
         _deps.DisplayService.StateChanged += OnDisplayServiceStateChanged;
         _isProjecting = true;

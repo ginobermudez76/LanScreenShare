@@ -126,11 +126,19 @@ public sealed class DisplaySignalingServer : IDisposable
         }
     }
 
+    internal static string NormalizeRemoteIp(System.Net.IPEndPoint? remoteEndPoint)
+    {
+        var remoteAddress = remoteEndPoint?.Address;
+        if (remoteAddress?.IsIPv4MappedToIPv6 == true)
+            remoteAddress = remoteAddress.MapToIPv4();
+        return remoteAddress?.ToString() ?? string.Empty;
+    }
+
     private async Task<(System.IO.Stream Stream, AuthenticatedPeer Peer)?> NegotiateStreamAsync(
         TcpClient client,
         CancellationToken ct)
     {
-        string senderIp = (client.Client.RemoteEndPoint as System.Net.IPEndPoint)?.Address.ToString() ?? string.Empty;
+        string senderIp = NormalizeRemoteIp(client.Client.RemoteEndPoint as System.Net.IPEndPoint);
         System.IO.Stream rawStream = client.GetStream();
 
         if (_sslServerOptions == null)

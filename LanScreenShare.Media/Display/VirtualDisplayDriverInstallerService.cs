@@ -127,12 +127,29 @@ namespace LanScreenShare.Media.Display
 
             string? localInf = ResolveLocalInfPath(root);
             if (!string.IsNullOrEmpty(localInf))
+                return BuildLocalInfPlan(root, localInf);
+
+            return new VddInstallPlan
             {
+                Source = VddInstallSource.WingetFallback,
+                Executable = "winget",
+                Arguments = $"install --id {WingetPackageId} --exact --accept-package-agreements --accept-source-agreements",
+                RequiresElevation = true
+            };
+        }
+
+        private VddInstallPlan BuildLocalInfPlan(string root, string localInf)
+        {
+            string setupScript = Path.Combine(root, "Configure-LanScreenShareSetup.ps1");
+            string rootInstaller = Path.Combine(root, "VddRootDeviceInstaller.cs.txt");
+            if (_fileExists(setupScript) && _fileExists(rootInstaller))
+            {
+                string trimmedRoot = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 return new VddInstallPlan
                 {
                     Source = VddInstallSource.LocalInfPackage,
-                    Executable = "pnputil.exe",
-                    Arguments = $"/add-driver \"{localInf}\" /install",
+                    Executable = "powershell.exe",
+                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{setupScript}\" -Action RepairVdd -InstallDir \"{trimmedRoot}\"",
                     PackagePath = localInf,
                     RequiresElevation = true
                 };
@@ -140,9 +157,10 @@ namespace LanScreenShare.Media.Display
 
             return new VddInstallPlan
             {
-                Source = VddInstallSource.WingetFallback,
-                Executable = "winget",
-                Arguments = $"install --id {WingetPackageId} --exact --accept-package-agreements --accept-source-agreements",
+                Source = VddInstallSource.LocalInfPackage,
+                Executable = "pnputil.exe",
+                Arguments = $"/add-driver \"{localInf}\" /install",
+                PackagePath = localInf,
                 RequiresElevation = true
             };
         }
