@@ -12,7 +12,7 @@ namespace LanScreenShare.Media.Display
 {
     public interface IVddPipeTransport
     {
-        Task<bool> SendCommandAsync(string command, CancellationToken ct = default);
+        Task<bool> SendCommandAsync(VddCommandRequest command, CancellationToken ct = default);
     }
 
     public interface IVddEnvironment
@@ -34,9 +34,10 @@ namespace LanScreenShare.Media.Display
             _connectTimeoutMs = Math.Max(200, connectTimeoutMs);
         }
 
-        public async Task<bool> SendCommandAsync(string command, CancellationToken ct = default)
+        public async Task<bool> SendCommandAsync(VddCommandRequest command, CancellationToken ct = default)
         {
-            if (string.IsNullOrWhiteSpace(command))
+            string wireCommand = command.FormatWireCommand();
+            if (string.IsNullOrWhiteSpace(wireCommand))
                 return false;
 
             try
@@ -47,7 +48,7 @@ namespace LanScreenShare.Media.Display
                 {
                     AutoFlush = true
                 };
-                await writer.WriteLineAsync(command.AsMemory(), ct);
+                await writer.WriteLineAsync(wireCommand.AsMemory(), ct);
                 return true;
             }
             catch
@@ -168,12 +169,10 @@ namespace LanScreenShare.Media.Display
             string updatedXml = VddSettingsXmlHelper.UpdateMonitorCountAndMode(existingXml, targetCount, mode);
             _environment.WriteSettingsXml(updatedXml);
 
-            bool sent = await _pipeTransport.SendCommandAsync(
-                VddSettingsXmlHelper.BuildSetDisplayCountCommand(targetCount),
-                ct);
+            bool sent = await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.SetDisplayCount, targetCount), ct);
             if (!sent)
             {
-                RestorePreviousSettingsXml(existingXml, mode);
+                RestorePreviousCountInSettings(mode);
                 return null;
             }
 
@@ -196,39 +195,31 @@ namespace LanScreenShare.Media.Display
             string updatedXml = VddSettingsXmlHelper.UpdateMonitorCountAndMode(existingXml, currentCount, mode);
             _environment.WriteSettingsXml(updatedXml);
 
-            return await _pipeTransport.SendCommandAsync(
-                VddSettingsXmlHelper.ReloadDriverCommand,
-                ct);
+            return await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.ReloadDriver), ct);
         }
 
         public async Task<bool> DestroyVirtualMonitorAsync(string monitorId, CancellationToken ct = default)
         {
             string? existingXml = _environment.ReadSettingsXml();
-            int restoreCount = _previousCount;
-            if (restoreCount < 0)
-            {
-                restoreCount = 0;
-            }
-
+            int restoreCount = Math.Max(0, _previousCount);
             string updatedXml = VddSettingsXmlHelper.UpdateMonitorCountAndMode(
                 existingXml,
                 restoreCount,
                 VirtualDisplayMode.Default);
             _environment.WriteSettingsXml(updatedXml);
 
-            return await _pipeTransport.SendCommandAsync(
-                VddSettingsXmlHelper.BuildSetDisplayCountCommand(restoreCount),
-                ct);
+            return await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.SetDisplayCount, restoreCount), ct);
         }
 
         public Task<bool> SendHeartbeatAsync(string monitorId, CancellationToken ct = default) =>
             Task.FromResult(true);
 
-        private void RestorePreviousSettingsXml(string? existingXml, VirtualDisplayMode mode)
+        private void RestorePreviousCountInSettings(VirtualDisplayMode mode)
         {
             try
             {
-                string rollback = existingXml ?? VddSettingsXmlHelper.UpdateMonitorCountAndMode(null, _previousCount, mode);
+                string? currentXml = _environment.ReadSettingsXml();
+                string rollback = VddSettingsXmlHelper.UpdateMonitorCountAndMode(currentXml, _previousCount, mode);
                 _environment.WriteSettingsXml(rollback);
             }
             catch
@@ -237,13 +228,13 @@ namespace LanScreenShare.Media.Display
             }
         }
 
-        private sealed class NullVddPipeTransport : IVddPipeTransport
+        internal sealed class NullVddPipeTransport : IVddPipeTransport
         {
-            public Task<bool> SendCommandAsync(string command, CancellationToken ct = default) =>
+            public Task<bool> SendCommandAsync(VddCommandRequest command, CancellationToken ct = default) =>
                 Task.FromResult(false);
         }
 
-        private sealed class NullVddEnvironment : IVddEnvironment
+        internal sealed class NullVddEnvironment : IVddEnvironment
         {
             public bool IsDriverPresent() => false;
             public string? ReadSettingsXml() => null;

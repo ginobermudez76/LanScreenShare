@@ -6,6 +6,19 @@ using LanScreenShare.Core.Display;
 
 namespace LanScreenShare.Media.Display
 {
+    public enum VddCommandKind
+    {
+        SetDisplayCount = 0,
+        ReloadDriver = 1
+    }
+
+    public readonly record struct VddCommandRequest(VddCommandKind Kind, int Count = 0)
+    {
+        public string FormatWireCommand() => Kind == VddCommandKind.ReloadDriver
+            ? VddSettingsXmlHelper.ReloadDriverCommand
+            : VddSettingsXmlHelper.BuildSetDisplayCountCommand(Count);
+    }
+
     public static class VddSettingsXmlHelper
     {
         public static int ReadMonitorCount(string xmlContent)

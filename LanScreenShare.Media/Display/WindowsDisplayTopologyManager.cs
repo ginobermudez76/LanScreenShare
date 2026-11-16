@@ -107,7 +107,7 @@ namespace LanScreenShare.Media.Display
         }
 
         [SupportedOSPlatform("windows")]
-        private sealed partial class Win32CcdAdapter : ICcdPlatformAdapter
+        internal sealed partial class Win32CcdAdapter : ICcdPlatformAdapter
         {
             private const uint QdcOnlyActivePaths = 0x00000002;
             private const uint SdcApply = 0x00000080;
@@ -194,7 +194,7 @@ namespace LanScreenShare.Media.Display
                 }
             }
 
-            private static void PopulateNativePathAndModes(
+            internal static void PopulateNativePathAndModes(
                 DisplayPathSnapshot snap,
                 int index,
                 DisplayConfigPathInfo[] paths,
@@ -248,7 +248,7 @@ namespace LanScreenShare.Media.Display
                 return mode;
             }
 
-            private static DisplayPathSnapshot ToSnapshot(in DisplayConfigPathInfo path, DisplayConfigModeInfo[] modes)
+            internal static DisplayPathSnapshot ToSnapshot(in DisplayConfigPathInfo path, DisplayConfigModeInfo[] modes)
             {
                 var src = GetModeSafe(modes, path.SourceInfo.ModeInfoIdx);
                 return new DisplayPathSnapshot
@@ -273,10 +273,10 @@ namespace LanScreenShare.Media.Display
                 index < (uint)modes.Length ? modes[index] : default;
 
             [StructLayout(LayoutKind.Sequential)]
-            private struct Luid { public uint LowPart; public int HighPart; }
+            internal struct Luid { public uint LowPart; public int HighPart; }
 
             [StructLayout(LayoutKind.Sequential)]
-            private struct DisplayConfigPathSourceInfo
+            internal struct DisplayConfigPathSourceInfo
             {
                 public Luid AdapterId;
                 public uint Id;
@@ -285,7 +285,7 @@ namespace LanScreenShare.Media.Display
             }
 
             [StructLayout(LayoutKind.Sequential)]
-            private struct DisplayConfigPathTargetInfo
+            internal struct DisplayConfigPathTargetInfo
             {
                 public Luid AdapterId;
                 public uint Id;
@@ -301,7 +301,7 @@ namespace LanScreenShare.Media.Display
             }
 
             [StructLayout(LayoutKind.Sequential)]
-            private struct DisplayConfigPathInfo
+            internal struct DisplayConfigPathInfo
             {
                 public DisplayConfigPathSourceInfo SourceInfo;
                 public DisplayConfigPathTargetInfo TargetInfo;
@@ -309,7 +309,7 @@ namespace LanScreenShare.Media.Display
             }
 
             [StructLayout(LayoutKind.Explicit, Size = 64)]
-            private struct DisplayConfigModeInfo
+            internal struct DisplayConfigModeInfo
             {
                 [FieldOffset(0)] public uint InfoType;
                 [FieldOffset(4)] public uint Id;
@@ -351,7 +351,7 @@ namespace LanScreenShare.Media.Display
                 uint flags);
         }
 
-        private sealed class NullCcdAdapter : ICcdPlatformAdapter
+        internal sealed class NullCcdAdapter : ICcdPlatformAdapter
         {
             public bool TryQueryActiveDisplayPaths(out IReadOnlyList<DisplayPathSnapshot> paths)
             {
