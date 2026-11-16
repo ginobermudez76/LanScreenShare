@@ -65,15 +65,16 @@ namespace LanScreenShare.Desktop
             }
         }
 
-        private static IInputSimulatorService CreateInputSimulator(SecureAgentClient? secureAgentClient)
+        private IInputSimulatorService CreateInputSimulator(SecureAgentClient? secureAgentClient)
         {
             IInputSimulatorService local = OperatingSystem.IsWindows()
                 ? new WindowsInputSimulatorService()
                 : new NullInputSimulatorService();
 
-            if (OperatingSystem.IsWindows() && secureAgentClient != null)
+            if (OperatingSystem.IsWindows())
             {
-                return new AgentBackedInputSimulatorService(secureAgentClient, local);
+                _agentInputSimulatorProxy = new AgentBackedInputSimulatorService(local, secureAgentClient);
+                return _agentInputSimulatorProxy;
             }
 
             return local;

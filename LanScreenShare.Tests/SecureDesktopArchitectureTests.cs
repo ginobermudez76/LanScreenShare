@@ -242,6 +242,39 @@ public class SecureDesktopArchitectureTests
             DesktopSwitchClassifier.ResolveDxgiDisposition(isSecureDesktop: true, attachedToInputDesktop: true));
     }
 
+    [TestMethod]
+    public async Task SecureHostServiceManager_HandlesInstalledAndPortableLifecycleCleanly()
+    {
+        var backend = new FakeServiceControlBackend { Status = SecureHostServiceStatus.Stopped };
+        var manager = new SecureHostServiceManager(backend, "TestSvc");
+
+        bool installedStarted = await manager.EnsureServiceRunningAsync(null);
+        Assert.AreEqual((true, SecureHostServiceStatus.Running, 1, 0),
+            (installedStarted, manager.GetStatus(), backend.StartCalls, backend.ElevatedCalls));
+
+        bool stopped = await manager.StopServiceAsync(removeIfTemporary: true);
+        Assert.AreEqual((true, SecureHostServiceStatus.Stopped, 1), (stopped, manager.GetStatus(), backend.StopCalls));
+
+        string tempExe = Path.GetTempFileName();
+        try
+        {
+            backend.Status = SecureHostServiceStatus.NotInstalled;
+            bool portableStarted = await manager.EnsureServiceRunningAsync(tempExe);
+            bool portableStopped = await manager.StopServiceAsync(removeIfTemporary: true);
+
+            Assert.AreEqual((true, true, false, 2),
+                (portableStarted, portableStopped, manager.RegisteredTemporarily, backend.ElevatedCalls));
+        }
+        finally
+        {
+            File.Delete(tempExe);
+        }
+
+        Assert.AreEqual(SecureHostServiceStatus.NotInstalled, SecureHostServiceManager.ParseScQueryOutput(1060, ""));
+        Assert.AreEqual(SecureHostServiceStatus.Running, SecureHostServiceManager.ParseScQueryOutput(0, "STATE : 4 RUNNING"));
+        Assert.AreEqual(SecureHostServiceStatus.Stopped, SecureHostServiceManager.ParseScQueryOutput(0, "STATE : 1 STOPPED"));
+    }
+
     private static async Task<bool> ConnectWithRetryAsync(SecureAgentClient client)
     {
         for (int i = 0; i < 15; i++)
@@ -355,5 +388,46 @@ public class SecureDesktopArchitectureTests
         public void SetTargetSource(CaptureSource source) => TargetChanges++;
         public void ReleaseInjectedInputs() => ReleaseCalls++;
         public void Dispose() { }
+    }
+
+    private sealed class FakeServiceControlBackend : IServiceControlBackend
+    {
+        public SecureHostServiceStatus Status { get; set; } = SecureHostServiceStatus.NotInstalled;
+        public int StartCalls { get; private set; }
+        public int StopCalls { get; private set; }
+        public int ElevatedCalls { get; private set; }
+
+        public SecureHostServiceStatus QueryStatus(string serviceName) => Status;
+
+        public bool TryStartService(string serviceName)
+        {
+            StartCalls++;
+            Status = SecureHostServiceStatus.Running;
+            return true;
+        }
+
+        public bool TryStopService(string serviceName)
+        {
+            StopCalls++;
+            Status = SecureHostServiceStatus.Stopped;
+            return true;
+        }
+
+        public bool TryRunElevatedCommand(string fileName, string arguments)
+        {
+            ElevatedCalls++;
+            if (arguments.Contains("create", StringComparison.OrdinalIgnoreCase) ||
+                arguments.Contains("start", StringComparison.OrdinalIgnoreCase))
+            {
+                Status = SecureHostServiceStatus.Running;
+            }
+            else if (arguments.Contains("delete", StringComparison.OrdinalIgnoreCase))
+            {
+                Status = SecureHostServiceStatus.NotInstalled;
+            }
+            return true;
+        }
+
+        public bool IsAgentPipeReady() => Status == SecureHostServiceStatus.Running;
     }
 }

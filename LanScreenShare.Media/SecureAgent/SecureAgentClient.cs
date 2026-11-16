@@ -413,14 +413,24 @@ public sealed class AgentBackedScreenCaptureService : IScreenCaptureService
 /// </summary>
 public sealed class AgentBackedInputSimulatorService : IInputSimulatorService
 {
-    private readonly SecureAgentClient _client;
     private readonly IInputSimulatorService _fallbackSimulator;
+    private SecureAgentClient? _client;
     private bool _disposed;
 
-    public AgentBackedInputSimulatorService(SecureAgentClient client, IInputSimulatorService fallbackSimulator)
+    public AgentBackedInputSimulatorService(IInputSimulatorService fallbackSimulator, SecureAgentClient? client = null)
     {
-        _client = client ?? throw new ArgumentNullException(nameof(client));
         _fallbackSimulator = fallbackSimulator ?? throw new ArgumentNullException(nameof(fallbackSimulator));
+        _client = client;
+    }
+
+    public AgentBackedInputSimulatorService(SecureAgentClient client, IInputSimulatorService fallbackSimulator)
+        : this(fallbackSimulator, client ?? throw new ArgumentNullException(nameof(client)))
+    {
+    }
+
+    public void SetClient(SecureAgentClient? client)
+    {
+        Volatile.Write(ref _client, client);
     }
 
     public void SetTargetSource(CaptureSource source)
@@ -429,10 +439,11 @@ public sealed class AgentBackedInputSimulatorService : IInputSimulatorService
             return;
 
         _fallbackSimulator.SetTargetSource(source);
-        if (_client.IsConnected)
+        SecureAgentClient? client = Volatile.Read(ref _client);
+        if (client is { IsConnected: true })
         {
             byte[] payload = SecureAgentProtocol.EncodeJson(CaptureSourceDto.FromModel(source));
-            _ = _client.SendAsync(SecureAgentMessageType.SetInputTarget, payload);
+            _ = client.SendAsync(SecureAgentMessageType.SetInputTarget, payload);
         }
     }
 
@@ -441,10 +452,11 @@ public sealed class AgentBackedInputSimulatorService : IInputSimulatorService
         if (_disposed)
             return;
 
-        if (_client.IsConnected)
+        SecureAgentClient? client = Volatile.Read(ref _client);
+        if (client is { IsConnected: true })
         {
             byte[] payload = SecureAgentProtocol.EncodeInputPayload(input);
-            _ = _client.SendAsync(SecureAgentMessageType.SimulateInput, payload);
+            _ = client.SendAsync(SecureAgentMessageType.SimulateInput, payload);
             return;
         }
 
@@ -456,9 +468,10 @@ public sealed class AgentBackedInputSimulatorService : IInputSimulatorService
         if (_disposed)
             return;
 
-        if (_client.IsConnected)
+        SecureAgentClient? client = Volatile.Read(ref _client);
+        if (client is { IsConnected: true })
         {
-            _ = _client.SendAsync(SecureAgentMessageType.ReleaseInputs, ReadOnlyMemory<byte>.Empty);
+            _ = client.SendAsync(SecureAgentMessageType.ReleaseInputs, ReadOnlyMemory<byte>.Empty);
         }
 
         _fallbackSimulator.ReleaseInjectedInputs();

@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("Install", "Uninstall", "RepairVdd")]
@@ -328,11 +328,13 @@ function Install-SecureHostService([string]$AppDir) {
         -BinaryPathName $binPath `
         -DisplayName "LanScreenShare Secure Desktop Service" `
         -Description "Captura e inyección segura de entrada en diálogos UAC y pantalla de bloqueo (Winlogon) para LanScreenShare." `
-        -StartupType Automatic | Out-Null
+        -StartupType Manual | Out-Null
 
+    # Permitir a usuarios autenticados iniciar/detener/consultar el servicio bajo demanda desde la UI sin UAC,
+    # manteniendo restringida su modificación o eliminación únicamente a SYSTEM y Administradores.
+    & sc.exe sdset $SecureHostServiceName "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;AU)" | Out-Null
     & sc.exe failure $SecureHostServiceName reset= 60 actions= restart/2000/restart/5000/restart/10000 | Out-Null
-    Start-Service -Name $SecureHostServiceName
-    Write-SetupLog "Servicio SYSTEM $SecureHostServiceName instalado e iniciado."
+    Write-SetupLog "Servicio SYSTEM $SecureHostServiceName registrado (Manual, control por UI habilitado)."
 }
 
 function Import-CatalogSignersToTrustedPublisher([string]$CatPath, [string]$ScratchDir) {
