@@ -15,12 +15,16 @@ namespace LanScreenShare.Network
 
     public class DiscoveryService
     {
+        public const int DefaultDisplaySignalingPort = 5005;
+
         private const int DefaultDiscoveryPort = 5000;
         private const string BroadcastMessagePrefix = "LAN_SCREEN_SHARE_HOST";
+        private const string WirelessDisplayPrefix = "LAN_SCREEN_SHARE_DISPLAY_V1";
         private static readonly IPAddress DefaultSubnetMask = new([255, 255, 255, 0]);
 
         private readonly int _discoveryPort;
         private CancellationTokenSource? _hostCts;
+        private CancellationTokenSource? _wirelessDisplayCts;
         private CancellationTokenSource? _listenCts;
         internal Task? ListenerTask { get; private set; }
 
@@ -31,14 +35,42 @@ namespace LanScreenShare.Network
 
         public event EventHandler<DeviceInfo>? OnDeviceDiscovered;
         public Func<bool>? IsRemoteControlAllowedProvider { get; set; }
+        public Func<bool>? IsWirelessDisplayBusyProvider { get; set; }
 
         public void StartHostingBroadcast()
         {
-            if (_hostCts != null && !_hostCts.IsCancellationRequested)
+            StartBroadcastLoop(ref _hostCts, BuildHostBroadcastPayload);
+        }
+
+        public void StartWirelessDisplayBroadcast(int signalingPort = DefaultDisplaySignalingPort)
+        {
+            if (signalingPort is < 1024 or > 65535)
+                throw new ArgumentOutOfRangeException(nameof(signalingPort), "Signaling port must be between 1024 and 65535.");
+
+            StartBroadcastLoop(ref _wirelessDisplayCts, (target, pcName) => BuildWirelessDisplayPayload(target, pcName, signalingPort));
+        }
+
+        private string BuildHostBroadcastPayload(BroadcastTarget target, string pcName)
+        {
+            bool rcAllowed = IsRemoteControlAllowedProvider?.Invoke() ?? true;
+            return $"{BroadcastMessagePrefix}|{pcName}|{target.LocalIp}|{(rcAllowed ? "1" : "0")}";
+        }
+
+        private string BuildWirelessDisplayPayload(BroadcastTarget target, string pcName, int signalingPort)
+        {
+            bool isBusy = IsWirelessDisplayBusyProvider?.Invoke() ?? false;
+            return $"{WirelessDisplayPrefix}|{pcName}|{target.LocalIp}|{signalingPort}|{(isBusy ? "1" : "0")}";
+        }
+
+        private void StartBroadcastLoop(
+            ref CancellationTokenSource? cts,
+            Func<BroadcastTarget, string, string> payloadBuilder)
+        {
+            if (cts != null && !cts.IsCancellationRequested)
                 return;
 
-            _hostCts = new CancellationTokenSource();
-            var token = _hostCts.Token;
+            cts = new CancellationTokenSource();
+            var token = cts.Token;
 
             Task.Run(async () =>
             {
@@ -48,7 +80,7 @@ namespace LanScreenShare.Network
                 {
                     try
                     {
-                        await BroadcastToAllTargetsAsync(pcName);
+                        await BroadcastToAllTargetsAsync(pcName, payloadBuilder);
                     }
                     catch (Exception ex)
                     {
@@ -60,22 +92,22 @@ namespace LanScreenShare.Network
             }, token);
         }
 
-        private async Task BroadcastToAllTargetsAsync(string pcName)
+        private async Task BroadcastToAllTargetsAsync(
+            string pcName,
+            Func<BroadcastTarget, string, string> payloadBuilder)
         {
             var targets = GetActiveBroadcastTargets();
             foreach (var target in targets)
             {
-                await TrySendBroadcastAsync(target, pcName);
+                await TrySendBroadcastAsync(target, payloadBuilder(target, pcName));
             }
         }
 
-        private async Task TrySendBroadcastAsync(BroadcastTarget target, string pcName)
+        private async Task TrySendBroadcastAsync(BroadcastTarget target, string message)
         {
             try
             {
                 using var udpClient = new UdpClient { EnableBroadcast = true };
-                var rcAllowed = IsRemoteControlAllowedProvider?.Invoke() ?? true;
-                var message = $"{BroadcastMessagePrefix}|{pcName}|{target.LocalIp}|{(rcAllowed ? "1" : "0")}";
                 var bytes = Encoding.UTF8.GetBytes(message);
 
                 // 1. Broadcast dirigido a la subred de esta interfaz física
@@ -98,6 +130,13 @@ namespace LanScreenShare.Network
             _hostCts?.Cancel();
             _hostCts?.Dispose();
             _hostCts = null;
+        }
+
+        public void StopWirelessDisplayBroadcast()
+        {
+            _wirelessDisplayCts?.Cancel();
+            _wirelessDisplayCts?.Dispose();
+            _wirelessDisplayCts = null;
         }
 
         public void StartListening()
@@ -141,30 +180,65 @@ namespace LanScreenShare.Network
         {
             var message = Encoding.UTF8.GetString(result.Buffer);
             var parts = message.Split('|');
-            if (parts.Length < 3 || parts[0] != BroadcastMessagePrefix)
-            {
+            if (parts.Length < 3)
                 return;
+
+            var remoteIp = result.RemoteEndPoint.Address.ToString();
+            var device = parts[0] switch
+            {
+                BroadcastMessagePrefix => TryParseHostDevice(parts, remoteIp),
+                WirelessDisplayPrefix => TryParseWirelessDisplayDevice(parts, remoteIp),
+                _ => null
+            };
+
+            if (device != null)
+            {
+                OnDeviceDiscovered?.Invoke(this, device);
             }
+        }
+
+        private static DeviceInfo? TryParseHostDevice(IReadOnlyList<string> parts, string remoteIp)
+        {
+            var senderName = parts[1];
+            var reportedIp = parts[2];
+            if (string.IsNullOrWhiteSpace(senderName) || IsSelfMessage(senderName, reportedIp, remoteIp))
+                return null;
+
+            bool isRemoteControlAllowed = parts.Count < 4 || parts[3] == "1";
+            return new DeviceInfo
+            {
+                Name = senderName,
+                IPAddress = ResolveFinalIp(reportedIp, remoteIp),
+                LastSeen = DateTime.Now,
+                IsRemoteControlAllowed = isRemoteControlAllowed,
+                Capabilities = DeviceCapabilities.ScreenHost
+            };
+        }
+
+        private static DeviceInfo? TryParseWirelessDisplayDevice(IReadOnlyList<string> parts, string remoteIp)
+        {
+            if (parts.Count < 4)
+                return null;
 
             var senderName = parts[1];
             var reportedIp = parts[2];
-            var remoteIp = result.RemoteEndPoint.Address.ToString();
+            if (string.IsNullOrWhiteSpace(senderName) || IsSelfMessage(senderName, reportedIp, remoteIp))
+                return null;
 
-            if (IsSelfMessage(senderName, reportedIp, remoteIp))
-            {
-                return;
-            }
+            if (!int.TryParse(parts[3], out int signalingPort) || signalingPort < 1024 || signalingPort > 65535)
+                return null;
 
-            bool isRemoteControlAllowed = parts.Length < 4 || parts[3] == "1";
-            var finalIp = ResolveFinalIp(reportedIp, remoteIp);
-
-            OnDeviceDiscovered?.Invoke(this, new DeviceInfo
+            bool isBusy = parts.Count >= 5 && parts[4] == "1";
+            return new DeviceInfo
             {
                 Name = senderName,
-                IPAddress = finalIp,
+                IPAddress = ResolveFinalIp(reportedIp, remoteIp),
                 LastSeen = DateTime.Now,
-                IsRemoteControlAllowed = isRemoteControlAllowed
-            });
+                IsRemoteControlAllowed = false,
+                Capabilities = DeviceCapabilities.WirelessDisplay,
+                DisplaySignalingPort = signalingPort,
+                IsWirelessDisplayBusy = isBusy
+            };
         }
 
         internal static string ResolveFinalIp(string reportedIp, string remoteIp)

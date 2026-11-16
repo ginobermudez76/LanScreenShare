@@ -9,6 +9,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using LanScreenShare.Core.Display;
 using LanScreenShare.Core.Interfaces;
 using LanScreenShare.Core.Models;
 using LanScreenShare.Core.Security;
@@ -56,6 +57,8 @@ namespace LanScreenShare.Network.Streaming
         public Func<string, Task<bool>>? ClientApprovalCallback { get; set; }
         public Func<string, Task<bool>>? ExplicitApprovalCallback { get; set; }
         public Func<EffectiveSessionPermissions>? GlobalPermissionsProvider { get; set; }
+        public IProjectionInvitationStore? ProjectionInvitationStore { get; set; }
+        public bool RequireProjectionInvitation { get; set; }
 
         public bool IsRunning => _listener != null && _cts != null && !_cts.IsCancellationRequested;
         public int ConnectedClientsCount => _clients.Count;
@@ -142,6 +145,13 @@ namespace LanScreenShare.Network.Streaming
                 string? assignedSessionId = null;
                 string? peerFingerprint = null;
                 bool requireExplicitApproval = false;
+
+                if (_sslServerOptions == null && RequireProjectionInvitation)
+                {
+                    Console.WriteLine($"[StreamServer] Conexión rechazada para {clientId}: el modo proyección exige mTLS y certificado.");
+                    client.Close();
+                    return;
+                }
 
                 if (_sslServerOptions != null)
                 {
@@ -285,6 +295,19 @@ namespace LanScreenShare.Network.Streaming
                 return null;
             }
 
+            string? claimedProjectionSessionId = null;
+            if (RequireProjectionInvitation)
+            {
+                var (claimAccepted, sessionIdFromClaim) = await VerifyProjectionInvitationClaimAsync(sslStream, peerFingerprint, linkedCts.Token);
+                if (!claimAccepted)
+                {
+                    client.Close();
+                    return null;
+                }
+
+                claimedProjectionSessionId = sessionIdFromClaim;
+            }
+
             string? assignedSessionId = null;
             if (_sessionAuthority != null)
             {
@@ -295,8 +318,73 @@ namespace LanScreenShare.Network.Streaming
                     return null;
                 }
             }
+            else if (RequireProjectionInvitation)
+            {
+                await SessionHandshakeMessage.WriteAsync(sslStream, new SessionHandshakeMessage
+                {
+                    Type = "SESSION_OK",
+                    SessionId = claimedProjectionSessionId ?? string.Empty
+                }, linkedCts.Token);
+            }
 
             return new HandshakeResult(sslStream, assignedSessionId, peerFingerprint, requireExplicitApproval);
+        }
+
+        private async Task<(bool Accepted, string? SessionId)> VerifyProjectionInvitationClaimAsync(
+            SslStream sslStream,
+            string peerFingerprint,
+            CancellationToken ct)
+        {
+            if (ProjectionInvitationStore == null)
+            {
+                await WriteHandshakeErrorAsync(sslStream, "No hay almacén de invitaciones de proyección configurado.", ct);
+                return (false, null);
+            }
+
+            using var claimTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, claimTimeoutCts.Token);
+
+            SessionHandshakeMessage claim;
+            try
+            {
+                claim = await SessionHandshakeMessage.ReadAsync(sslStream, linkedCts.Token);
+            }
+            catch
+            {
+                await WriteHandshakeErrorAsync(sslStream, "Se requiere un token de invitación válido para proyectar.", ct);
+                return (false, null);
+            }
+
+            if (!string.Equals(claim.Type, "PROJECTION_CLAIM", StringComparison.Ordinal))
+            {
+                await WriteHandshakeErrorAsync(sslStream, "Tipo de handshake inválido para sesión de pantalla inalámbrica.", ct);
+                return (false, null);
+            }
+
+            var consumption = ProjectionInvitationStore.ConsumeInvitation(claim.ProjectionInvitationToken, peerFingerprint);
+            if (!consumption.Accepted || consumption.Token == null)
+            {
+                await WriteHandshakeErrorAsync(sslStream, consumption.FailureReason ?? "Token de invitación inválido.", ct);
+                return (false, null);
+            }
+
+            return (true, consumption.Token.SessionId);
+        }
+
+        private static async Task WriteHandshakeErrorAsync(SslStream sslStream, string errorMessage, CancellationToken ct)
+        {
+            try
+            {
+                await SessionHandshakeMessage.WriteAsync(sslStream, new SessionHandshakeMessage
+                {
+                    Type = "ERROR",
+                    ErrorMessage = errorMessage
+                }, ct);
+            }
+            catch
+            {
+                // Best-effort error delivery before closing rejected socket
+            }
         }
 
         private async Task<bool> EnsureDevicePairedAsync(

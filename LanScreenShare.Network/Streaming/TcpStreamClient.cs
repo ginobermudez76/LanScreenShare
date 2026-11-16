@@ -11,6 +11,12 @@ using LanScreenShare.Network.Security;
 
 namespace LanScreenShare.Network.Streaming
 {
+    public sealed record StreamClientConnectionOptions(
+        string HostIp,
+        int Port = 5001,
+        SslClientAuthenticationOptions? SslOptions = null,
+        string? ProjectionInvitationToken = null);
+
     public sealed class TcpStreamClient : IStreamClient
     {
         private TcpClient? _client;
@@ -32,14 +38,18 @@ namespace LanScreenShare.Network.Streaming
         public void UpdateAvDrift(int driftMs) => _currentAvDriftMs = driftMs;
 
         public Task ConnectAsync(string hostIp, int port = 5001, CancellationToken cancellationToken = default) =>
-            ConnectAsync(hostIp, port, null, cancellationToken);
+            ConnectAsync(new StreamClientConnectionOptions(hostIp, port), cancellationToken);
 
-        public async Task ConnectAsync(
+        public Task ConnectAsync(
             string hostIp,
-            int port = 5001,
-            SslClientAuthenticationOptions? sslOptions = null,
-            CancellationToken cancellationToken = default)
+            int port,
+            SslClientAuthenticationOptions? sslOptions,
+            CancellationToken cancellationToken = default) =>
+            ConnectAsync(new StreamClientConnectionOptions(hostIp, port, sslOptions), cancellationToken);
+
+        public async Task ConnectAsync(StreamClientConnectionOptions options, CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(options);
             if (IsConnected)
                 await DisconnectAsync();
 
@@ -48,33 +58,42 @@ namespace LanScreenShare.Network.Streaming
             _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var token = _cts.Token;
 
-            StatusChanged?.Invoke(this, $"Conectando a {hostIp}:{port}...");
+            StatusChanged?.Invoke(this, $"Conectando a {options.HostIp}:{options.Port}...");
 
             _client = new TcpClient { NoDelay = true };
-            await _client.ConnectAsync(hostIp, port, token);
+            await _client.ConnectAsync(options.HostIp, options.Port, token);
             Stream stream = _client.GetStream();
 
-            if (sslOptions != null)
+            if (options.SslOptions != null)
             {
-                stream = await EstablishTlsHandshakeAsync(stream, sslOptions, token);
+                stream = await EstablishTlsHandshakeAsync(stream, options, token);
             }
 
             _stream = stream;
-            StatusChanged?.Invoke(this, $"Conectado a {hostIp}:{port}");
+            StatusChanged?.Invoke(this, $"Conectado a {options.HostIp}:{options.Port}");
 
             _ = Task.Run(() => ReceiveFramesLoopAsync(stream, token), token);
         }
 
         private async Task<Stream> EstablishTlsHandshakeAsync(
             Stream rawStream,
-            SslClientAuthenticationOptions sslOptions,
+            StreamClientConnectionOptions options,
             CancellationToken token)
         {
             var sslStream = new SslStream(rawStream, false);
             using var authCts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, authCts.Token);
 
-            await sslStream.AuthenticateAsClientAsync(sslOptions, linkedCts.Token);
+            await sslStream.AuthenticateAsClientAsync(options.SslOptions!, linkedCts.Token);
+
+            if (!string.IsNullOrWhiteSpace(options.ProjectionInvitationToken))
+            {
+                await SessionHandshakeMessage.WriteAsync(sslStream, new SessionHandshakeMessage
+                {
+                    Type = "PROJECTION_CLAIM",
+                    ProjectionInvitationToken = options.ProjectionInvitationToken
+                }, linkedCts.Token);
+            }
 
             var handshake = await SessionHandshakeMessage.ReadAsync(sslStream, linkedCts.Token);
             if (handshake.Type != "SESSION_OK")

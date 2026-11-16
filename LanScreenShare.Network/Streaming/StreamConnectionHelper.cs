@@ -1,9 +1,11 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -70,6 +72,48 @@ namespace LanScreenShare.Network.Streaming
             try { stream?.Dispose(); } catch { /* Ignore stream disposal error on disconnect */ }
             try { client?.Close(); client?.Dispose(); } catch { /* Ignore client disposal error on disconnect */ }
             cts?.Dispose();
+        }
+
+        internal static async Task WriteJsonFrameAsync<T>(
+            Stream stream,
+            T payload,
+            int maxBytes,
+            CancellationToken ct)
+        {
+            byte[] jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload);
+            if (jsonBytes.Length > maxBytes)
+            {
+                throw new InvalidOperationException($"La trama de señalización excede el límite de {maxBytes} bytes.");
+            }
+
+            byte[] lengthPrefix = new byte[4];
+            BinaryPrimitives.WriteUInt32BigEndian(lengthPrefix, (uint)jsonBytes.Length);
+
+            await stream.WriteAsync(lengthPrefix, ct);
+            await stream.WriteAsync(jsonBytes, ct);
+            await stream.FlushAsync(ct);
+        }
+
+        internal static async Task<T> ReadJsonFrameAsync<T>(
+            Stream stream,
+            int maxBytes,
+            CancellationToken ct)
+        {
+            const string eofMessage = "Flujo cerrado antes de completar la lectura del mensaje de señalización.";
+            byte[] lengthPrefix = new byte[4];
+            await ReadExactBytesAsync(stream, lengthPrefix, ct, eofMessage);
+
+            uint length = BinaryPrimitives.ReadUInt32BigEndian(lengthPrefix);
+            if (length == 0 || length > maxBytes)
+            {
+                throw new InvalidDataException($"Longitud de señalización inválida ({length} bytes). Límite: {maxBytes} bytes.");
+            }
+
+            byte[] payload = new byte[length];
+            await ReadExactBytesAsync(stream, payload, ct, eofMessage);
+
+            var result = JsonSerializer.Deserialize<T>(payload);
+            return result ?? throw new InvalidDataException("No se pudo deserializar el mensaje de señalización JSON.");
         }
     }
 }

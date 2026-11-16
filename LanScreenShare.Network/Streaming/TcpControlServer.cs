@@ -10,6 +10,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using LanScreenShare.Core.Display;
 using LanScreenShare.Core.Interfaces;
 using LanScreenShare.Core.Models;
 using LanScreenShare.Core.Security;
@@ -17,6 +18,11 @@ using LanScreenShare.Network.Security;
 
 namespace LanScreenShare.Network.Streaming
 {
+    public sealed record DisplayControlReceivedEventArgs(
+        string ClientId,
+        string? SessionId,
+        DisplaySessionControlMessage Message);
+
     public sealed class TcpControlServer : IDisposable
     {
         private readonly ISessionAuthority? _sessionAuthority;
@@ -34,10 +40,12 @@ namespace LanScreenShare.Network.Streaming
         public event EventHandler<int>? SwitchMonitorRequested;
         public event EventHandler<string>? SelectSourceRequested;
         public event EventHandler? SourceCatalogRequested;
+        public event EventHandler<DisplayControlReceivedEventArgs>? DisplayControlReceived;
         public event EventHandler<string>? ClientConnected;
         public event EventHandler<string>? ClientDisconnected;
         public Func<string, Task<bool>>? ClientApprovalCallback { get; set; }
         public Func<EffectiveSessionPermissions>? GlobalPermissionsProvider { get; set; }
+        public bool AllowDisplayControlMessages { get; set; }
 
         public bool IsRunning => _listener != null && _cts != null && !_cts.IsCancellationRequested;
 
@@ -274,7 +282,10 @@ namespace LanScreenShare.Network.Streaming
                 return true;
 
             var effective = ResolveEffectivePermissions(assignedSessionId);
-            bool anyFeatureAllowed = effective.AllowRemoteControl || effective.AllowSourceSwitch || effective.AllowClipboardSync;
+            bool anyFeatureAllowed = AllowDisplayControlMessages ||
+                                     effective.AllowRemoteControl ||
+                                     effective.AllowSourceSwitch ||
+                                     effective.AllowClipboardSync;
             if (!anyFeatureAllowed)
             {
                 RejectControlAttachment(client, stream, $"[ControlServer] Sin permisos activos en canal 5003 para {clientId}");
@@ -365,6 +376,11 @@ namespace LanScreenShare.Network.Streaming
         {
             await ReadExactBytesAsync(ctx.Stream, packetBuffer, token);
 
+            if (DisplayControlPacketProtocol.IsDisplayControlHeader(packetBuffer))
+            {
+                return await HandleDisplayControlPacketAsync(ctx, packetBuffer, token);
+            }
+
             if (!Lsi2ControlPacket.TryReadPacket(
                     packetBuffer,
                     out _,
@@ -385,6 +401,29 @@ namespace LanScreenShare.Network.Streaming
                 InputEventType.SwitchMonitor => HandleSwitchMonitorPacket(ctx, input),
                 _ => HandleStandardInput(ctx, input)
             };
+        }
+
+        private async Task<bool> HandleDisplayControlPacketAsync(
+            ControlClientContext ctx,
+            byte[] headerBuffer,
+            CancellationToken token)
+        {
+            if (!DisplayControlPacketProtocol.TryParseHeader(headerBuffer, out var header, out string? error))
+            {
+                Console.WriteLine($"[ControlServer] Encabezado LSDC inválido de {ctx.ClientId}: {error}. Desconectando.");
+                return false;
+            }
+
+            var message = await DisplayControlPacketProtocol.ReadMessagePayloadAsync(ctx.Stream, header.PayloadLength, token);
+            try
+            {
+                DisplayControlReceived?.Invoke(this, new DisplayControlReceivedEventArgs(ctx.ClientId, ctx.SessionId, message));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ControlServer] Error en DisplayControlReceived: {ex.Message}");
+            }
+            return true;
         }
 
         private bool HandleStandardInput(ControlClientContext ctx, RemoteInputMessage input)
@@ -506,6 +545,18 @@ namespace LanScreenShare.Network.Streaming
         public Task BroadcastSecureDesktopStateAsync(string stateText) =>
             BroadcastTextPayloadAsync(InputEventType.SecureDesktopState, stateText);
 
+        public async Task BroadcastDisplayControlMessageAsync(DisplaySessionControlMessage message)
+        {
+            ArgumentNullException.ThrowIfNull(message);
+            if (!HasActiveClients)
+                return;
+
+            ulong seq = Interlocked.Increment(ref _serverSequenceNumber);
+            byte[] packet = DisplayControlPacketProtocol.SerializePacket(seq, message);
+            var tasks = _clients.Select(kvp => SendSerializedPacketToClientAsync(kvp.Key, kvp.Value, packet, "LSDC"));
+            await Task.WhenAll(tasks);
+        }
+
         private bool HasActiveClients => IsRunning && !_clients.IsEmpty;
 
         private bool CanBroadcastText(string text, out byte[] utf8Bytes)
@@ -561,6 +612,15 @@ namespace LanScreenShare.Network.Streaming
                 return;
             }
 
+            await SendSerializedPacketToClientAsync(clientId, ctx, packet, payloadType.ToString());
+        }
+
+        private async Task SendSerializedPacketToClientAsync(
+            string clientId,
+            (Stream Stream, TcpClient Client, string? SessionId, SemaphoreSlim SendLock) ctx,
+            byte[] packet,
+            string payloadLabel)
+        {
             var token = _cts?.Token ?? CancellationToken.None;
             try
             {
@@ -570,6 +630,7 @@ namespace LanScreenShare.Network.Streaming
                     if (ctx.Client.Connected)
                     {
                         await ctx.Stream.WriteAsync(packet.AsMemory(0, packet.Length), token);
+                        await ctx.Stream.FlushAsync(token);
                     }
                 }
                 finally
@@ -579,7 +640,7 @@ namespace LanScreenShare.Network.Streaming
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ControlServer] Error enviando payload {payloadType} a {clientId}: {ex.Message}");
+                Console.WriteLine($"[ControlServer] Error enviando payload {payloadLabel} a {clientId}: {ex.Message}");
             }
         }
 
