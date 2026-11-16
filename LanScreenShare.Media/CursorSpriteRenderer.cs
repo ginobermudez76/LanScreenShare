@@ -33,10 +33,14 @@ namespace LanScreenShare.Media
 
     internal static class CursorPixelExtractor
     {
-        private readonly record struct BgrPixel(byte B, byte G, byte R)
+        private readonly record struct BgrPixel
         {
+            public byte B { get; init; }
+            public byte G { get; init; }
+            public byte R { get; init; }
+
             public static BgrPixel Read(ReadOnlySpan<byte> buffer, int offset) =>
-                new(buffer[offset], buffer[offset + 1], buffer[offset + 2]);
+                new() { B = buffer[offset], G = buffer[offset + 1], R = buffer[offset + 2] };
 
             public bool Exceeds(in BgrPixel other)
             {
