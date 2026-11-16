@@ -380,11 +380,13 @@ public sealed class AgentBackedScreenCaptureService : IScreenCaptureService
 
     private void OnAgentDisconnected(object? sender, EventArgs e)
     {
-        if (_isCapturing && !_disposed && _activeFallback == null)
-        {
-            _isCapturing = false;
-            ActivateFallbackCapture(_currentProfile);
-        }
+        if (!_isCapturing || _disposed)
+            return;
+        if (_activeFallback != null)
+            return;
+
+        _isCapturing = false;
+        ActivateFallbackCapture(_currentProfile);
     }
 
     private void OnFallbackFrameCaptured(object? sender, CapturedFrame frame) => FrameCaptured?.Invoke(this, frame);

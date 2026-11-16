@@ -280,7 +280,10 @@ public class VirtualDisplayInfrastructureTests
         var resumedState = coordinator.State;
 
         await coordinator.HandleNetworkDisconnectedAsync();
-        await Task.Delay(260);
+        for (int i = 0; i < 30 && coordinator.State != VirtualDisplayState.Inactive; i++)
+        {
+            await Task.Delay(50);
+        }
 
         Assert.AreEqual((VirtualDisplayState.ConnectingStream, VirtualDisplayState.Reconnecting, VirtualDisplayState.Streaming), (connectingState, reconnectingState, restoredStreaming));
         Assert.AreEqual((VirtualDisplayState.Suspended, VirtualDisplayState.Streaming, VirtualDisplayState.Inactive), (suspendedState, resumedState, coordinator.State));
