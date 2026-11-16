@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LanScreenShare.Media", "Lan
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LanScreenShare.Tests", "LanScreenShare.Tests\LanScreenShare.Tests.csproj", "{CD6AE012-6F5B-4C4F-A95E-46C1069C0ED0}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LanScreenShare.DisplayWatchdog", "LanScreenShare.DisplayWatchdog\LanScreenShare.DisplayWatchdog.csproj", "{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -83,6 +85,18 @@ Global
 		{CD6AE012-6F5B-4C4F-A95E-46C1069C0ED0}.Release|x64.Build.0 = Release|Any CPU
 		{CD6AE012-6F5B-4C4F-A95E-46C1069C0ED0}.Release|x86.ActiveCfg = Release|Any CPU
 		{CD6AE012-6F5B-4C4F-A95E-46C1069C0ED0}.Release|x86.Build.0 = Release|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Debug|x64.Build.0 = Debug|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Debug|x86.Build.0 = Debug|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Release|x64.ActiveCfg = Release|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Release|x64.Build.0 = Release|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Release|x86.ActiveCfg = Release|Any CPU
+		{83AB2130-C9FC-419F-9D0E-AF115B92BCA5}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
