@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
@@ -124,7 +125,7 @@ namespace LanScreenShare.Media.Display
             }
         }
 
-        private readonly record struct DisplayAdapterEntry(
+        internal sealed record DisplayAdapterEntry(
             string DeviceName,
             string DeviceString,
             string DeviceId,
@@ -138,7 +139,7 @@ namespace LanScreenShare.Media.Display
                 if (!TryReadDisplayAdapter(index, out var entry))
                     break;
 
-                if (!IsMatchingVddAdapter(entry.DeviceId, entry.DeviceString))
+                if (!VirtualDriversVddBackend.IsMatchingVddAdapter(entry.DeviceId, entry.DeviceString))
                     continue;
 
                 if ((entry.StateFlags & DisplayDeviceAttachedToDesktop) != 0)
@@ -150,21 +151,14 @@ namespace LanScreenShare.Media.Display
             return fallback;
         }
 
-        private static bool IsMatchingVddAdapter(string deviceId, string deviceString)
-        {
-            if (VirtualDriversVddBackend.HasMttVddHardwareId([deviceId]))
-                return true;
-
-            return deviceString.Contains("Virtual Display Driver", StringComparison.OrdinalIgnoreCase);
-        }
-
         private static bool RunScheduledTask(string taskName)
         {
             try
             {
+                string schtasksPath = Path.Combine(Environment.SystemDirectory, "schtasks.exe");
                 using var proc = Process.Start(new ProcessStartInfo
                 {
-                    FileName = "schtasks.exe",
+                    FileName = schtasksPath,
                     Arguments = $"/Run /TN \"{taskName}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
@@ -237,47 +231,26 @@ namespace LanScreenShare.Media.Display
             }
         }
 
-        private static unsafe bool TryReadDisplayAdapter(uint index, out DisplayAdapterEntry entry)
+        private static bool TryReadDisplayAdapter(uint index, out DisplayAdapterEntry entry)
         {
-            var dd = new NativeDisplayDevice { cb = sizeof(NativeDisplayDevice) };
-            if (!EnumDisplayDevicesW(null, index, &dd, 0))
+            byte[] buffer = VirtualDriversVddBackend.CreateDisplayDeviceBuffer();
+            if (!EnumDisplayDevicesW(null, index, buffer, 0))
             {
-                entry = default;
+                entry = default!;
                 return false;
             }
 
-            entry = new DisplayAdapterEntry(
-                ReadFixedString(dd.DeviceName, 32),
-                ReadFixedString(dd.DeviceString, 128),
-                ReadFixedString(dd.DeviceID, 128),
-                dd.StateFlags);
+            var fields = VirtualDriversVddBackend.ParseDisplayDeviceFields(buffer);
+            entry = new DisplayAdapterEntry(fields.DeviceName, fields.DeviceString, fields.DeviceId, fields.StateFlags);
             return true;
-        }
-
-        private static unsafe string ReadFixedString(char* buffer, int maxChars)
-        {
-            var span = new ReadOnlySpan<char>(buffer, maxChars);
-            int nullIdx = span.IndexOf('\0');
-            return (nullIdx >= 0 ? span[..nullIdx] : span).ToString();
-        }
-
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-        private unsafe struct NativeDisplayDevice
-        {
-            public int cb;
-            public fixed char DeviceName[32];
-            public fixed char DeviceString[128];
-            public int StateFlags;
-            public fixed char DeviceID[128];
-            public fixed char DeviceKey[128];
         }
 
         [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static unsafe partial bool EnumDisplayDevicesW(
+        private static partial bool EnumDisplayDevicesW(
             string? lpDevice,
             uint iDevNum,
-            NativeDisplayDevice* lpDisplayDevice,
+            [In, Out] byte[] lpDisplayDevice,
             uint dwFlags);
 
         public string? ReadSettingsXml() =>
@@ -343,6 +316,37 @@ namespace LanScreenShare.Media.Display
 
         internal static bool HasMttVddHardwareId(string[]? hardwareIds) =>
             hardwareIds != null && hardwareIds.Any(IsMttVddId);
+
+        internal static bool IsMatchingVddAdapter(string deviceId, string deviceString)
+        {
+            if (HasMttVddHardwareId([deviceId]))
+                return true;
+
+            return deviceString.Contains("Virtual Display Driver", StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static string ReadUtf16NullTerminated(ReadOnlySpan<byte> utf16Bytes)
+        {
+            ReadOnlySpan<char> chars = MemoryMarshal.Cast<byte, char>(utf16Bytes);
+            int nullIdx = chars.IndexOf('\0');
+            return (nullIdx >= 0 ? chars[..nullIdx] : chars).ToString();
+        }
+
+        internal static byte[] CreateDisplayDeviceBuffer(int bufferSize = 840)
+        {
+            byte[] buffer = new byte[bufferSize];
+            BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(0, 4), bufferSize);
+            return buffer;
+        }
+
+        internal static (string DeviceName, string DeviceString, string DeviceId, int StateFlags) ParseDisplayDeviceFields(ReadOnlySpan<byte> buffer)
+        {
+            string deviceName = ReadUtf16NullTerminated(buffer.Slice(4, 64));
+            string deviceString = ReadUtf16NullTerminated(buffer.Slice(68, 256));
+            int stateFlags = BinaryPrimitives.ReadInt32LittleEndian(buffer.Slice(324, 4));
+            string deviceId = ReadUtf16NullTerminated(buffer.Slice(328, 256));
+            return (deviceName, deviceString, deviceId, stateFlags);
+        }
 
         private static bool IsMttVddId(string id) =>
             string.Equals(id, @"Root\MttVDD", StringComparison.OrdinalIgnoreCase) ||

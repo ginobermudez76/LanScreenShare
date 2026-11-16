@@ -504,6 +504,54 @@ public class VirtualDisplayInfrastructureTests
         Assert.AreEqual((true, null, 1, false, false), (emptyRestore, nullModeUpdate, VddSettingsXmlHelper.ReadMonitorCount(recreatedXml), nullPipeSent, nullEnv.IsDriverPresent()));
     }
 
+    [TestMethod]
+    public async Task VddBufferParsersAndCcdFallbackStrategy_HandlePacketsAndRetriesCleanly()
+    {
+        byte[] ddBuf = VirtualDriversVddBackend.CreateDisplayDeviceBuffer();
+        Encoding.Unicode.GetBytes(@"\\.\DISPLAY14" + '\0').CopyTo(ddBuf, 4);
+        Encoding.Unicode.GetBytes("Virtual Display Driver\0").CopyTo(ddBuf, 68);
+        BitConverter.TryWriteBytes(ddBuf.AsSpan(324, 4), 1);
+        Encoding.Unicode.GetBytes(@"Root\MttVDD" + '\0').CopyTo(ddBuf, 328);
+
+        var parsed = VirtualDriversVddBackend.ParseDisplayDeviceFields(ddBuf);
+        Assert.AreEqual((@"\\.\DISPLAY14", "Virtual Display Driver", @"Root\MttVDD", 1), (parsed.DeviceName, parsed.DeviceString, parsed.DeviceId, parsed.StateFlags));
+        Assert.IsTrue(VirtualDriversVddBackend.IsMatchingVddAdapter(@"Root\MttVDD", ""));
+        Assert.IsTrue(VirtualDriversVddBackend.IsMatchingVddAdapter("PCI\\VEN", "Virtual Display Driver"));
+        Assert.IsFalse(VirtualDriversVddBackend.IsMatchingVddAdapter(@"root\wvmd", "Sharing Monitor"));
+
+        byte[] reqPacket = WindowsDisplayTopologyManager.BuildSourceDeviceNameRequest(42u, 1, 7u);
+        Assert.AreEqual((uint)WindowsDisplayTopologyManager.SourceDeviceNamePacketSize, BitConverter.ToUInt32(reqPacket, 4));
+        Encoding.Unicode.GetBytes(@"\\.\DISPLAY14" + '\0').CopyTo(reqPacket, 20);
+        Assert.AreEqual(@"\\.\DISPLAY14", WindowsDisplayTopologyManager.ParseSourceDeviceNameResponse(reqPacket));
+        Assert.IsNull(WindowsDisplayTopologyManager.ParseSourceDeviceNameResponse(new byte[10]));
+        Assert.IsNull(WindowsDisplayTopologyManager.ParseSourceDeviceNameResponse(new byte[WindowsDisplayTopologyManager.SourceDeviceNamePacketSize]));
+
+        int attempts = 0;
+        bool cleared = false;
+        bool retrySucceeded = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(
+            () => ++attempts > 1,
+            () => cleared = true,
+            () => false,
+            2);
+        bool internalFallback = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(
+            () => false,
+            () => { },
+            () => true,
+            1);
+        bool multiPathFail = WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(
+            () => false,
+            () => { },
+            () => true,
+            2);
+
+        IVddEnvironment defaultEnv = new VirtualDriversVddBackend.NullVddEnvironment();
+        bool enabledDefault = await defaultEnv.EnsureDriverEnabledAsync();
+        await defaultEnv.DisableDriverAsync();
+
+        Assert.AreEqual((true, true, true, false, true), (retrySucceeded, cleared, internalFallback, multiPathFail, enabledDefault));
+        Assert.IsNull(defaultEnv.FindVirtualDisplayDeviceName());
+    }
+
     private static IDisposable? StartSelfCheckProcess(string snapshotPath)
     {
         string cmdPath = Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");

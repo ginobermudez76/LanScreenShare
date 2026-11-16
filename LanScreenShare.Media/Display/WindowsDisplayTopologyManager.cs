@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -93,6 +94,44 @@ namespace LanScreenShare.Media.Display
             return copy;
         }
 
+        internal const int SourceDeviceNamePacketSize = 84;
+
+        internal static byte[] BuildSourceDeviceNameRequest(uint luidLow, int luidHigh, uint sourceId)
+        {
+            byte[] packet = new byte[SourceDeviceNamePacketSize];
+            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(0, 4), 1u);
+            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(4, 4), SourceDeviceNamePacketSize);
+            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(8, 4), luidLow);
+            BinaryPrimitives.WriteInt32LittleEndian(packet.AsSpan(12, 4), luidHigh);
+            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(16, 4), sourceId);
+            return packet;
+        }
+
+        internal static string? ParseSourceDeviceNameResponse(ReadOnlySpan<byte> packet)
+        {
+            if (packet.Length < SourceDeviceNamePacketSize)
+                return null;
+
+            string name = VirtualDriversVddBackend.ReadUtf16NullTerminated(packet.Slice(20, 64));
+            return string.IsNullOrWhiteSpace(name) ? null : name;
+        }
+
+        internal static bool ApplyWithFallbackStrategy(
+            Func<bool> applyConfig,
+            Action clearTargetModeIndices,
+            Func<bool> applyInternalTopology,
+            int pathCount)
+        {
+            if (applyConfig())
+                return true;
+
+            clearTargetModeIndices();
+            if (applyConfig())
+                return true;
+
+            return pathCount == 1 && applyInternalTopology();
+        }
+
         private static int FindTargetPathIndex(IReadOnlyList<DisplayPathSnapshot> paths, string? preferredDeviceName)
         {
             if (!string.IsNullOrWhiteSpace(preferredDeviceName))
@@ -178,19 +217,15 @@ namespace LanScreenShare.Media.Display
                     PopulateNativePathAndModes(paths[i], i, nativePaths, nativeModes);
                 }
 
-                if (InvokeSetDisplayConfig(nativePaths, nativeModes))
-                    return true;
-
-                for (int i = 0; i < nativePaths.Length; i++)
-                {
-                    nativePaths[i].TargetInfo.ModeInfoIdx = uint.MaxValue;
-                }
-
-                if (InvokeSetDisplayConfig(nativePaths, nativeModes))
-                    return true;
-
-                return paths.Count == 1 &&
-                    SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SdcApply | 0x00000001u /* SdcTopologyInternal */) == 0;
+                return WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(
+                    () => InvokeSetDisplayConfig(nativePaths, nativeModes),
+                    () =>
+                    {
+                        for (int i = 0; i < nativePaths.Length; i++)
+                            nativePaths[i].TargetInfo.ModeInfoIdx = uint.MaxValue;
+                    },
+                    () => SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SdcApply | 0x00000001u /* SdcTopologyInternal */) == 0,
+                    nativePaths.Length);
             }
 
             private static bool InvokeSetDisplayConfig(DisplayConfigPathInfo[] nativePaths, DisplayConfigModeInfo[] nativeModes)
@@ -364,44 +399,17 @@ namespace LanScreenShare.Media.Display
                 [FieldOffset(60)] public uint TargetScanLineOrdering;
             }
 
-            [StructLayout(LayoutKind.Sequential)]
-            private struct DisplayConfigDeviceInfoHeader
+            private static string? QuerySourceDeviceName(Luid adapterId, uint sourceId)
             {
-                public uint Type;
-                public uint Size;
-                public Luid AdapterId;
-                public uint Id;
-            }
-
-            [StructLayout(LayoutKind.Sequential)]
-            private unsafe struct DisplayConfigSourceDeviceName
-            {
-                public DisplayConfigDeviceInfoHeader Header;
-                public fixed char ViewGdiDeviceName[32];
-            }
-
-            private static unsafe string? QuerySourceDeviceName(Luid adapterId, uint sourceId)
-            {
-                var packet = new DisplayConfigSourceDeviceName
-                {
-                    Header = new DisplayConfigDeviceInfoHeader
-                    {
-                        Type = 1,
-                        Size = (uint)sizeof(DisplayConfigSourceDeviceName),
-                        AdapterId = adapterId,
-                        Id = sourceId
-                    }
-                };
-                if (DisplayConfigGetDeviceInfo(&packet) != 0)
+                byte[] packet = WindowsDisplayTopologyManager.BuildSourceDeviceNameRequest(adapterId.LowPart, adapterId.HighPart, sourceId);
+                if (DisplayConfigGetDeviceInfo(packet) != 0)
                     return null;
 
-                var span = new ReadOnlySpan<char>(packet.ViewGdiDeviceName, 32);
-                int nullIdx = span.IndexOf('\0');
-                return (nullIdx >= 0 ? span[..nullIdx] : span).ToString();
+                return WindowsDisplayTopologyManager.ParseSourceDeviceNameResponse(packet);
             }
 
             [LibraryImport("user32.dll")]
-            private static unsafe partial int DisplayConfigGetDeviceInfo(DisplayConfigSourceDeviceName* requestPacket);
+            private static partial int DisplayConfigGetDeviceInfo([In, Out] byte[] requestPacket);
 
             [LibraryImport("user32.dll")]
             private static partial int GetDisplayConfigBufferSizes(
