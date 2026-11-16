@@ -147,4 +147,72 @@ public class DxgiSelectionAndCursorTests
         c.DrawImage(xorImg, 0, 0, SKSamplingOptions.Default, xorPaint);
         return target;
     }
+
+    private sealed class FakeCursorProvider(Func<IntPtr, (bool Ok, NativeCursorCapture Capture)> factory) : INativeCursorProvider
+    {
+        public int CaptureCalls { get; private set; }
+
+        public bool TryCaptureCursor(IntPtr cursorHandle, out NativeCursorCapture capture)
+        {
+            CaptureCalls++;
+            var result = factory(cursorHandle);
+            capture = result.Capture;
+            return result.Ok;
+        }
+    }
+
+    [TestMethod]
+    public void CursorSpriteRenderer_CachesByHandleEvictsWhenFullAndDrawsAlignedSprite()
+    {
+        byte[] onBlack =
+        [
+            0, 0, 0, 255,       255, 255, 255, 255,
+            0, 0, 255, 255,     0, 0, 0, 255
+        ];
+        byte[] onWhite =
+        [
+            255, 255, 255, 255, 0, 0, 0, 255,
+            0, 0, 255, 255,     255, 255, 255, 255
+        ];
+
+        var provider = new FakeCursorProvider(_ => (true, new NativeCursorCapture((2, 2), (1, 0), (onBlack, onWhite))));
+        using var renderer = new CursorSpriteRenderer(provider, maxCacheEntries: 2);
+        using var canvasBmp = new SKBitmap(20, 20, SKColorType.Bgra8888, SKAlphaType.Premul);
+        using (var c = new SKCanvas(canvasBmp)) { c.Clear(SKColors.Black); }
+
+        var target = new CursorRenderTarget { ScreenLeft = 100, ScreenTop = 100, ScaleX = 1f, ScaleY = 1f };
+        renderer.DrawCursor(canvasBmp, new CursorSample { IsVisible = true, X = 105, Y = 105, Handle = new IntPtr(10) }, target);
+        renderer.DrawCursor(canvasBmp, new CursorSample { IsVisible = true, X = 115, Y = 105, Handle = new IntPtr(10) }, target);
+        int callsAfterCacheHit = provider.CaptureCalls;
+
+        renderer.DrawCursor(canvasBmp, new CursorSample { IsVisible = true, X = 110, Y = 110, Handle = new IntPtr(20) }, target);
+        renderer.DrawCursor(canvasBmp, new CursorSample { IsVisible = true, X = 112, Y = 112, Handle = new IntPtr(30) }, target);
+
+        Assert.AreEqual((1, 1), (callsAfterCacheHit, renderer.CachedCount));
+        Assert.AreEqual((SKColors.White, new SKColor(255, 0, 0, 255)), (canvasBmp.GetPixel(5, 5), canvasBmp.GetPixel(4, 6)));
+    }
+
+    [TestMethod]
+    public void CursorSpriteRenderer_FallsBackToArrowAndIgnoresInvisibleOrOffscreen()
+    {
+        var provider = new FakeCursorProvider(_ => (false, default));
+        using var renderer = new CursorSpriteRenderer(provider);
+        using var canvasBmp = new SKBitmap(40, 40, SKColorType.Bgra8888, SKAlphaType.Premul);
+        using (var c = new SKCanvas(canvasBmp)) { c.Clear(SKColors.Navy); }
+
+        var target = new CursorRenderTarget { ScreenLeft = 0, ScreenTop = 0, ScaleX = 1f, ScaleY = 1f };
+        renderer.DrawCursor(canvasBmp, new CursorSample { IsVisible = false, X = 10, Y = 10, Handle = new IntPtr(5) }, target);
+        renderer.DrawCursor(canvasBmp, new CursorSample { IsVisible = true, X = 500, Y = 500, Handle = new IntPtr(5) }, target);
+        var untouchedPixel = canvasBmp.GetPixel(10, 10);
+
+        renderer.DrawCursor(canvasBmp, new CursorSample { IsVisible = true, X = 5, Y = 5, Handle = new IntPtr(5) }, target);
+        var arrowTipPixel = canvasBmp.GetPixel(6, 10);
+
+        var emptyResult = CursorPixelExtractor.ExtractDualPassSprites([], [], (0, 0));
+        var shortResult = CursorPixelExtractor.ExtractDualPassSprites([1, 2], [1, 2], (2, 2));
+
+        Assert.AreEqual(SKColors.Navy, untouchedPixel);
+        Assert.AreNotEqual(SKColors.Navy, arrowTipPixel);
+        Assert.AreEqual((false, false), (emptyResult.HasVisiblePixels, shortResult.HasVisiblePixels));
+    }
 }

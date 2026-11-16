@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 using SkiaSharp;
 
 namespace LanScreenShare.Media
@@ -22,6 +21,16 @@ namespace LanScreenShare.Media
         public float ScaleY { get; init; }
     }
 
+    internal readonly record struct NativeCursorCapture(
+        (int Width, int Height) Size,
+        (int X, int Y) Hotspot,
+        (byte[] OnBlack, byte[] OnWhite) DualPass);
+
+    internal interface INativeCursorProvider
+    {
+        bool TryCaptureCursor(IntPtr cursorHandle, out NativeCursorCapture capture);
+    }
+
     internal static class CursorPixelExtractor
     {
         private readonly record struct BgrPixel(byte B, byte G, byte R)
@@ -29,8 +38,12 @@ namespace LanScreenShare.Media
             public static BgrPixel Read(ReadOnlySpan<byte> buffer, int offset) =>
                 new(buffer[offset], buffer[offset + 1], buffer[offset + 2]);
 
-            public bool Exceeds(in BgrPixel other) =>
-                R > other.R || G > other.G || B > other.B;
+            public bool Exceeds(in BgrPixel other)
+            {
+                if (R > other.R) return true;
+                if (G > other.G) return true;
+                return B > other.B;
+            }
         }
 
         private ref struct DualPassBuffers
@@ -43,6 +56,14 @@ namespace LanScreenShare.Media
             public bool HasVisible;
         }
 
+        private static ExtractedCursorBuffers EmptyResult() => new()
+        {
+            ColorBgra = [],
+            XorMaskBgra = [],
+            HasXorPixels = false,
+            HasVisiblePixels = false
+        };
+
         public static ExtractedCursorBuffers ExtractDualPassSprites(
             ReadOnlySpan<byte> onBlackBgra,
             ReadOnlySpan<byte> onWhiteBgra,
@@ -50,16 +71,10 @@ namespace LanScreenShare.Media
         {
             int pixelCount = Math.Max(0, dimensions.Width) * Math.Max(0, dimensions.Height);
             int expectedBytes = pixelCount * 4;
-            if (expectedBytes == 0 || onBlackBgra.Length < expectedBytes || onWhiteBgra.Length < expectedBytes)
-            {
-                return new ExtractedCursorBuffers
-                {
-                    ColorBgra = [],
-                    XorMaskBgra = [],
-                    HasXorPixels = false,
-                    HasVisiblePixels = false
-                };
-            }
+            if (expectedBytes == 0)
+                return EmptyResult();
+            if (onBlackBgra.Length < expectedBytes || onWhiteBgra.Length < expectedBytes)
+                return EmptyResult();
 
             var buffers = new DualPassBuffers
             {
@@ -130,16 +145,9 @@ namespace LanScreenShare.Media
         }
     }
 
-    [SupportedOSPlatform("windows")]
-    internal sealed partial class CursorSpriteRenderer : IDisposable
+    internal sealed class CursorSpriteRenderer : IDisposable
     {
-        private const int MaxCachedSprites = 64;
-        private const int DI_NORMAL = 0x0003;
-        private const int SM_CXCURSOR = 13;
-        private const int SM_CYCURSOR = 14;
-        private const int DIB_RGB_COLORS = 0;
-        private const int BI_RGB = 0;
-        private const uint SPI_GETMOUSETRAILS = 0x005E;
+        private const int DefaultMaxCacheEntries = 64;
 
         private sealed record CachedCursorSprite : IDisposable
         {
@@ -158,11 +166,17 @@ namespace LanScreenShare.Media
         }
 
         private readonly Dictionary<IntPtr, CachedCursorSprite> _cache = new();
+        private readonly INativeCursorProvider? _nativeProvider;
+        private readonly int _maxCacheEntries;
 
-        public static bool AreMouseTrailsActive()
+        public int CachedCount => _cache.Count;
+
+        public CursorSpriteRenderer(
+            INativeCursorProvider? nativeProvider = null,
+            int maxCacheEntries = DefaultMaxCacheEntries)
         {
-            uint trails = 0;
-            return SystemParametersInfo(SPI_GETMOUSETRAILS, 0, ref trails, 0) && trails > 1;
+            _nativeProvider = nativeProvider;
+            _maxCacheEntries = Math.Max(1, maxCacheEntries);
         }
 
         public void DrawCursor(
@@ -173,9 +187,10 @@ namespace LanScreenShare.Media
             if (!sample.IsVisible)
                 return;
 
-            float hotspotX = (sample.X - target.ScreenLeft) * target.ScaleX;
-            float hotspotY = (sample.Y - target.ScreenTop) * target.ScaleY;
-            if (!IsNearBitmap(hotspotX, hotspotY, targetBitmap.Width, targetBitmap.Height))
+            var hotspotPos = new SKPoint(
+                (sample.X - target.ScreenLeft) * target.ScaleX,
+                (sample.Y - target.ScreenTop) * target.ScaleY);
+            if (!IsNearBitmap(hotspotPos, targetBitmap.Info))
                 return;
 
             var sprite = GetOrCreateSprite(sample.Handle);
@@ -185,9 +200,9 @@ namespace LanScreenShare.Media
                 return;
             }
 
-            if (IsInsideBitmap(hotspotX, hotspotY, targetBitmap.Width, targetBitmap.Height))
+            if (IsInsideBitmap(hotspotPos, targetBitmap.Info))
             {
-                DrawFallbackArrow(targetBitmap, hotspotX, hotspotY);
+                DrawFallbackArrow(targetBitmap, hotspotPos);
             }
         }
 
@@ -201,187 +216,65 @@ namespace LanScreenShare.Media
             return SKRect.Create(left, top, sprite.Width * target.ScaleX, sprite.Height * target.ScaleY);
         }
 
-        private static bool IsNearBitmap(float x, float y, int width, int height)
+        private static bool IsNearBitmap(SKPoint point, SKImageInfo info)
         {
             const float margin = 128f;
-            bool nearX = x >= -margin && x < width + margin;
-            bool nearY = y >= -margin && y < height + margin;
+            bool nearX = point.X >= -margin && point.X < info.Width + margin;
+            bool nearY = point.Y >= -margin && point.Y < info.Height + margin;
             return nearX && nearY;
         }
 
-        private static bool IsInsideBitmap(float x, float y, int width, int height) =>
-            x >= 0 && x < width && y >= 0 && y < height;
+        private static bool IsInsideBitmap(SKPoint point, SKImageInfo info) =>
+            point.X >= 0 && point.X < info.Width && point.Y >= 0 && point.Y < info.Height;
 
         private CachedCursorSprite? GetOrCreateSprite(IntPtr hCursor)
         {
-            if (hCursor == IntPtr.Zero)
+            if (hCursor == IntPtr.Zero || _nativeProvider == null)
                 return null;
 
             if (_cache.TryGetValue(hCursor, out var cached))
                 return cached;
 
-            var extracted = TryExtractNativeCursorSprite(hCursor);
-            if (extracted == null)
+            if (!_nativeProvider.TryCaptureCursor(hCursor, out var capture))
                 return null;
 
-            if (_cache.Count >= MaxCachedSprites)
+            var sprite = BuildSpriteFromCapture(capture);
+            if (sprite == null)
+                return null;
+
+            if (_cache.Count >= _maxCacheEntries)
             {
                 ClearCache();
             }
 
-            _cache[hCursor] = extracted;
-            return extracted;
+            _cache[hCursor] = sprite;
+            return sprite;
         }
 
-        private static CachedCursorSprite? TryExtractNativeCursorSprite(IntPtr hCursor)
+        private static CachedCursorSprite? BuildSpriteFromCapture(in NativeCursorCapture capture)
         {
-            if (!GetIconInfo(hCursor, out var iconInfo))
+            var (width, height) = capture.Size;
+            var extracted = CursorPixelExtractor.ExtractDualPassSprites(
+                capture.DualPass.OnBlack,
+                capture.DualPass.OnWhite,
+                capture.Size);
+            if (!extracted.HasVisiblePixels)
                 return null;
 
-            try
+            var colorImage = CursorPixelExtractor.CreateBgraImage(extracted.ColorBgra, width, height);
+            SKImage? xorImage = extracted.HasXorPixels
+                ? CursorPixelExtractor.CreateBgraImage(extracted.XorMaskBgra, width, height)
+                : null;
+
+            return new CachedCursorSprite
             {
-                var (width, height) = ResolveCursorDimensions(iconInfo);
-                var (onBlack, onWhite) = RenderCursorDualPass(hCursor, width, height);
-                if (onBlack == null || onWhite == null)
-                    return null;
-
-                var extracted = CursorPixelExtractor.ExtractDualPassSprites(onBlack, onWhite, (width, height));
-                if (!extracted.HasVisiblePixels)
-                    return null;
-
-                var colorImage = CursorPixelExtractor.CreateBgraImage(extracted.ColorBgra, width, height);
-                SKImage? xorImage = extracted.HasXorPixels
-                    ? CursorPixelExtractor.CreateBgraImage(extracted.XorMaskBgra, width, height)
-                    : null;
-
-                return new CachedCursorSprite
-                {
-                    Width = width,
-                    Height = height,
-                    HotspotX = iconInfo.xHotspot,
-                    HotspotY = iconInfo.yHotspot,
-                    ColorImage = colorImage,
-                    XorImage = xorImage
-                };
-            }
-            catch
-            {
-                return null;
-            }
-            finally
-            {
-                if (iconInfo.hbmMask != IntPtr.Zero) DeleteObject(iconInfo.hbmMask);
-                if (iconInfo.hbmColor != IntPtr.Zero) DeleteObject(iconInfo.hbmColor);
-            }
-        }
-
-        private static (int Width, int Height) ResolveCursorDimensions(in IconInfo iconInfo)
-        {
-            IntPtr hBitmap = iconInfo.hbmColor != IntPtr.Zero ? iconInfo.hbmColor : iconInfo.hbmMask;
-            if (hBitmap != IntPtr.Zero && TryGetBitmapSize(hBitmap, out int bmpW, out int bmpH))
-            {
-                int height = iconInfo.hbmColor != IntPtr.Zero ? bmpH : bmpH / 2;
-                if (bmpW > 0 && height > 0)
-                    return (Math.Min(bmpW, 256), Math.Min(height, 256));
-            }
-
-            int sysW = Math.Clamp(GetSystemMetrics(SM_CXCURSOR), 16, 128);
-            int sysH = Math.Clamp(GetSystemMetrics(SM_CYCURSOR), 16, 128);
-            return (sysW, sysH);
-        }
-
-        private static bool TryGetBitmapSize(IntPtr hBitmap, out int width, out int height)
-        {
-            width = 0;
-            height = 0;
-            var bmp = new GdiBitmap();
-            int size = Marshal.SizeOf<GdiBitmap>();
-            if (GetObjectW(hBitmap, size, ref bmp) == 0)
-                return false;
-
-            width = bmp.bmWidth;
-            height = Math.Abs(bmp.bmHeight);
-            return width > 0 && height > 0;
-        }
-
-        private static (byte[]? OnBlack, byte[]? OnWhite) RenderCursorDualPass(IntPtr hCursor, int width, int height)
-        {
-            IntPtr hdcMem = CreateCompatibleDC(IntPtr.Zero);
-            if (hdcMem == IntPtr.Zero)
-                return (null, null);
-
-            IntPtr hDib = IntPtr.Zero;
-            IntPtr hOld = IntPtr.Zero;
-            try
-            {
-                hDib = CreateTopDownDib32(hdcMem, width, height, out IntPtr pBits);
-                if (hDib == IntPtr.Zero || pBits == IntPtr.Zero)
-                    return (null, null);
-
-                hOld = SelectObject(hdcMem, hDib);
-                var passCtx = new DualPassContext
-                {
-                    Hdc = hdcMem,
-                    BitsPtr = pBits,
-                    CursorHandle = hCursor,
-                    Width = width,
-                    Height = height
-                };
-                byte[] onBlack = CapturePass(passCtx, fillWhite: false);
-                byte[] onWhite = CapturePass(passCtx, fillWhite: true);
-                return (onBlack, onWhite);
-            }
-            finally
-            {
-                if (hOld != IntPtr.Zero) SelectObject(hdcMem, hOld);
-                if (hDib != IntPtr.Zero) DeleteObject(hDib);
-                DeleteDC(hdcMem);
-            }
-        }
-
-        private readonly record struct DualPassContext
-        {
-            public IntPtr Hdc { get; init; }
-            public IntPtr BitsPtr { get; init; }
-            public IntPtr CursorHandle { get; init; }
-            public int Width { get; init; }
-            public int Height { get; init; }
-            public int ByteCount => Width * Height * 4;
-        }
-
-        private static byte[] CapturePass(in DualPassContext ctx, bool fillWhite)
-        {
-            int byteCount = ctx.ByteCount;
-            byte fill = fillWhite ? (byte)0xFF : (byte)0x00;
-            byte[] buffer = new byte[byteCount];
-            Array.Fill(buffer, fill);
-            if (!fillWhite)
-            {
-                for (int i = 3; i < byteCount; i += 4)
-                    buffer[i] = 0xFF;
-            }
-
-            Marshal.Copy(buffer, 0, ctx.BitsPtr, byteCount);
-            DrawIconEx(ctx.Hdc, 0, 0, ctx.CursorHandle, ctx.Width, ctx.Height, 0, IntPtr.Zero, DI_NORMAL);
-            Marshal.Copy(ctx.BitsPtr, buffer, 0, byteCount);
-            return buffer;
-        }
-
-        private static IntPtr CreateTopDownDib32(IntPtr hdc, int width, int height, out IntPtr pBits)
-        {
-            var bmi = new BitmapInfo
-            {
-                bmiHeader = new BitmapInfoHeader
-                {
-                    biSize = (uint)Marshal.SizeOf<BitmapInfoHeader>(),
-                    biWidth = width,
-                    biHeight = -height,
-                    biPlanes = 1,
-                    biBitCount = 32,
-                    biCompression = BI_RGB
-                }
+                Width = width,
+                Height = height,
+                HotspotX = capture.Hotspot.X,
+                HotspotY = capture.Hotspot.Y,
+                ColorImage = colorImage,
+                XorImage = xorImage
             };
-            return CreateDIBSection(hdc, ref bmi, DIB_RGB_COLORS, out pBits, IntPtr.Zero, 0);
         }
 
         private static void DrawSprite(SKBitmap targetBitmap, CachedCursorSprite sprite, SKRect destRect)
@@ -400,8 +293,10 @@ namespace LanScreenShare.Media
             }
         }
 
-        private static void DrawFallbackArrow(SKBitmap bitmap, float x, float y)
+        private static void DrawFallbackArrow(SKBitmap bitmap, SKPoint origin)
         {
+            float x = origin.X;
+            float y = origin.Y;
             using var canvas = new SKCanvas(bitmap);
             using var fillPaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Fill, IsAntialias = true };
             using var strokePaint = new SKPaint { Color = SKColors.Black, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f, IsAntialias = true };
@@ -431,94 +326,5 @@ namespace LanScreenShare.Media
         }
 
         public void Dispose() => ClearCache();
-
-        #region Win32 GDI & Cursor P/Invoke
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct IconInfo
-        {
-            public int fIcon;
-            public int xHotspot;
-            public int yHotspot;
-            public IntPtr hbmMask;
-            public IntPtr hbmColor;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct GdiBitmap
-        {
-            public int bmType;
-            public int bmWidth;
-            public int bmHeight;
-            public int bmWidthBytes;
-            public ushort bmPlanes;
-            public ushort bmBitsPixel;
-            public IntPtr bmBits;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct BitmapInfoHeader
-        {
-            public uint biSize;
-            public int biWidth;
-            public int biHeight;
-            public ushort biPlanes;
-            public ushort biBitCount;
-            public uint biCompression;
-            public uint biSizeImage;
-            public int biXPelsPerMeter;
-            public int biYPelsPerMeter;
-            public uint biClrUsed;
-            public uint biClrImportant;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct BitmapInfo
-        {
-            public BitmapInfoHeader bmiHeader;
-            public uint bmiColors;
-        }
-
-        [LibraryImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static partial bool GetIconInfo(IntPtr hIcon, out IconInfo piconinfo);
-
-        [LibraryImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static partial bool DrawIconEx(
-            IntPtr hdc, int xLeft, int yTop, IntPtr hIcon,
-            int cxWidth, int cyWidth, uint istepIfAniCur,
-            IntPtr hbrFlickerFreeDraw, uint diFlags);
-
-        [LibraryImport("user32.dll")]
-        private static partial int GetSystemMetrics(int nIndex);
-
-        [LibraryImport("user32.dll", EntryPoint = "SystemParametersInfoW", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static partial bool SystemParametersInfo(uint uiAction, uint uiParam, ref uint pvParam, uint fWinIni);
-
-        [LibraryImport("gdi32.dll")]
-        private static partial IntPtr CreateCompatibleDC(IntPtr hdc);
-
-        [LibraryImport("gdi32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static partial bool DeleteDC(IntPtr hdc);
-
-        [LibraryImport("gdi32.dll")]
-        private static partial IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
-
-        [LibraryImport("gdi32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static partial bool DeleteObject(IntPtr hObject);
-
-        [LibraryImport("gdi32.dll", SetLastError = true)]
-        private static partial int GetObjectW(IntPtr hgdiobj, int cbBuffer, ref GdiBitmap lpvObject);
-
-        [LibraryImport("gdi32.dll", SetLastError = true)]
-        private static partial IntPtr CreateDIBSection(
-            IntPtr hdc, ref BitmapInfo pbmi, uint usage,
-            out IntPtr ppvBits, IntPtr hSection, uint offset);
-
-        #endregion
     }
 }
