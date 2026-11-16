@@ -56,8 +56,8 @@ namespace LanScreenShare.Core.Display
             }
         }
 
-        private Task RunLockedAsync(Func<CancellationToken, Task> operation, CancellationToken ct) =>
-            RunLockedAsync<bool>(async token =>
+        private async Task RunLockedAsync(Func<CancellationToken, Task> operation, CancellationToken ct) =>
+            await RunLockedAsync<bool>(async token =>
             {
                 await operation(token);
                 return true;
