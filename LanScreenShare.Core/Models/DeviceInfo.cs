@@ -143,9 +143,16 @@ namespace LanScreenShare.Core.Models
 
         public string ActionButtonText => _isViewing ? "Viendo" : "Ver pantalla";
 
-        public string ExtendButtonText => _isExtending
-            ? "Extendiendo"
-            : (_isWirelessDisplayBusy ? "Ocupado" : "Extender pantalla");
+        public string ExtendButtonText
+        {
+            get
+            {
+                if (_isExtending)
+                    return "Extendiendo";
+
+                return _isWirelessDisplayBusy ? "Ocupado" : "Extender pantalla";
+            }
+        }
 
         public bool CanExtendToDevice =>
             OperatingSystem.IsWindows() && IsWirelessDisplay && (!_isWirelessDisplayBusy || _isExtending);

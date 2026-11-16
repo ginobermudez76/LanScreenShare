@@ -45,7 +45,7 @@ namespace LanScreenShare.Desktop
 
         // Seguridad, autoridad de sesiones e identidad mTLS
         private IIdentityKeyStorage _identityKeyStorage = null!;
-        private IPairedDeviceStore _pairedDeviceStore = null!;
+        private JsonPairedDeviceStore _pairedDeviceStore = null!;
         private ISessionAuthority _sessionAuthority = null!;
         private TrustedDeviceManager _trustedDeviceManager = null!;
         private X509Certificate2? _identityCertificate;

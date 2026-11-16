@@ -51,14 +51,7 @@ namespace LanScreenShare.Media.Display
 
         public ElevatedProcessOutcome RunElevated(VddInstallPlan plan)
         {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = plan.Executable,
-                Arguments = plan.Arguments,
-                UseShellExecute = true,
-                Verb = plan.RequiresElevation ? "runas" : string.Empty,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
+            var startInfo = CreateStartInfo(plan);
 
             try
             {
@@ -78,6 +71,15 @@ namespace LanScreenShare.Media.Display
                 return new ElevatedProcessOutcome(false, -1, false, ex.Message);
             }
         }
+
+        internal static ProcessStartInfo CreateStartInfo(VddInstallPlan plan) => new()
+        {
+            FileName = plan.Executable,
+            Arguments = plan.Arguments,
+            UseShellExecute = true,
+            Verb = plan.RequiresElevation ? "runas" : string.Empty,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
     }
 
     /// <summary>

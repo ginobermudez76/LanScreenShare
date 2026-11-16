@@ -78,6 +78,37 @@ public class VirtualDisplayDriverInstallerTests
             _ => false,
             isWindows: false);
         Assert.IsFalse((await nonWindows.InstallDriverAsync()).Success);
+
+        var genericFail = new VirtualDisplayDriverInstallerService(
+            new StubElevatedRunner(new ElevatedProcessOutcome(false, -1, false, "Fallo genérico")),
+            _ => false,
+            isWindows: true);
+        var genericResult = await genericFail.InstallDriverAsync();
+        Assert.IsFalse(genericResult.Success || genericResult.WasCancelledByUser);
+    }
+
+    [TestMethod]
+    public void ElevatedRunner_CreateStartInfoAndDefaultBackends_AreConfiguredSafely()
+    {
+        var defaultInstaller = new VirtualDisplayDriverInstallerService();
+        var defaultPlan = defaultInstaller.BuildInstallPlan();
+        var elevatedStartInfo = WindowsElevatedProcessRunner.CreateStartInfo(defaultPlan);
+        Assert.AreEqual(("runas", true), (elevatedStartInfo.Verb, elevatedStartInfo.UseShellExecute));
+
+        var missingPlan = new VddInstallPlan
+        {
+            Source = VddInstallSource.LocalInfPackage,
+            Executable = "nonexistent-vdd-installer-tool-xyz.exe",
+            Arguments = "/version",
+            RequiresElevation = false
+        };
+        var runner = new WindowsElevatedProcessRunner();
+        var outcome = runner.RunElevated(missingPlan);
+        Assert.IsFalse(outcome.Started);
+
+        var backends = VirtualDisplayDriverInstallerService.CreateDefaultBackends();
+        Assert.AreEqual(2, backends.Count);
+        _ = VirtualDisplayDriverInstallerService.IsAnyVirtualDisplayDriverInstalled();
     }
 
     [TestMethod]

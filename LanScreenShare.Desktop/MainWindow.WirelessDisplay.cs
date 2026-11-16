@@ -34,7 +34,7 @@ namespace LanScreenShare.Desktop
         private const int PbtApmResumeAutomatic = 0x0012;
         private const string WirelessIndigoHex = "#6366F1";
 
-        private IVirtualDisplayService? _virtualDisplayService;
+        private VirtualDisplayCoordinator? _virtualDisplayService;
         private IDisplayTopologyManager? _topologyManager;
         private readonly ProjectionInvitationStore _projectionInvitationStore = new();
         private VirtualDisplayProjectionHost? _projectionHost;
@@ -75,26 +75,28 @@ namespace LanScreenShare.Desktop
 
             if (OperatingSystem.IsWindows())
             {
-                _powerWndProcHook = HandleWindowsPowerMessage;
+                _powerWndProcHook = (nint _, uint msg, nint wParam, nint _, ref bool _) =>
+                {
+                    DispatchPowerBroadcastMessage(msg, wParam);
+                    return IntPtr.Zero;
+                };
                 Win32Properties.AddWndProcHookCallback(this, _powerWndProcHook);
             }
 
             _ = RecoverOrphanedVirtualDisplayOnStartupAsync();
         }
 
-        private nint HandleWindowsPowerMessage(nint hWnd, uint msg, nint wParam, nint lParam, ref bool handled)
+        private void DispatchPowerBroadcastMessage(uint msg, nint wParam)
         {
             var powerEvent = ParsePowerBroadcast(msg, wParam);
             if (powerEvent == VirtualDisplayPowerEvent.Suspend)
             {
-                _ = _virtualDisplayService?.HandleSystemSuspendAsync();
+                _ = _virtualDisplayService?.HandleSystemSuspendAsync(CancellationToken.None);
             }
             else if (powerEvent == VirtualDisplayPowerEvent.Resume)
             {
                 _ = HandleResumeAndKeyframeAsync();
             }
-
-            return IntPtr.Zero;
         }
 
         private async Task HandleResumeAndKeyframeAsync()
@@ -102,7 +104,7 @@ namespace LanScreenShare.Desktop
             if (_virtualDisplayService == null)
                 return;
 
-            await _virtualDisplayService.HandleSystemResumeAsync();
+            await _virtualDisplayService.HandleSystemResumeAsync(CancellationToken.None);
             _screenCaptureService?.RequestKeyframe();
         }
 
@@ -113,7 +115,7 @@ namespace LanScreenShare.Desktop
 
             try
             {
-                await _virtualDisplayService.RecoverOrphanedSessionOnStartupAsync();
+                await _virtualDisplayService.RecoverOrphanedSessionOnStartupAsync(CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -170,7 +172,7 @@ namespace LanScreenShare.Desktop
             });
             _projectionReceiver.InvitationAccepted += OnProjectionInvitationAccepted;
 
-            await _projectionReceiver.StartListeningAsync(DiscoveryService.DefaultDisplaySignalingPort);
+            await _projectionReceiver.StartListeningAsync(DiscoveryService.DefaultDisplaySignalingPort, CancellationToken.None);
             _discoveryService.StartWirelessDisplayBroadcast(DiscoveryService.DefaultDisplaySignalingPort);
 
             _isWirelessDisplayModeActive = true;
@@ -276,7 +278,7 @@ namespace LanScreenShare.Desktop
 
             try
             {
-                await _projectionReceiver.ConnectToHostAsync(context, _sslClientOptions);
+                await _projectionReceiver.ConnectToHostAsync(context, _sslClientOptions, CancellationToken.None);
                 _isViewing = true;
                 UpdateStreamStateBadge();
                 ShowViewerControls(new DeviceInfo { Name = context.PeerDeviceName, IPAddress = context.SenderIpAddress });
@@ -362,7 +364,7 @@ namespace LanScreenShare.Desktop
                 TargetPort = device.DisplaySignalingPort > 0 ? device.DisplaySignalingPort : DiscoveryService.DefaultDisplaySignalingPort,
                 SslOptions = _sslClientOptions,
                 InvitationStore = _projectionInvitationStore
-            }, profile);
+            }, profile, CancellationToken.None);
 
             if (!result.Success)
             {
@@ -412,26 +414,33 @@ namespace LanScreenShare.Desktop
 
         private void UpdateWirelessModeButtonsUi(bool active)
         {
-            var topText = this.FindControl<TextBlock>("WirelessDisplayModeButtonText");
-            if (topText != null)
-                topText.Text = active ? "Monitor inalámbrico activo" : "Modo Pantalla Inalámbrica";
-
-            var centerText = this.FindControl<TextBlock>("CenterWirelessDisplayButtonText");
-            if (centerText != null)
-                centerText.Text = active ? "Desactivar Monitor Inalámbrico" : "Modo Pantalla Inalámbrica";
+            SetWirelessControlText("WirelessDisplayModeButtonText", active ? "Monitor inalámbrico activo" : "Modo Pantalla Inalámbrica");
+            SetWirelessControlText("CenterWirelessDisplayButtonText", active ? "Desactivar Monitor Inalámbrico" : "Modo Pantalla Inalámbrica");
 
             var topBtn = this.FindControl<Button>("WirelessDisplayModeButton");
             if (topBtn != null)
                 topBtn.Background = new SolidColorBrush(Color.Parse(active ? "#4F46E5" : "#1A2230"));
 
-            var title = this.FindControl<TextBlock>("PlaceholderTitleText");
-            var subtitle = this.FindControl<TextBlock>("PlaceholderSubtitleText");
+            UpdateWirelessPlaceholderUi(active);
+        }
+
+        private void SetWirelessControlText(string controlName, string text)
+        {
+            var label = this.FindControl<TextBlock>(controlName);
+            if (label != null)
+                label.Text = text;
+        }
+
+        private void UpdateWirelessPlaceholderUi(bool active)
+        {
             if (active)
             {
-                if (title != null) title.Text = "Modo Pantalla Inalámbrica activo";
-                if (subtitle != null) subtitle.Text = "Este equipo es visible como 'Monitor inalámbrico'.\nOtro equipo Windows puede pulsar 'Extender pantalla' para proyectar aquí.";
+                SetWirelessControlText("PlaceholderTitleText", "Modo Pantalla Inalámbrica activo");
+                SetWirelessControlText("PlaceholderSubtitleText", "Este equipo es visible como 'Monitor inalámbrico'.\nOtro equipo Windows puede pulsar 'Extender pantalla' para proyectar aquí.");
+                return;
             }
-            else if (!_isHosting && !_isViewing)
+
+            if (!_isHosting && !_isViewing)
             {
                 SetPlaceholderIdleText();
             }
