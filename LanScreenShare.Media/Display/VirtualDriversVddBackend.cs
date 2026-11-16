@@ -76,7 +76,6 @@ namespace LanScreenShare.Media.Display
         private const string EnableTaskName = "LanScreenShare-EnableVdd";
         private const string DisableTaskName = "LanScreenShare-DisableVdd";
         private const string VddPipeName = "MTTVirtualDisplayPipe";
-        private const int DisplayDeviceAttachedToDesktop = 0x00000001;
 
         private readonly string _settingsPath;
         private readonly string _infPath;
@@ -417,7 +416,13 @@ namespace LanScreenShare.Media.Display
                 return null;
             }
 
-            string? deviceName = await WaitForVirtualDeviceNameAsync(ct);
+            TimeSpan deviceLookupTimeout = _environment is WindowsVddEnvironment
+                ? TimeSpan.FromSeconds(2.5)
+                : TimeSpan.Zero;
+            string? deviceName = await WaitForVirtualDeviceNameCoreAsync(
+                _environment.FindVirtualDisplayDeviceName,
+                deviceLookupTimeout,
+                ct);
 
             return new VirtualDisplayInstance
             {
@@ -429,17 +434,20 @@ namespace LanScreenShare.Media.Display
             };
         }
 
-        private async Task<string?> WaitForVirtualDeviceNameAsync(CancellationToken ct)
+        internal static async Task<string?> WaitForVirtualDeviceNameCoreAsync(
+            Func<string?> findDeviceName,
+            TimeSpan timeout,
+            CancellationToken ct)
         {
-            string? found = _environment.FindVirtualDisplayDeviceName();
-            if (!string.IsNullOrWhiteSpace(found) || !(_environment is WindowsVddEnvironment))
+            string? found = findDeviceName();
+            if (!string.IsNullOrWhiteSpace(found) || timeout <= TimeSpan.Zero)
                 return found;
 
-            DateTime deadline = DateTime.UtcNow.AddSeconds(2.5);
+            DateTime deadline = DateTime.UtcNow.Add(timeout);
             while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
             {
-                await Task.Delay(150, ct);
-                found = _environment.FindVirtualDisplayDeviceName();
+                await Task.Delay(50, ct);
+                found = findDeviceName();
                 if (!string.IsNullOrWhiteSpace(found))
                     return found;
             }

@@ -565,8 +565,23 @@ public class VirtualDisplayInfrastructureTests
             new VirtualDriversVddBackend.DisplayAdapterEntry(@"\\.\DISPLAY12", "Virtual Display Driver", @"Root\MttVDD", 0)
         ]);
 
+        int lookupPolls = 0;
+        string? polledDevice = await VirtualDriversVddBackend.WaitForVirtualDeviceNameCoreAsync(
+            () => ++lookupPolls >= 2 ? @"\\.\DISPLAY14" : null,
+            TimeSpan.FromMilliseconds(350),
+            CancellationToken.None);
+        string? timedOutDevice = await VirtualDriversVddBackend.WaitForVirtualDeviceNameCoreAsync(
+            () => null,
+            TimeSpan.FromMilliseconds(70),
+            CancellationToken.None);
+        bool pipeTimedOut = await VirtualDriversVddBackend.WaitForPipeStateCoreAsync(
+            () => false,
+            new VirtualDriversVddBackend.VddToggleOptions(true, TimeSpan.FromMilliseconds(70), 25),
+            CancellationToken.None);
+
         Assert.AreEqual((true, true, true, false, true), (retrySucceeded, cleared, internalFallback, multiPathFail, enabledDefault));
         Assert.AreEqual((true, false, true, @"\\.\DISPLAY14", @"\\.\DISPLAY12"), (alreadyUp, enableTaskFails, enableBecomesReady, selectedAttached, selectedFallback));
+        Assert.AreEqual((@"\\.\DISPLAY14", (string?)null, false), (polledDevice, timedOutDevice, pipeTimedOut));
         Assert.IsNull(defaultEnv.FindVirtualDisplayDeviceName());
     }
 
