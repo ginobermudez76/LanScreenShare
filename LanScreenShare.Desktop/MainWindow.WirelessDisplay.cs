@@ -353,7 +353,7 @@ namespace LanScreenShare.Desktop
                 StreamServer = _streamServer,
                 ControlServer = _controlServer,
                 TopologyManager = _topologyManager,
-                CaptureFactory = source => CaptureServiceFactory.Create(source, GetSelectedEngine())
+                CaptureFactory = source => CreateCaptureService(source, GetSelectedEngine())
             });
 
             UpdateStatus($"Negociando monitor inalámbrico con {device.Name}...", StatusWarningAmberHex);

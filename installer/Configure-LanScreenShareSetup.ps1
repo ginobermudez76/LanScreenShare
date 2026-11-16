@@ -11,7 +11,6 @@ param(
     [switch]$ConfigureFirewall,
     [switch]$AllowPublicNetwork,
     [switch]$InstallVirtualDisplayDriver,
-    [switch]$AllowInteractiveUac,
     [string]$TempWorkDir = ""
 )
 
@@ -19,6 +18,7 @@ $ErrorActionPreference = "Stop"
 
 $CertSubject = "CN=LanScreenShare Local Trusted"
 $FirewallPrefix = "LanScreenShare - "
+$SecureHostServiceName = "LanScreenShareSecureHost"
 $ProgramDataDir = Join-Path $env:ProgramData "LanScreenShare"
 $DefaultsJsonPath = Join-Path $ProgramDataDir "install-defaults.json"
 $SetupLogPath = Join-Path $ProgramDataDir "setup.log"
@@ -284,12 +284,51 @@ function Ensure-RootMttVddDeviceNode([string]$InfPath) {
     Complete-VddRegistration $finalDev "Root\MttVDD puesto en reposo hasta iniciar Extender pantalla"
 }
 
-function Enable-InteractiveUacOnDefaultDesktop {
+function Restore-SecureDesktopPolicyIfDisabled {
     if (-not (Test-Path $UacPolicyKeyPath)) {
-        New-Item -Path $UacPolicyKeyPath -Force | Out-Null
+        return
     }
-    Set-ItemProperty -Path $UacPolicyKeyPath -Name "PromptOnSecureDesktop" -Value 0 -Type DWord -Force
-    Write-SetupLog "PromptOnSecureDesktop establecido en 0 (UAC en escritorio Default para uiAccess=true)."
+    $prop = Get-ItemProperty -Path $UacPolicyKeyPath -Name "PromptOnSecureDesktop" -ErrorAction SilentlyContinue
+    if ($null -ne $prop -and $null -ne $prop.PromptOnSecureDesktop -and [int]$prop.PromptOnSecureDesktop -eq 0) {
+        Set-ItemProperty -Path $UacPolicyKeyPath -Name "PromptOnSecureDesktop" -Value 1 -Type DWord -Force
+        Write-SetupLog "PromptOnSecureDesktop restaurado a 1 (Escritorio Seguro Winlogon habilitado)."
+    }
+}
+
+function Uninstall-SecureHostService {
+    $svc = Get-Service -Name $SecureHostServiceName -ErrorAction SilentlyContinue
+    if ($null -ne $svc) {
+        if ($svc.Status -ne "Stopped") {
+            Stop-Service -Name $SecureHostServiceName -Force -ErrorAction SilentlyContinue
+            try { $svc.WaitForStatus("Stopped", [TimeSpan]::FromSeconds(8)) } catch { }
+        }
+        & sc.exe delete $SecureHostServiceName | Out-Null
+        Write-SetupLog "Servicio $SecureHostServiceName detenido y eliminado."
+    }
+    Get-Process -Name "LanScreenShare.SecureHost" -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+function Install-SecureHostService([string]$AppDir) {
+    $secureHostExe = Join-Path $AppDir "LanScreenShare.SecureHost.exe"
+    if (-not (Test-Path $secureHostExe)) {
+        Write-SetupLog "Advertencia: no se encontró $secureHostExe; omitiendo registro del servicio SYSTEM."
+        return
+    }
+
+    Uninstall-SecureHostService
+    Start-Sleep -Milliseconds 300
+
+    $binPath = "`"$secureHostExe`" --service"
+    New-Service -Name $SecureHostServiceName `
+        -BinaryPathName $binPath `
+        -DisplayName "LanScreenShare Secure Desktop Service" `
+        -Description "Captura e inyección segura de entrada en diálogos UAC y pantalla de bloqueo (Winlogon) para LanScreenShare." `
+        -StartupType Automatic | Out-Null
+
+    & sc.exe failure $SecureHostServiceName reset= 60 actions= restart/2000/restart/5000/restart/10000 | Out-Null
+    Start-Service -Name $SecureHostServiceName
+    Write-SetupLog "Servicio SYSTEM $SecureHostServiceName instalado e iniciado."
 }
 
 function Import-CatalogSignersToTrustedPublisher([string]$CatPath, [string]$ScratchDir) {
@@ -367,9 +406,8 @@ function Invoke-InstallAction([string]$ScratchDir) {
     if ($InstallVirtualDisplayDriver) {
         Install-VirtualDisplayDriverPackage -AppDir $InstallDir -ScratchDir $ScratchDir
     }
-    if ($AllowInteractiveUac) {
-        Enable-InteractiveUacOnDefaultDesktop
-    }
+    Restore-SecureDesktopPolicyIfDisabled
+    Install-SecureHostService -AppDir $InstallDir
     Write-SetupLog "Configuración de instalación completada exitosamente."
 }
 
@@ -381,8 +419,11 @@ function Invoke-RepairVddAction([string]$ScratchDir) {
 }
 
 function Invoke-UninstallAction {
-    Get-Process -Name "LanScreenShare.Desktop", "LanScreenShare.DisplayWatchdog" -ErrorAction SilentlyContinue |
+    Get-Process -Name "LanScreenShare.Desktop", "LanScreenShare.DisplayWatchdog", "LanScreenShare.SecureHost" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
+
+    Uninstall-SecureHostService
+    Restore-SecureDesktopPolicyIfDisabled
 
     $existingVdd = Find-MttVddDevice
     if ($null -ne $existingVdd) {

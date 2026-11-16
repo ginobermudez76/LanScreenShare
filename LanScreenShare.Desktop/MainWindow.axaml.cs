@@ -30,6 +30,7 @@ using LanScreenShare.Core.Models;
 using LanScreenShare.Core.Security;
 using LanScreenShare.Core.Services;
 using LanScreenShare.Media;
+using LanScreenShare.Media.SecureAgent;
 using LanScreenShare.Network;
 using LanScreenShare.Network.Security;
 using LanScreenShare.Network.Streaming;
@@ -39,6 +40,7 @@ namespace LanScreenShare.Desktop
     public partial class MainWindow : Window
     {
         private DiscoveryService _discoveryService = null!;
+        private SecureAgentClient? _secureAgentClient;
         private IScreenCaptureService _screenCaptureService = null!;
         private TcpStreamServer _streamServer = null!;
         private TcpStreamClient _streamClient = null!;
@@ -255,6 +257,7 @@ namespace LanScreenShare.Desktop
             _controlServer.Dispose();
             _controlClient.Dispose();
             _inputSimulatorService?.Dispose();
+            _secureAgentClient?.Dispose();
 
             _fileTransferBannerTimer?.Stop();
             _activeTransferCts?.Cancel();

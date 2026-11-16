@@ -176,6 +176,36 @@ namespace LanScreenShare.Media
 
         protected abstract Task RunCaptureLoopAsync(CancellationToken token);
 
+        protected static Task RunDedicatedThreadLoopAsync(
+            string threadName,
+            Action<CancellationToken> loopBody,
+            CancellationToken token)
+        {
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    loopBody(token);
+                    tcs.TrySetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    tcs.TrySetCanceled(token);
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = threadName
+            };
+            thread.Start();
+            return tcs.Task;
+        }
+
         internal static bool NeedsResize(int targetW, int targetH, int width, int height) =>
             targetW > 0 && targetH > 0 && (targetW != width || targetH != height);
 

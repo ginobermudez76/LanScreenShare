@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Threading;
@@ -13,8 +14,35 @@ namespace LanScreenShare.Media
     {
         private readonly Lock _inputLock = new();
         private readonly InjectedInputTracker _tracker = new();
+        private readonly BlockingCollection<Action> _workQueue = new(new ConcurrentQueue<Action>(), 1024);
+        private readonly Thread _workerThread;
         private bool _disposed;
         private CaptureSource? _currentTargetSource;
+
+        public WindowsInputSimulatorService()
+        {
+            _workerThread = new Thread(RunInputWorkerLoop)
+            {
+                IsBackground = true,
+                Name = "LssInputWorker"
+            };
+            _workerThread.Start();
+        }
+
+        private void RunInputWorkerLoop()
+        {
+            foreach (Action workItem in _workQueue.GetConsumingEnumerable())
+            {
+                try
+                {
+                    workItem();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[InputSimulator] Error en hilo de entrada: {ex.Message}");
+                }
+            }
+        }
 
         public InjectedInputTracker Tracker => _tracker;
 
@@ -152,6 +180,30 @@ namespace LanScreenShare.Media
         {
             if (_disposed) return;
 
+            if (Thread.CurrentThread == _workerThread)
+            {
+                ExecuteSimulatedInput(input);
+                return;
+            }
+
+            try
+            {
+                _workQueue.TryAdd(() => ExecuteSimulatedInput(input));
+            }
+            catch (ObjectDisposedException)
+            {
+                // Ignorar entradas en cierre
+            }
+            catch (InvalidOperationException)
+            {
+                // Cola completada durante cierre
+            }
+        }
+
+        private void ExecuteSimulatedInput(RemoteInputMessage input)
+        {
+            if (_disposed) return;
+
             lock (_inputLock)
             {
                 try
@@ -187,6 +239,36 @@ namespace LanScreenShare.Media
 
         public void ReleaseInjectedInputs()
         {
+            if (_disposed || Thread.CurrentThread == _workerThread)
+            {
+                ExecuteReleaseInjectedInputs();
+                return;
+            }
+
+            using var completed = new ManualResetEventSlim(false);
+            try
+            {
+                if (_workQueue.TryAdd(() =>
+                {
+                    try { ExecuteReleaseInjectedInputs(); }
+                    finally { completed.Set(); }
+                }))
+                {
+                    completed.Wait(400);
+                }
+                else
+                {
+                    ExecuteReleaseInjectedInputs();
+                }
+            }
+            catch (Exception)
+            {
+                ExecuteReleaseInjectedInputs();
+            }
+        }
+
+        private void ExecuteReleaseInjectedInputs()
+        {
             lock (_inputLock)
             {
                 var keys = _tracker.GetPressedKeysSnapshot();
@@ -195,6 +277,7 @@ namespace LanScreenShare.Media
                 if (keys.Length == 0 && buttons.Length == 0)
                     return;
 
+                EnsureInputDesktopAttached();
                 var inputs = new NativeInput[keys.Length + buttons.Length];
                 int count = PopulateReleaseInputs(inputs, keys, buttons);
 
@@ -407,7 +490,22 @@ namespace LanScreenShare.Media
                 return;
 
             _disposed = true;
-            ReleaseInjectedInputs();
+            try
+            {
+                _workQueue.TryAdd(ExecuteReleaseInjectedInputs);
+                _workQueue.CompleteAdding();
+            }
+            catch
+            {
+                // Ignorar errores al cerrar cola
+            }
+
+            if (Thread.CurrentThread != _workerThread && _workerThread.IsAlive)
+            {
+                _workerThread.Join(500);
+            }
+
+            _workQueue.Dispose();
             GC.SuppressFinalize(this);
         }
     }

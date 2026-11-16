@@ -26,20 +26,26 @@
     <ProjectReference Include="..\LanScreenShare.Media\LanScreenShare.Media.csproj" />
     <ProjectReference Include="..\LanScreenShare.DisplayWatchdog\LanScreenShare.DisplayWatchdog.csproj"
                       ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\LanScreenShare.SecureHost\LanScreenShare.SecureHost.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <Target Name="CopyDisplayWatchdogToOutput" AfterTargets="Build">
     <ItemGroup>
       <_WatchdogFiles Include="..\LanScreenShare.DisplayWatchdog\bin\$(Configuration)\$(TargetFramework)\LanScreenShare.DisplayWatchdog.*" />
+      <_SecureHostFiles Include="..\LanScreenShare.SecureHost\bin\$(Configuration)\$(TargetFramework)\LanScreenShare.SecureHost.*" />
     </ItemGroup>
     <Copy SourceFiles="@(_WatchdogFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SecureHostFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="CopyDisplayWatchdogToPublish" AfterTargets="Publish">
     <ItemGroup>
       <_WatchdogPublishFiles Include="$(OutputPath)LanScreenShare.DisplayWatchdog.*" />
+      <_SecureHostPublishFiles Include="$(OutputPath)LanScreenShare.SecureHost.*" />
     </ItemGroup>
     <Copy SourceFiles="@(_WatchdogPublishFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SecureHostPublishFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
   </Target>
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />

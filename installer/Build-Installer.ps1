@@ -11,6 +11,7 @@ $StageAppDir = Join-Path $PSScriptRoot "stage\app"
 $OutputDir = Join-Path $PSScriptRoot "output"
 $DesktopProj = Join-Path $RepoRoot "LanScreenShare.Desktop\LanScreenShare.Desktop.csproj"
 $WatchdogProj = Join-Path $RepoRoot "LanScreenShare.DisplayWatchdog\LanScreenShare.DisplayWatchdog.csproj"
+$SecureHostProj = Join-Path $RepoRoot "LanScreenShare.SecureHost\LanScreenShare.SecureHost.csproj"
 $IssScript = Join-Path $PSScriptRoot "LanScreenShare.iss"
 
 $VddDriverUrl = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-x86.Driver.Only.zip"
@@ -38,9 +39,12 @@ if (Test-Path (Join-Path $PSScriptRoot "stage")) {
 New-Item -ItemType Directory -Path $StageAppDir -Force | Out-Null
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
-Write-Host "[2/4] Compilando Watchdog y publicando LanScreenShare.Desktop (uiAccess=true)..." -ForegroundColor Cyan
+Write-Host "[2/4] Compilando Watchdog, SecureHost y publicando LanScreenShare.Desktop (uiAccess=true)..." -ForegroundColor Cyan
 & dotnet build $WatchdogProj --configuration Release
 if ($LASTEXITCODE -ne 0) { throw "Falló compilación de LanScreenShare.DisplayWatchdog." }
+
+& dotnet build $SecureHostProj --configuration Release
+if ($LASTEXITCODE -ne 0) { throw "Falló compilación de LanScreenShare.SecureHost." }
 
 $selfContainedArg = if ($SelfContained) { "true" } else { "false" }
 & dotnet publish $DesktopProj `
@@ -56,6 +60,9 @@ if (-not (Test-Path (Join-Path $StageAppDir "LanScreenShare.Desktop.exe"))) {
 }
 if (-not (Test-Path (Join-Path $StageAppDir "LanScreenShare.DisplayWatchdog.exe"))) {
     throw "Falta LanScreenShare.DisplayWatchdog.exe en staging."
+}
+if (-not (Test-Path (Join-Path $StageAppDir "LanScreenShare.SecureHost.exe"))) {
+    throw "Falta LanScreenShare.SecureHost.exe en staging."
 }
 
 if (-not $SkipVddDownload) {

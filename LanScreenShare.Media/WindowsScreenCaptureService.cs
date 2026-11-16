@@ -30,7 +30,7 @@ namespace LanScreenShare.Media
         }
 
         protected override Task RunCaptureLoopAsync(CancellationToken token) =>
-            CaptureLoopAsync(token);
+            RunDedicatedThreadLoopAsync("LssGdiCapture", CaptureLoop, token);
 
         public int CaptureX
         {
@@ -71,7 +71,7 @@ namespace LanScreenShare.Media
             _captureAllScreens = bounds.AllScreens;
         }
 
-        private async Task CaptureLoopAsync(CancellationToken token)
+        private void CaptureLoop(CancellationToken token)
         {
             try
             {
@@ -84,9 +84,28 @@ namespace LanScreenShare.Media
 
             var stopwatch = new Stopwatch();
             var fpsTracker = new HostFpsTracker();
+            bool reportedBlocked = false;
 
             while (!token.IsCancellationRequested)
             {
+                bool attached = WindowsDesktopManager.TryAttachThreadToInputDesktopDetailed(out _, out bool isSecure, out _);
+                if (!attached && isSecure)
+                {
+                    if (!reportedBlocked)
+                    {
+                        reportedBlocked = true;
+                        OnSecureDesktopChanged(true);
+                    }
+                    token.WaitHandle.WaitOne(250);
+                    continue;
+                }
+
+                if (reportedBlocked)
+                {
+                    reportedBlocked = false;
+                    OnSecureDesktopChanged(false);
+                }
+
                 stopwatch.Restart();
                 int frameIntervalMs = Math.Max(5, 1000 / Math.Max(1, _targetFps));
 
@@ -96,14 +115,7 @@ namespace LanScreenShare.Media
                 int delay = frameIntervalMs - elapsed;
                 if (delay > 0)
                 {
-                    try
-                    {
-                        await Task.Delay(delay, token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
+                    token.WaitHandle.WaitOne(delay);
                 }
             }
         }
@@ -191,7 +203,7 @@ namespace LanScreenShare.Media
             height &= ~1;
         }
 
-        private sealed partial class GdiDesktopCaptureSession : IDisposable
+        internal sealed partial class GdiDesktopCaptureSession : IDisposable
         {
             public IntPtr HdcSrc { get; private set; }
             public IntPtr HdcDest { get; private set; }
@@ -329,16 +341,27 @@ namespace LanScreenShare.Media
             }
         }
 
+        internal static (int Left, int Top, int Width, int Height) GetPrimaryScreenBounds() =>
+            (0, 0, GetSystemMetrics(SM_CXSCREEN) & ~1, GetSystemMetrics(SM_CYSCREEN) & ~1);
+
+        internal static GdiDesktopCaptureSession? CaptureScreenRegionToDib(int left, int top, int width, int height)
+        {
+            var session = GdiDesktopCaptureSession.TryCreate(width, height);
+            if (session == null)
+                return null;
+
+            BitBlt(session.HdcDest, 0, 0, width, height, session.HdcSrc, left, top, SRCCOPY | CAPTUREBLT);
+            DrawMouseCursor(session.HdcDest, left, top);
+            return session;
+        }
+
         private CapturedFrame? CaptureDesktopFrame(in ScreenCaptureOptions options)
         {
             GetCaptureBounds(out int left, out int top, out int width, out int height);
             if (width <= 0 || height <= 0) return null;
 
-            using var session = GdiDesktopCaptureSession.TryCreate(width, height);
+            using var session = CaptureScreenRegionToDib(left, top, width, height);
             if (session == null) return null;
-
-            BitBlt(session.HdcDest, 0, 0, width, height, session.HdcSrc, left, top, SRCCOPY | CAPTUREBLT);
-            DrawMouseCursor(session.HdcDest, left, top);
 
             return EncodeCapturedBitmap(session.PBits, width, height, options);
         }
