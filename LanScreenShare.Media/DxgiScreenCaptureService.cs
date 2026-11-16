@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -22,8 +23,10 @@ namespace LanScreenShare.Media
         private volatile int _targetY = 0;
         private volatile int _targetSourceWidth = 0;
         private volatile int _targetSourceHeight = 0;
+        private readonly CursorSpriteRenderer _cursorRenderer = new();
 
         public event EventHandler<Exception>? CaptureFailed;
+        public bool IncludeCursor { get; set; } = true;
 
         protected override int StopWaitTimeoutMs => 1000;
         protected override bool ClearSecureDesktopOnStop => false;
@@ -195,8 +198,14 @@ namespace LanScreenShare.Media
             CancellationToken token)
         {
             bool hasCapturedAtLeastOneFrame = false;
-            int lastCursorX = int.MinValue;
-            int lastCursorY = int.MinValue;
+            var cursorState = CursorTrackingState.Initial;
+            var sessionBounds = new DxgiOutputRect
+            {
+                Left = session.Bounds.ScreenLeft,
+                Top = session.Bounds.ScreenTop,
+                Width = session.Bounds.ScreenWidth,
+                Height = session.Bounds.ScreenHeight
+            };
             var keepAliveStopwatch = Stopwatch.StartNew();
 
             while (!token.IsCancellationRequested)
@@ -218,7 +227,7 @@ namespace LanScreenShare.Media
                     break;
                 }
 
-                bool cursorMoved = DetectCursorMovement(ref lastCursorX, ref lastCursorY);
+                bool cursorMoved = IncludeCursor && DetectCursorMovement(sessionBounds, ref cursorState);
                 if (ShouldEncodeFrame(status, hasCapturedAtLeastOneFrame, cursorMoved, keepAliveStopwatch.ElapsedMilliseconds))
                 {
                     keepAliveStopwatch.Restart();
@@ -269,32 +278,29 @@ namespace LanScreenShare.Media
             return FrameAcquireStatus.NoFrame;
         }
 
-        private static bool HasCursorMoved(in NativePoint pos, int lastX, int lastY) =>
-            pos.x != lastX || pos.y != lastY;
-
-        private static bool TryGetVisibleCursorPosition(out NativePoint pos)
+        private static CursorSample TryGetCurrentCursorSample()
         {
             CursorInfo curInfo = new() { cbSize = Marshal.SizeOf<CursorInfo>() };
-            if (GetCursorInfo(ref curInfo) && curInfo.flags == CURSOR_SHOWING)
+            if (!GetCursorInfo(ref curInfo) || curInfo.flags != CURSOR_SHOWING)
             {
-                pos = curInfo.ptScreenPos;
-                return true;
+                return new CursorSample { IsVisible = false };
             }
 
-            pos = default;
-            return false;
+            return new CursorSample
+            {
+                IsVisible = true,
+                X = curInfo.ptScreenPos.x,
+                Y = curInfo.ptScreenPos.y,
+                Handle = curInfo.hCursor
+            };
         }
 
-        private static bool DetectCursorMovement(ref int lastCursorX, ref int lastCursorY)
+        private static bool DetectCursorMovement(in DxgiOutputRect bounds, ref CursorTrackingState state)
         {
             try
             {
-                if (TryGetVisibleCursorPosition(out var pos) && HasCursorMoved(pos, lastCursorX, lastCursorY))
-                {
-                    lastCursorX = pos.x;
-                    lastCursorY = pos.y;
-                    return true;
-                }
+                var sample = TryGetCurrentCursorSample();
+                return DxgiCursorTracker.ShouldRedrawCursor(sample, bounds, ref state);
             }
             catch
             {
@@ -460,53 +466,57 @@ namespace LanScreenShare.Media
             int CustomTargetHeight = 0,
             bool ForceKeyframe = false);
 
-        private readonly record struct CursorDrawOptions(
-            int ScreenLeft,
-            int ScreenTop,
-            float ScaleX = 1f,
-            float ScaleY = 1f);
+        private readonly record struct DxgiOutputEntry(
+            IDXGIAdapter1 Adapter,
+            IDXGIOutput Output,
+            DxgiOutputDescriptor Descriptor);
 
-        private static bool IsInsideBitmap(float x, float y, int width, int height) =>
-            x >= 0 && x < width && y >= 0 && y < height;
-
-        private bool MatchesTargetSourceDimensions(int left, int top, int width, int height) =>
-            _targetSourceWidth > 0 && _targetSourceHeight > 0 &&
-            left == _targetX && top == _targetY &&
-            width == _targetSourceWidth && height == _targetSourceHeight;
-
-        private static bool IsDefaultAdapterAndOutput(IDXGIOutput? selected, uint aIdx, uint oIdx, int defaultIdx) =>
-            selected == null && aIdx == 0 && oIdx == (uint)defaultIdx;
-
-        private bool MatchesOutputCriteria(IDXGIOutput curOutput, string? targetDev)
+        private static void CollectAdapterOutputs(
+            IDXGIAdapter1 adapter,
+            int adapterIndex,
+            List<DxgiOutputEntry> entries)
         {
-            string devName = curOutput.Description.DeviceName.TrimEnd('\0');
-            if (!string.IsNullOrEmpty(targetDev) && string.Equals(devName, targetDev, StringComparison.OrdinalIgnoreCase))
+            for (uint oIdx = 0; adapter.EnumOutputs(oIdx, out var curOutput).Success && curOutput != null; oIdx++)
             {
-                return true;
+                string devName = curOutput.Description.DeviceName.TrimEnd('\0');
+                var coords = curOutput.Description.DesktopCoordinates;
+                var descriptor = new DxgiOutputDescriptor
+                {
+                    AdapterIndex = adapterIndex,
+                    OutputIndex = (int)oIdx,
+                    DeviceName = devName,
+                    Bounds = new DxgiOutputRect
+                    {
+                        Left = coords.Left,
+                        Top = coords.Top,
+                        Width = coords.Right - coords.Left,
+                        Height = coords.Bottom - coords.Top
+                    }
+                };
+                entries.Add(new DxgiOutputEntry(adapter, curOutput, descriptor));
             }
-
-            var coords = curOutput.Description.DesktopCoordinates;
-            return MatchesTargetSourceDimensions(coords.Left, coords.Top, coords.Right - coords.Left, coords.Bottom - coords.Top);
         }
 
-        private IDXGIOutput? TrySelectAdapterOutput(IDXGIAdapter1 curAdapter, uint aIdx, string? targetDev, int matchOutputIdx)
+        private static void DisposeUnusedDxgiResources(
+            List<IDXGIAdapter1> adapters,
+            List<DxgiOutputEntry> entries,
+            DxgiOutputEntry? keepEntry = null)
         {
-            IDXGIOutput? matchedOutput = null;
-            for (uint oIdx = 0; curAdapter.EnumOutputs(oIdx, out var curOutput).Success && curOutput != null; oIdx++)
+            foreach (var entry in entries)
             {
-                bool match = MatchesOutputCriteria(curOutput, targetDev) ||
-                             IsDefaultAdapterAndOutput(matchedOutput, aIdx, oIdx, matchOutputIdx);
-
-                if (match && matchedOutput == null)
+                if (!ReferenceEquals(entry.Output, keepEntry?.Output))
                 {
-                    matchedOutput = curOutput;
-                }
-                else
-                {
-                    curOutput.Dispose();
+                    entry.Output.Dispose();
                 }
             }
-            return matchedOutput;
+
+            foreach (var adapter in adapters)
+            {
+                if (!ReferenceEquals(adapter, keepEntry?.Adapter))
+                {
+                    adapter.Dispose();
+                }
+            }
         }
 
         private static (IDXGIAdapter1 adapter, IDXGIOutput output) GetFallbackPrimaryAdapterAndOutput(IDXGIFactory1 factory)
@@ -530,18 +540,40 @@ namespace LanScreenShare.Media
             out IDXGIAdapter1 adapter,
             out IDXGIOutput output)
         {
+            var adapters = new List<IDXGIAdapter1>();
+            var entries = new List<DxgiOutputEntry>();
+
             for (uint aIdx = 0; factory.EnumAdapters1(aIdx, out var curAdapter).Success && curAdapter != null; aIdx++)
             {
-                var matchedOutput = TrySelectAdapterOutput(curAdapter, aIdx, _deviceName, _monitorIndex);
-                if (matchedOutput != null)
-                {
-                    adapter = curAdapter;
-                    output = matchedOutput;
-                    return;
-                }
-                curAdapter.Dispose();
+                adapters.Add(curAdapter);
+                CollectAdapterOutputs(curAdapter, (int)aIdx, entries);
             }
 
+            var descriptors = new DxgiOutputDescriptor[entries.Count];
+            for (int i = 0; i < entries.Count; i++)
+            {
+                descriptors[i] = entries[i].Descriptor;
+            }
+
+            var target = new DxgiOutputTarget(_deviceName, _monitorIndex, new DxgiOutputRect
+            {
+                Left = _targetX,
+                Top = _targetY,
+                Width = _targetSourceWidth,
+                Height = _targetSourceHeight
+            });
+
+            int selectedIndex = DxgiOutputSelector.SelectBestIndex(descriptors, target);
+            if (selectedIndex >= 0)
+            {
+                var winner = entries[selectedIndex];
+                adapter = winner.Adapter;
+                output = winner.Output;
+                DisposeUnusedDxgiResources(adapters, entries, winner);
+                return;
+            }
+
+            DisposeUnusedDxgiResources(adapters, entries);
             (adapter, output) = GetFallbackPrimaryAdapterAndOutput(factory);
         }
 
@@ -627,7 +659,13 @@ namespace LanScreenShare.Media
                 {
                     float scaleX = (float)finalWidth / Math.Max(1, buffer.Width);
                     float scaleY = (float)finalHeight / Math.Max(1, buffer.Height);
-                    DrawCursorOnBitmap(bitmapToEncode, new CursorDrawOptions(options.ScreenLeft, options.ScreenTop, scaleX, scaleY));
+                    DrawCursorOnBitmap(bitmapToEncode, new CursorRenderTarget
+                    {
+                        ScreenLeft = options.ScreenLeft,
+                        ScreenTop = options.ScreenTop,
+                        ScaleX = scaleX,
+                        ScaleY = scaleY
+                    });
 
                     string currentCodec = _codec;
                     byte[]? encodedBytes = currentCodec == "h264"
@@ -657,52 +695,31 @@ namespace LanScreenShare.Media
             }
         }
 
-        private static void DrawCursorOnBitmap(SKBitmap bitmap, in CursorDrawOptions options)
+        private void DrawCursorOnBitmap(SKBitmap bitmap, in CursorRenderTarget target)
         {
+            if (!IncludeCursor || CursorSpriteRenderer.AreMouseTrailsActive())
+                return;
+
             try
             {
-                CursorInfo cursorInfo = new CursorInfo { cbSize = Marshal.SizeOf<CursorInfo>() };
-                if (GetCursorInfo(ref cursorInfo) && cursorInfo.flags == CURSOR_SHOWING)
+                var sample = TryGetCurrentCursorSample();
+                if (sample.IsVisible)
                 {
-                    float x = (cursorInfo.ptScreenPos.x - options.ScreenLeft) * options.ScaleX;
-                    float y = (cursorInfo.ptScreenPos.y - options.ScreenTop) * options.ScaleY;
-
-                    if (IsInsideBitmap(x, y, bitmap.Width, bitmap.Height))
-                    {
-                        using var canvas = new SKCanvas(bitmap);
-                        using var fillPaint = new SKPaint
-                        {
-                            Color = SKColors.White,
-                            Style = SKPaintStyle.Fill,
-                            IsAntialias = true
-                        };
-                        using var strokePaint = new SKPaint
-                        {
-                            Color = SKColors.Black,
-                            Style = SKPaintStyle.Stroke,
-                            StrokeWidth = 1.5f,
-                            IsAntialias = true
-                        };
-
-                        using var builder = new SKPathBuilder();
-                        builder.MoveTo(x, y);
-                        builder.LineTo(x, y + 17);
-                        builder.LineTo(x + 4.5f, y + 13);
-                        builder.LineTo(x + 8.5f, y + 21);
-                        builder.LineTo(x + 11.5f, y + 19.5f);
-                        builder.LineTo(x + 7.5f, y + 11.5f);
-                        builder.LineTo(x + 13, y + 11.5f);
-                        builder.Close();
-
-                        using var path = builder.Detach();
-                        canvas.DrawPath(path, fillPaint);
-                        canvas.DrawPath(path, strokePaint);
-                    }
+                    _cursorRenderer.DrawCursor(bitmap, sample, target);
                 }
             }
             catch
             {
                 // Ignorar error de cursor
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing)
+            {
+                _cursorRenderer.Dispose();
             }
         }
         #region Win32 Cursor Structs & Imports
