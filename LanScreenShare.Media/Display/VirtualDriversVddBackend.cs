@@ -103,52 +103,32 @@ namespace LanScreenShare.Media.Display
                 File.Exists(_infPath) || File.Exists(_settingsPath),
                 HasRegisteredMttVddDevice);
 
-        public async Task<bool> EnsureDriverEnabledAsync(CancellationToken ct = default)
+        public Task<bool> EnsureDriverEnabledAsync(CancellationToken ct = default) =>
+            VirtualDriversVddBackend.EnsureDriverEnabledCoreAsync(
+                () => IsNamedPipeAvailable(VddPipeName),
+                () => RunScheduledTask(EnableTaskName),
+                TimeSpan.FromSeconds(5),
+                ct);
+
+        public Task DisableDriverAsync(CancellationToken ct = default) =>
+            VirtualDriversVddBackend.DisableDriverCoreAsync(
+                () => IsNamedPipeAvailable(VddPipeName),
+                () => RunScheduledTask(DisableTaskName),
+                TimeSpan.FromSeconds(3),
+                ct);
+
+        public string? FindVirtualDisplayDeviceName() =>
+            VirtualDriversVddBackend.SelectVddDeviceName(EnumerateDisplayAdapters());
+
+        private static System.Collections.Generic.IEnumerable<VirtualDriversVddBackend.DisplayAdapterEntry> EnumerateDisplayAdapters()
         {
-            if (IsNamedPipeAvailable(VddPipeName))
-                return true;
-
-            if (!RunScheduledTask(EnableTaskName))
-                return IsNamedPipeAvailable(VddPipeName);
-
-            return await WaitForPipeStateAsync(expectedAvailable: true, TimeSpan.FromSeconds(5), ct);
-        }
-
-        public async Task DisableDriverAsync(CancellationToken ct = default)
-        {
-            if (!IsNamedPipeAvailable(VddPipeName))
-                return;
-
-            if (RunScheduledTask(DisableTaskName))
-            {
-                await WaitForPipeStateAsync(expectedAvailable: false, TimeSpan.FromSeconds(3), ct);
-            }
-        }
-
-        internal sealed record DisplayAdapterEntry(
-            string DeviceName,
-            string DeviceString,
-            string DeviceId,
-            int StateFlags);
-
-        public string? FindVirtualDisplayDeviceName()
-        {
-            string? fallback = null;
             for (uint index = 0; index < 64; index++)
             {
                 if (!TryReadDisplayAdapter(index, out var entry))
-                    break;
+                    yield break;
 
-                if (!VirtualDriversVddBackend.IsMatchingVddAdapter(entry.DeviceId, entry.DeviceString))
-                    continue;
-
-                if ((entry.StateFlags & DisplayDeviceAttachedToDesktop) != 0)
-                    return entry.DeviceName;
-
-                fallback ??= entry.DeviceName;
+                yield return entry;
             }
-
-            return fallback;
         }
 
         private static bool RunScheduledTask(string taskName)
@@ -175,20 +155,6 @@ namespace LanScreenShare.Media.Display
             {
                 return false;
             }
-        }
-
-        private static async Task<bool> WaitForPipeStateAsync(bool expectedAvailable, TimeSpan timeout, CancellationToken ct)
-        {
-            DateTime deadline = DateTime.UtcNow.Add(timeout);
-            while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
-            {
-                if (IsNamedPipeAvailable(VddPipeName) == expectedAvailable)
-                    return true;
-
-                await Task.Delay(150, ct);
-            }
-
-            return IsNamedPipeAvailable(VddPipeName) == expectedAvailable;
         }
 
         private static bool IsNamedPipeAvailable(string pipeName)
@@ -231,7 +197,7 @@ namespace LanScreenShare.Media.Display
             }
         }
 
-        private static bool TryReadDisplayAdapter(uint index, out DisplayAdapterEntry entry)
+        private static bool TryReadDisplayAdapter(uint index, out VirtualDriversVddBackend.DisplayAdapterEntry entry)
         {
             byte[] buffer = VirtualDriversVddBackend.CreateDisplayDeviceBuffer();
             if (!EnumDisplayDevicesW(null, index, buffer, 0))
@@ -240,8 +206,7 @@ namespace LanScreenShare.Media.Display
                 return false;
             }
 
-            var fields = VirtualDriversVddBackend.ParseDisplayDeviceFields(buffer);
-            entry = new DisplayAdapterEntry(fields.DeviceName, fields.DeviceString, fields.DeviceId, fields.StateFlags);
+            entry = VirtualDriversVddBackend.ParseDisplayDeviceFields(buffer);
             return true;
         }
 
@@ -339,13 +304,85 @@ namespace LanScreenShare.Media.Display
             return buffer;
         }
 
-        internal static (string DeviceName, string DeviceString, string DeviceId, int StateFlags) ParseDisplayDeviceFields(ReadOnlySpan<byte> buffer)
+        internal sealed record DisplayAdapterEntry(
+            string DeviceName,
+            string DeviceString,
+            string DeviceId,
+            int StateFlags);
+
+        internal readonly record struct VddToggleOptions(bool ExpectedAvailable, TimeSpan Timeout, int PollIntervalMs = 150);
+
+        internal static async Task<bool> EnsureDriverEnabledCoreAsync(
+            Func<bool> isPipeAvailable,
+            Func<bool> runEnableTask,
+            TimeSpan timeout,
+            CancellationToken ct)
+        {
+            if (isPipeAvailable())
+                return true;
+
+            if (!runEnableTask())
+                return isPipeAvailable();
+
+            return await WaitForPipeStateCoreAsync(isPipeAvailable, new VddToggleOptions(true, timeout), ct);
+        }
+
+        internal static async Task DisableDriverCoreAsync(
+            Func<bool> isPipeAvailable,
+            Func<bool> runDisableTask,
+            TimeSpan timeout,
+            CancellationToken ct)
+        {
+            if (!isPipeAvailable())
+                return;
+
+            if (runDisableTask())
+            {
+                await WaitForPipeStateCoreAsync(isPipeAvailable, new VddToggleOptions(false, timeout), ct);
+            }
+        }
+
+        internal static async Task<bool> WaitForPipeStateCoreAsync(
+            Func<bool> isPipeAvailable,
+            VddToggleOptions options,
+            CancellationToken ct)
+        {
+            DateTime deadline = DateTime.UtcNow.Add(options.Timeout);
+            while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
+            {
+                if (isPipeAvailable() == options.ExpectedAvailable)
+                    return true;
+
+                await Task.Delay(options.PollIntervalMs, ct);
+            }
+
+            return isPipeAvailable() == options.ExpectedAvailable;
+        }
+
+        internal static string? SelectVddDeviceName(System.Collections.Generic.IEnumerable<DisplayAdapterEntry> entries)
+        {
+            string? fallback = null;
+            foreach (var entry in entries)
+            {
+                if (!IsMatchingVddAdapter(entry.DeviceId, entry.DeviceString))
+                    continue;
+
+                if ((entry.StateFlags & 0x00000001) != 0)
+                    return entry.DeviceName;
+
+                fallback ??= entry.DeviceName;
+            }
+
+            return fallback;
+        }
+
+        internal static DisplayAdapterEntry ParseDisplayDeviceFields(ReadOnlySpan<byte> buffer)
         {
             string deviceName = ReadUtf16NullTerminated(buffer.Slice(4, 64));
             string deviceString = ReadUtf16NullTerminated(buffer.Slice(68, 256));
             int stateFlags = BinaryPrimitives.ReadInt32LittleEndian(buffer.Slice(324, 4));
             string deviceId = ReadUtf16NullTerminated(buffer.Slice(328, 256));
-            return (deviceName, deviceString, deviceId, stateFlags);
+            return new DisplayAdapterEntry(deviceName, deviceString, deviceId, stateFlags);
         }
 
         private static bool IsMttVddId(string id) =>

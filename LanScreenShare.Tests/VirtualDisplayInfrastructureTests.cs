@@ -548,7 +548,25 @@ public class VirtualDisplayInfrastructureTests
         bool enabledDefault = await defaultEnv.EnsureDriverEnabledAsync();
         await defaultEnv.DisableDriverAsync();
 
+        bool alreadyUp = await VirtualDriversVddBackend.EnsureDriverEnabledCoreAsync(() => true, () => false, TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        bool enableTaskFails = await VirtualDriversVddBackend.EnsureDriverEnabledCoreAsync(() => false, () => false, TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        int enablePolls = 0;
+        bool enableBecomesReady = await VirtualDriversVddBackend.EnsureDriverEnabledCoreAsync(() => ++enablePolls >= 2, () => true, TimeSpan.FromMilliseconds(400), CancellationToken.None);
+        int disablePolls = 0;
+        await VirtualDriversVddBackend.DisableDriverCoreAsync(() => ++disablePolls < 2, () => true, TimeSpan.FromMilliseconds(400), CancellationToken.None);
+        await VirtualDriversVddBackend.DisableDriverCoreAsync(() => false, () => true, TimeSpan.FromMilliseconds(50), CancellationToken.None);
+
+        var selectedAttached = VirtualDriversVddBackend.SelectVddDeviceName([
+            new VirtualDriversVddBackend.DisplayAdapterEntry(@"\\.\DISPLAY1", "AMD Radeon", @"PCI\VEN_1002", 1),
+            new VirtualDriversVddBackend.DisplayAdapterEntry(@"\\.\DISPLAY13", "Virtual Display Driver", @"Root\MttVDD", 0),
+            new VirtualDriversVddBackend.DisplayAdapterEntry(@"\\.\DISPLAY14", "Virtual Display Driver", @"Root\MttVDD", 1)
+        ]);
+        var selectedFallback = VirtualDriversVddBackend.SelectVddDeviceName([
+            new VirtualDriversVddBackend.DisplayAdapterEntry(@"\\.\DISPLAY12", "Virtual Display Driver", @"Root\MttVDD", 0)
+        ]);
+
         Assert.AreEqual((true, true, true, false, true), (retrySucceeded, cleared, internalFallback, multiPathFail, enabledDefault));
+        Assert.AreEqual((true, false, true, @"\\.\DISPLAY14", @"\\.\DISPLAY12"), (alreadyUp, enableTaskFails, enableBecomesReady, selectedAttached, selectedFallback));
         Assert.IsNull(defaultEnv.FindVirtualDisplayDeviceName());
     }
 
