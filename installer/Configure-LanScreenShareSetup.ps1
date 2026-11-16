@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("Install", "Uninstall", "RepairVdd")]
@@ -171,6 +171,52 @@ function Find-MttVddDevice {
         Select-Object -First 1
 }
 
+function Register-SingleVddTask($Service, $Folder, [string]$TaskName, [string]$Arguments) {
+    $taskDef = $Service.NewTask(0)
+    $taskDef.RegistrationInfo.Description = "LanScreenShare Virtual Display Controller"
+    $taskDef.Principal.UserId = "NT AUTHORITY\SYSTEM"
+    $taskDef.Principal.LogonType = 5
+    $taskDef.Principal.RunLevel = 1
+    $taskDef.Settings.Enabled = $true
+    $taskDef.Settings.AllowDemandStart = $true
+    $taskDef.Settings.DisallowStartIfOnBatteries = $false
+    $taskDef.Settings.StopIfGoingOnBatteries = $false
+    $taskDef.Settings.Hidden = $true
+
+    $action = $taskDef.Actions.Create(0)
+    $action.Path = (Join-Path $env:SystemRoot "System32\pnputil.exe")
+    $action.Arguments = $Arguments
+
+    $sddl = "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;AU)"
+    $Folder.RegisterTaskDefinition($TaskName, $taskDef, 6, "NT AUTHORITY\SYSTEM", $null, 5, $sddl) | Out-Null
+}
+
+function Register-VddControlTasks([string]$InstanceId) {
+    try {
+        $service = New-Object -ComObject Schedule.Service
+        $service.Connect()
+        $rootFolder = $service.GetFolder([string][char]92)
+        Register-SingleVddTask $service $rootFolder "LanScreenShare-EnableVdd" "/enable-device `"$InstanceId`""
+        Register-SingleVddTask $service $rootFolder "LanScreenShare-DisableVdd" "/disable-device `"$InstanceId`""
+        Write-SetupLog "Tareas programadas LanScreenShare-EnableVdd / DisableVdd registradas para $InstanceId."
+    } catch {
+        Write-SetupLog "Advertencia registrando tareas programadas VDD: $($_.Exception.Message)"
+    }
+}
+
+function Unregister-VddControlTasks {
+    try {
+        $service = New-Object -ComObject Schedule.Service
+        $service.Connect()
+        $rootFolder = $service.GetFolder([string][char]92)
+        foreach ($name in @("LanScreenShare-EnableVdd", "LanScreenShare-DisableVdd")) {
+            try { $rootFolder.DeleteTask($name, 0) } catch { }
+        }
+    } catch {
+        # Best-effort cleanup
+    }
+}
+
 function Test-MttVddPipeAvailable {
     return [System.IO.Directory]::GetFiles("\\.\pipe\", "MTTVirtualDisplayPipe").Length -gt 0
 }
@@ -195,11 +241,31 @@ function Wait-ForMttVddReady {
     return Find-MttVddDevice
 }
 
+function Complete-VddRegistration($Device, [string]$StatusNote) {
+    Register-VddControlTasks -InstanceId $Device.InstanceId
+    & pnputil.exe /disable-device $Device.InstanceId | Out-Null
+    Write-SetupLog "$StatusNote ($($Device.InstanceId))."
+}
+
+function TryUpdateExistingVdd($ExistingDevice, [string]$InfPath) {
+    if ($null -eq $ExistingDevice) {
+        return $false
+    }
+    if ($ExistingDevice.Status -ne "OK") {
+        & pnputil.exe /enable-device $ExistingDevice.InstanceId | Out-Null
+    }
+    & pnputil.exe /add-driver $InfPath /install | Out-Null
+    $readyDev = Wait-ForMttVddReady
+    if ($null -eq $readyDev) {
+        return $false
+    }
+    Complete-VddRegistration $readyDev "Root\MttVDD actualizado y puesto en reposo"
+    return $true
+}
+
 function Ensure-RootMttVddDeviceNode([string]$InfPath) {
     $existing = Find-MttVddDevice
-    if (Test-MttVddDeviceHealthy $existing) {
-        Write-SetupLog "Dispositivo Root\MttVDD ya presente ($($existing.InstanceId), Status=$($existing.Status)); actualizando INF."
-        & pnputil.exe /add-driver $InfPath /install | Out-Null
+    if (TryUpdateExistingVdd $existing $InfPath) {
         return
     }
 
@@ -215,6 +281,7 @@ function Ensure-RootMttVddDeviceNode([string]$InfPath) {
     }
     $pipeReady = Test-MttVddPipeAvailable
     Write-SetupLog "Root\MttVDD instalado: InstanceId=$($finalDev.InstanceId), Status=$($finalDev.Status), PipeReady=$pipeReady"
+    Complete-VddRegistration $finalDev "Root\MttVDD puesto en reposo hasta iniciar Extender pantalla"
 }
 
 function Enable-InteractiveUacOnDefaultDesktop {
@@ -317,6 +384,11 @@ function Invoke-UninstallAction {
     Get-Process -Name "LanScreenShare.Desktop", "LanScreenShare.DisplayWatchdog" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
 
+    $existingVdd = Find-MttVddDevice
+    if ($null -ne $existingVdd) {
+        & pnputil.exe /disable-device $existingVdd.InstanceId | Out-Null
+    }
+    Unregister-VddControlTasks
     Remove-LanScreenShareFirewallRules
     Remove-TrustedLocalSigningCerts
     Remove-Item -Path $DefaultsJsonPath -Force -ErrorAction SilentlyContinue

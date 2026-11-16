@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Threading;
@@ -21,6 +23,9 @@ namespace LanScreenShare.Media.Display
         bool IsDriverPresent();
         string? ReadSettingsXml();
         void WriteSettingsXml(string xmlContent);
+        Task<bool> EnsureDriverEnabledAsync(CancellationToken ct = default) => Task.FromResult(true);
+        Task DisableDriverAsync(CancellationToken ct = default) => Task.CompletedTask;
+        string? FindVirtualDisplayDeviceName() => null;
     }
 
     [SupportedOSPlatform("windows")]
@@ -45,11 +50,9 @@ namespace LanScreenShare.Media.Display
             {
                 using var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.Out);
                 await pipe.ConnectAsync(_connectTimeoutMs, ct);
-                await using var writer = new StreamWriter(pipe, new UnicodeEncoding(bigEndian: false, byteOrderMark: false), leaveOpen: true)
-                {
-                    AutoFlush = true
-                };
-                await writer.WriteLineAsync(wireCommand.AsMemory(), ct);
+                byte[] payload = new UnicodeEncoding(bigEndian: false, byteOrderMark: false).GetBytes(wireCommand);
+                await pipe.WriteAsync(payload, ct);
+                await pipe.FlushAsync(ct);
                 return true;
             }
             catch
@@ -67,8 +70,13 @@ namespace LanScreenShare.Media.Display
     }
 
     [SupportedOSPlatform("windows")]
-    internal sealed class WindowsVddEnvironment : IVddEnvironment
+    internal sealed partial class WindowsVddEnvironment : IVddEnvironment
     {
+        private const string EnableTaskName = "LanScreenShare-EnableVdd";
+        private const string DisableTaskName = "LanScreenShare-DisableVdd";
+        private const string VddPipeName = "MTTVirtualDisplayPipe";
+        private const int DisplayDeviceAttachedToDesktop = 0x00000001;
+
         private readonly string _settingsPath;
         private readonly string _infPath;
 
@@ -90,9 +98,104 @@ namespace LanScreenShare.Media.Display
 
         public bool IsDriverPresent() =>
             VirtualDriversVddBackend.ResolveDriverPresence(
-                IsNamedPipeAvailable("MTTVirtualDisplayPipe"),
+                IsNamedPipeAvailable(VddPipeName),
                 File.Exists(_infPath) || File.Exists(_settingsPath),
                 HasRegisteredMttVddDevice);
+
+        public async Task<bool> EnsureDriverEnabledAsync(CancellationToken ct = default)
+        {
+            if (IsNamedPipeAvailable(VddPipeName))
+                return true;
+
+            if (!RunScheduledTask(EnableTaskName))
+                return IsNamedPipeAvailable(VddPipeName);
+
+            return await WaitForPipeStateAsync(expectedAvailable: true, TimeSpan.FromSeconds(5), ct);
+        }
+
+        public async Task DisableDriverAsync(CancellationToken ct = default)
+        {
+            if (!IsNamedPipeAvailable(VddPipeName))
+                return;
+
+            if (RunScheduledTask(DisableTaskName))
+            {
+                await WaitForPipeStateAsync(expectedAvailable: false, TimeSpan.FromSeconds(3), ct);
+            }
+        }
+
+        private readonly record struct DisplayAdapterEntry(
+            string DeviceName,
+            string DeviceString,
+            string DeviceId,
+            int StateFlags);
+
+        public string? FindVirtualDisplayDeviceName()
+        {
+            string? fallback = null;
+            for (uint index = 0; index < 64; index++)
+            {
+                if (!TryReadDisplayAdapter(index, out var entry))
+                    break;
+
+                if (!IsMatchingVddAdapter(entry.DeviceId, entry.DeviceString))
+                    continue;
+
+                if ((entry.StateFlags & DisplayDeviceAttachedToDesktop) != 0)
+                    return entry.DeviceName;
+
+                fallback ??= entry.DeviceName;
+            }
+
+            return fallback;
+        }
+
+        private static bool IsMatchingVddAdapter(string deviceId, string deviceString)
+        {
+            if (VirtualDriversVddBackend.HasMttVddHardwareId([deviceId]))
+                return true;
+
+            return deviceString.Contains("Virtual Display Driver", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool RunScheduledTask(string taskName)
+        {
+            try
+            {
+                using var proc = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "schtasks.exe",
+                    Arguments = $"/Run /TN \"{taskName}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                });
+                if (proc == null)
+                    return false;
+
+                proc.WaitForExit(3000);
+                return proc.ExitCode == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static async Task<bool> WaitForPipeStateAsync(bool expectedAvailable, TimeSpan timeout, CancellationToken ct)
+        {
+            DateTime deadline = DateTime.UtcNow.Add(timeout);
+            while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
+            {
+                if (IsNamedPipeAvailable(VddPipeName) == expectedAvailable)
+                    return true;
+
+                await Task.Delay(150, ct);
+            }
+
+            return IsNamedPipeAvailable(VddPipeName) == expectedAvailable;
+        }
 
         private static bool IsNamedPipeAvailable(string pipeName)
         {
@@ -106,11 +209,15 @@ namespace LanScreenShare.Media.Display
             }
         }
 
-        private static bool HasRegisteredMttVddDevice()
+        private static bool HasRegisteredMttVddDevice() =>
+            EnumKeyContainsMttVdd(@"SYSTEM\CurrentControlSet\Enum\ROOT\MTTVDD") ||
+            EnumKeyContainsMttVdd(@"SYSTEM\CurrentControlSet\Enum\ROOT\DISPLAY");
+
+        private static bool EnumKeyContainsMttVdd(string registryPath)
         {
             try
             {
-                using var rootKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\ROOT\DISPLAY");
+                using var rootKey = Registry.LocalMachine.OpenSubKey(registryPath);
                 if (rootKey == null)
                     return false;
 
@@ -129,6 +236,49 @@ namespace LanScreenShare.Media.Display
                 return false;
             }
         }
+
+        private static unsafe bool TryReadDisplayAdapter(uint index, out DisplayAdapterEntry entry)
+        {
+            var dd = new NativeDisplayDevice { cb = sizeof(NativeDisplayDevice) };
+            if (!EnumDisplayDevicesW(null, index, &dd, 0))
+            {
+                entry = default;
+                return false;
+            }
+
+            entry = new DisplayAdapterEntry(
+                ReadFixedString(dd.DeviceName, 32),
+                ReadFixedString(dd.DeviceString, 128),
+                ReadFixedString(dd.DeviceID, 128),
+                dd.StateFlags);
+            return true;
+        }
+
+        private static unsafe string ReadFixedString(char* buffer, int maxChars)
+        {
+            var span = new ReadOnlySpan<char>(buffer, maxChars);
+            int nullIdx = span.IndexOf('\0');
+            return (nullIdx >= 0 ? span[..nullIdx] : span).ToString();
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private unsafe struct NativeDisplayDevice
+        {
+            public int cb;
+            public fixed char DeviceName[32];
+            public fixed char DeviceString[128];
+            public int StateFlags;
+            public fixed char DeviceID[128];
+            public fixed char DeviceKey[128];
+        }
+
+        [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static unsafe partial bool EnumDisplayDevicesW(
+            string? lpDevice,
+            uint iDevNum,
+            NativeDisplayDevice* lpDisplayDevice,
+            uint dwFlags);
 
         public string? ReadSettingsXml() =>
             File.Exists(_settingsPath) ? File.ReadAllText(_settingsPath, Encoding.UTF8) : null;
@@ -212,20 +362,48 @@ namespace LanScreenShare.Media.Display
             string updatedXml = VddSettingsXmlHelper.UpdateMonitorCountAndMode(existingXml, targetCount, mode);
             _environment.WriteSettingsXml(updatedXml);
 
-            bool sent = await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.SetDisplayCount, targetCount), ct);
-            if (!sent)
+            if (!await _environment.EnsureDriverEnabledAsync(ct))
             {
                 RestorePreviousCountInSettings(mode);
                 return null;
             }
+
+            bool sent = await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.SetDisplayCount, targetCount), ct);
+            if (!sent)
+            {
+                RestorePreviousCountInSettings(mode);
+                await _environment.DisableDriverAsync(CancellationToken.None);
+                return null;
+            }
+
+            string? deviceName = await WaitForVirtualDeviceNameAsync(ct);
 
             return new VirtualDisplayInstance
             {
                 BackendId = Id,
                 MonitorId = targetCount.ToString(),
                 MonitorIndex = targetCount - 1,
+                DeviceName = deviceName,
                 Mode = mode
             };
+        }
+
+        private async Task<string?> WaitForVirtualDeviceNameAsync(CancellationToken ct)
+        {
+            string? found = _environment.FindVirtualDisplayDeviceName();
+            if (!string.IsNullOrWhiteSpace(found) || !(_environment is WindowsVddEnvironment))
+                return found;
+
+            DateTime deadline = DateTime.UtcNow.AddSeconds(2.5);
+            while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
+            {
+                await Task.Delay(150, ct);
+                found = _environment.FindVirtualDisplayDeviceName();
+                if (!string.IsNullOrWhiteSpace(found))
+                    return found;
+            }
+
+            return found;
         }
 
         public async Task<bool> UpdateModeAsync(string monitorId, VirtualDisplayMode mode, CancellationToken ct = default)
@@ -251,7 +429,12 @@ namespace LanScreenShare.Media.Display
                 VirtualDisplayMode.Default);
             _environment.WriteSettingsXml(updatedXml);
 
-            return await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.SetDisplayCount, restoreCount), ct);
+            bool sent = await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.SetDisplayCount, restoreCount), ct);
+            if (restoreCount == 0)
+            {
+                await _environment.DisableDriverAsync(ct);
+            }
+            return sent;
         }
 
         public Task<bool> SendHeartbeatAsync(string monitorId, CancellationToken ct = default) =>

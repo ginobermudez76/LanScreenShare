@@ -56,7 +56,8 @@ namespace LanScreenShare.Media.Display
             if (updated == null)
                 return true;
 
-            return _adapter.ApplySuppliedConfig(updated);
+            _adapter.ApplySuppliedConfig(updated);
+            return true;
         }
 
         public bool RestoreSnapshot(DisplayTopologySnapshot snapshot)
@@ -152,7 +153,9 @@ namespace LanScreenShare.Media.Display
                 var result = new List<DisplayPathSnapshot>((int)pathCount);
                 for (int i = 0; i < (int)pathCount; i++)
                 {
-                    result.Add(ToSnapshot(pathInfos[i], modeInfos));
+                    var snap = ToSnapshot(pathInfos[i], modeInfos);
+                    string? gdiName = QuerySourceDeviceName(pathInfos[i].SourceInfo.AdapterId, pathInfos[i].SourceInfo.Id);
+                    result.Add(string.IsNullOrWhiteSpace(gdiName) ? snap : snap with { DeviceName = gdiName });
                 }
 
                 paths = result;
@@ -175,6 +178,23 @@ namespace LanScreenShare.Media.Display
                     PopulateNativePathAndModes(paths[i], i, nativePaths, nativeModes);
                 }
 
+                if (InvokeSetDisplayConfig(nativePaths, nativeModes))
+                    return true;
+
+                for (int i = 0; i < nativePaths.Length; i++)
+                {
+                    nativePaths[i].TargetInfo.ModeInfoIdx = uint.MaxValue;
+                }
+
+                if (InvokeSetDisplayConfig(nativePaths, nativeModes))
+                    return true;
+
+                return paths.Count == 1 &&
+                    SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SdcApply | 0x00000001u /* SdcTopologyInternal */) == 0;
+            }
+
+            private static bool InvokeSetDisplayConfig(DisplayConfigPathInfo[] nativePaths, DisplayConfigModeInfo[] nativeModes)
+            {
                 var pathsHandle = GCHandle.Alloc(nativePaths, GCHandleType.Pinned);
                 var modesHandle = GCHandle.Alloc(nativeModes, GCHandleType.Pinned);
                 try
@@ -240,11 +260,21 @@ namespace LanScreenShare.Media.Display
             {
                 uint num = snap.RefreshRateNumerator > 0 ? snap.RefreshRateNumerator : 60;
                 uint den = snap.RefreshRateDenominator > 0 ? snap.RefreshRateDenominator : 1;
+                uint width = (uint)Math.Max(1, snap.Width);
+                uint height = (uint)Math.Max(1, snap.Height);
+                ulong hz = Math.Max(1UL, num / Math.Max(1u, den));
                 var mode = new DisplayConfigModeInfo { InfoType = DisplayConfigModeInfoTypeTarget, Id = snap.TargetId, AdapterId = luid };
-                mode.TargetActiveWidth = (uint)Math.Max(1, snap.Width);
-                mode.TargetActiveHeight = (uint)Math.Max(1, snap.Height);
+                mode.TargetPixelRate = width * height * hz;
+                mode.TargetHSyncNumerator = (uint)(height * hz * 11 / 10);
+                mode.TargetHSyncDenominator = 1;
                 mode.TargetVSyncNumerator = num;
                 mode.TargetVSyncDenominator = den;
+                mode.TargetActiveWidth = width;
+                mode.TargetActiveHeight = height;
+                mode.TargetTotalWidth = width;
+                mode.TargetTotalHeight = height;
+                mode.TargetVideoStandard = 255;
+                mode.TargetScanLineOrdering = 1;
                 return mode;
             }
 
@@ -321,11 +351,57 @@ namespace LanScreenShare.Media.Display
                 [FieldOffset(28)] public int PositionX;
                 [FieldOffset(32)] public int PositionY;
 
+                [FieldOffset(16)] public ulong TargetPixelRate;
+                [FieldOffset(24)] public uint TargetHSyncNumerator;
+                [FieldOffset(28)] public uint TargetHSyncDenominator;
                 [FieldOffset(32)] public uint TargetVSyncNumerator;
                 [FieldOffset(36)] public uint TargetVSyncDenominator;
                 [FieldOffset(40)] public uint TargetActiveWidth;
                 [FieldOffset(44)] public uint TargetActiveHeight;
+                [FieldOffset(48)] public uint TargetTotalWidth;
+                [FieldOffset(52)] public uint TargetTotalHeight;
+                [FieldOffset(56)] public uint TargetVideoStandard;
+                [FieldOffset(60)] public uint TargetScanLineOrdering;
             }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct DisplayConfigDeviceInfoHeader
+            {
+                public uint Type;
+                public uint Size;
+                public Luid AdapterId;
+                public uint Id;
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private unsafe struct DisplayConfigSourceDeviceName
+            {
+                public DisplayConfigDeviceInfoHeader Header;
+                public fixed char ViewGdiDeviceName[32];
+            }
+
+            private static unsafe string? QuerySourceDeviceName(Luid adapterId, uint sourceId)
+            {
+                var packet = new DisplayConfigSourceDeviceName
+                {
+                    Header = new DisplayConfigDeviceInfoHeader
+                    {
+                        Type = 1,
+                        Size = (uint)sizeof(DisplayConfigSourceDeviceName),
+                        AdapterId = adapterId,
+                        Id = sourceId
+                    }
+                };
+                if (DisplayConfigGetDeviceInfo(&packet) != 0)
+                    return null;
+
+                var span = new ReadOnlySpan<char>(packet.ViewGdiDeviceName, 32);
+                int nullIdx = span.IndexOf('\0');
+                return (nullIdx >= 0 ? span[..nullIdx] : span).ToString();
+            }
+
+            [LibraryImport("user32.dll")]
+            private static unsafe partial int DisplayConfigGetDeviceInfo(DisplayConfigSourceDeviceName* requestPacket);
 
             [LibraryImport("user32.dll")]
             private static partial int GetDisplayConfigBufferSizes(

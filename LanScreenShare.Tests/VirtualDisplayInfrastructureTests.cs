@@ -348,7 +348,7 @@ public class VirtualDisplayInfrastructureTests
     public async Task VddAndParsecBackends_WithFakeTransports_CreateUpdateDestroyAndRollbackCleanly()
     {
         var pipeTransport = new FakeVddPipeTransport();
-        var env = new FakeVddEnvironment { Present = true };
+        var env = new FakeVddEnvironment { Present = true, DeviceName = @"\\.\DISPLAY14" };
         var vddBackend = new VirtualDriversVddBackend(pipeTransport, env);
 
         var vddMonitor = await vddBackend.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
@@ -360,14 +360,18 @@ public class VirtualDisplayInfrastructureTests
         pipeTransport.ShouldFail = true;
         var failedCreate = await vddBackend.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
 
+        pipeTransport.ShouldFail = false;
+        env.FailEnable = true;
+        var failedEnable = await vddBackend.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
+
         var parsecTransport = new FakeParsecTransport { Installed = true, NextAddIndex = 3 };
         using var parsecBackend = new ParsecVddBackend(parsecTransport);
         var parsecMonitor = await parsecBackend.CreateVirtualMonitorAsync(VirtualDisplayMode.Default);
         bool heartbeatOk = await parsecBackend.SendHeartbeatAsync(parsecMonitor!.MonitorId);
         bool parsecDestroyed = await parsecBackend.DestroyVirtualMonitorAsync(parsecMonitor.MonitorId);
 
-        Assert.AreEqual((true, true, true, (VirtualDisplayInstance?)null), (vddUpdated, vddHeartbeat, vddDestroyed, failedCreate));
-        Assert.AreEqual((0, VddCommandKind.SetDisplayCount, 0), (VddSettingsXmlHelper.ReadMonitorCount(env.Xml ?? string.Empty), commandAfterDestroy.Kind, commandAfterDestroy.Count));
+        Assert.AreEqual((@"\\.\DISPLAY14", true, true, true, (VirtualDisplayInstance?)null, (VirtualDisplayInstance?)null), (vddMonitor.DeviceName, vddUpdated, vddHeartbeat, vddDestroyed, failedCreate, failedEnable));
+        Assert.AreEqual((0, VddCommandKind.SetDisplayCount, 0, true), (VddSettingsXmlHelper.ReadMonitorCount(env.Xml ?? string.Empty), commandAfterDestroy.Kind, commandAfterDestroy.Count, env.DisableCalls >= 1));
         Assert.AreEqual(("3", true, true, 3), (parsecMonitor.MonitorId, heartbeatOk, parsecDestroyed, parsecTransport.LastRemovedIndex));
     }
 
@@ -532,10 +536,20 @@ public class VirtualDisplayInfrastructureTests
     {
         public bool Present { get; set; }
         public string? Xml { get; set; }
+        public string? DeviceName { get; set; }
+        public bool FailEnable { get; set; }
+        public int DisableCalls { get; private set; }
 
         public bool IsDriverPresent() => Present;
         public string? ReadSettingsXml() => Xml;
         public void WriteSettingsXml(string xmlContent) => Xml = xmlContent;
+        public Task<bool> EnsureDriverEnabledAsync(CancellationToken ct = default) => Task.FromResult(!FailEnable);
+        public Task DisableDriverAsync(CancellationToken ct = default)
+        {
+            DisableCalls++;
+            return Task.CompletedTask;
+        }
+        public string? FindVirtualDisplayDeviceName() => DeviceName;
     }
 
     private sealed class FakeParsecTransport : IParsecDeviceTransport
