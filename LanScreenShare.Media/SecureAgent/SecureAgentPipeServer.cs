@@ -167,40 +167,50 @@ public sealed class SecureAgentPipeServer : IAsyncDisposable
 
         public void HandleIncomingPacket(in SecureAgentPacket packet)
         {
+            if (TryHandleCaptureCommand(packet))
+                return;
+
+            HandleControlOrInputCommand(packet);
+        }
+
+        private bool TryHandleCaptureCommand(in SecureAgentPacket packet)
+        {
             switch (packet.Type)
             {
                 case SecureAgentMessageType.StartCapture:
                     StartCaptureFromRequest(packet.Payload);
-                    break;
-
+                    return true;
                 case SecureAgentMessageType.StopCapture:
                     StopActiveCapture();
-                    break;
-
+                    return true;
                 case SecureAgentMessageType.UpdateSettings:
                     UpdateActiveCaptureSettings(packet.Payload);
-                    break;
-
+                    return true;
                 case SecureAgentMessageType.RequestKeyframe:
                     _captureService?.RequestKeyframe();
-                    break;
+                    return true;
+                default:
+                    return false;
+            }
+        }
 
+        private void HandleControlOrInputCommand(in SecureAgentPacket packet)
+        {
+            switch (packet.Type)
+            {
                 case SecureAgentMessageType.SetInputTarget:
                     CaptureSourceDto? dto = SecureAgentProtocol.DecodeJson<CaptureSourceDto>(packet.Payload);
                     if (dto != null)
                         _inputSimulator.SetTargetSource(dto.ToModel());
                     break;
-
                 case SecureAgentMessageType.SimulateInput:
                     RemoteInputMessage? input = SecureAgentProtocol.DecodeInputPayload(packet.Payload);
                     if (input != null)
                         _inputSimulator.SimulateInput(input);
                     break;
-
                 case SecureAgentMessageType.ReleaseInputs:
                     _inputSimulator.ReleaseInjectedInputs();
                     break;
-
                 case SecureAgentMessageType.Ping:
                     _outgoing.TryWrite(new SecureAgentPacket(SecureAgentMessageType.Pong, Array.Empty<byte>()));
                     break;
@@ -229,15 +239,12 @@ public sealed class SecureAgentPipeServer : IAsyncDisposable
 
         private void UpdateActiveCaptureSettings(ReadOnlySpan<byte> payload)
         {
-            if (_captureService == null)
+            if (_captureService == null || payload.IsEmpty)
                 return;
 
-            CaptureProfile? profile = SecureAgentProtocol.DecodeJson<CaptureProfile>(payload);
-            if (profile.HasValue)
-            {
-                _captureService.UpdateSettings(profile.Value);
-                PublishStatusSnapshot(_captureService);
-            }
+            CaptureProfile profile = SecureAgentProtocol.DecodeJson<CaptureProfile>(payload);
+            _captureService.UpdateSettings(profile);
+            PublishStatusSnapshot(_captureService);
         }
 
         private void StopActiveCapture()

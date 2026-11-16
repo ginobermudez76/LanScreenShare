@@ -25,7 +25,7 @@ internal static class Program
         }
 
         using var cts = new CancellationTokenSource();
-        using Task? parentMonitor = StartParentMonitorIfRequested(options.ParentPid, cts);
+        Task parentMonitor = StartParentMonitorIfRequested(options.ParentPid, cts);
 
         await using var server = new SecureAgentPipeServer(
             CaptureServiceFactory.Create,
@@ -33,6 +33,8 @@ internal static class Program
             options.PipeName);
 
         await server.RunAsync(cts.Token).ConfigureAwait(false);
+        await cts.CancelAsync().ConfigureAwait(false);
+        try { await parentMonitor.ConfigureAwait(false); } catch { /* Best effort */ }
         return 0;
     }
 
@@ -41,10 +43,10 @@ internal static class Program
             ? new WindowsInputSimulatorService()
             : new NullInputSimulatorService();
 
-    private static Task? StartParentMonitorIfRequested(int parentPid, CancellationTokenSource cts)
+    private static Task StartParentMonitorIfRequested(int parentPid, CancellationTokenSource cts)
     {
         if (parentPid <= 0)
-            return null;
+            return Task.CompletedTask;
 
         return Task.Run(async () =>
         {

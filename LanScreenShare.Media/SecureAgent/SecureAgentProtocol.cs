@@ -24,37 +24,40 @@ public enum SecureAgentMessageType : byte
     Pong = 0x84
 }
 
-public sealed record CaptureSourceDto(
-    CaptureSourceType Type,
-    string Id,
-    string Name,
-    string? Subtitle,
-    long HandleValue,
-    int MonitorIndex,
-    string? DeviceName,
-    string? ProcessName,
-    int ProcessId,
-    int X,
-    int Y,
-    int Width,
-    int Height,
-    bool IsPrimary)
+public sealed record CaptureSourceDto
 {
-    public static CaptureSourceDto FromModel(CaptureSource source) => new(
-        source.Type,
-        source.Id,
-        source.Name,
-        source.Subtitle,
-        source.Handle.ToInt64(),
-        source.MonitorIndex,
-        source.DeviceName,
-        source.ProcessName,
-        source.ProcessId,
-        source.X,
-        source.Y,
-        source.Width,
-        source.Height,
-        source.IsPrimary);
+    public CaptureSourceType Type { get; init; }
+    public string Id { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public string? Subtitle { get; init; }
+    public long HandleValue { get; init; }
+    public int MonitorIndex { get; init; }
+    public string? DeviceName { get; init; }
+    public string? ProcessName { get; init; }
+    public int ProcessId { get; init; }
+    public int X { get; init; }
+    public int Y { get; init; }
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public bool IsPrimary { get; init; }
+
+    public static CaptureSourceDto FromModel(CaptureSource source) => new()
+    {
+        Type = source.Type,
+        Id = source.Id,
+        Name = source.Name,
+        Subtitle = source.Subtitle,
+        HandleValue = source.Handle.ToInt64(),
+        MonitorIndex = source.MonitorIndex,
+        DeviceName = source.DeviceName,
+        ProcessName = source.ProcessName,
+        ProcessId = source.ProcessId,
+        X = source.X,
+        Y = source.Y,
+        Width = source.Width,
+        Height = source.Height,
+        IsPrimary = source.IsPrimary
+    };
 
     public CaptureSource ToModel() => new()
     {

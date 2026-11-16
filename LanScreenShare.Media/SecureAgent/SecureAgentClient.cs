@@ -80,19 +80,22 @@ public sealed class SecureAgentClient : IDisposable
         }
     }
 
+    private bool IsPipeActive(NamedPipeClientStream? pipe) =>
+        !_disposed && pipe is { IsConnected: true } && ReferenceEquals(_pipe, pipe);
+
     public async Task<bool> SendAsync(SecureAgentMessageType type, ReadOnlyMemory<byte> payload, CancellationToken ct = default)
     {
         NamedPipeClientStream? pipe = _pipe;
-        if (_disposed || pipe == null || !pipe.IsConnected)
+        if (!IsPipeActive(pipe))
             return false;
 
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_disposed || _pipe != pipe || !pipe.IsConnected)
+            if (!IsPipeActive(pipe))
                 return false;
 
-            await SecureAgentProtocol.WritePacketAsync(pipe, type, payload, ct).ConfigureAwait(false);
+            await SecureAgentProtocol.WritePacketAsync(pipe!, type, payload, ct).ConfigureAwait(false);
             return true;
         }
         catch
@@ -187,7 +190,7 @@ public sealed class SecureAgentClient : IDisposable
 
         _disposed = true;
         DisconnectPipe();
-        try { _readerTask?.Wait(250); } catch { /* Best effort */ }
+        try { _readerTask?.Wait(250, CancellationToken.None); } catch { /* Best effort */ }
         _writeLock.Dispose();
         GC.SuppressFinalize(this);
     }

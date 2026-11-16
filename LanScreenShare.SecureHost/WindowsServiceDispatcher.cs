@@ -84,15 +84,17 @@ internal sealed partial class WindowsServiceDispatcher
         ReportStatus(ServiceStartPending, waitHintMs: 3000);
         SecureDesktopPolicySanitizer.RestoreIfDisabled();
 
-        _serviceCts = new CancellationTokenSource();
+        using var serviceCts = new CancellationTokenSource();
+        _serviceCts = serviceCts;
         var launcher = new WindowsSystemSessionLauncher();
         using var supervisor = new SessionAgentSupervisor(launcher, _activePipeName, Environment.ProcessId);
         _supervisor = supervisor;
 
         ReportStatus(ServiceRunning, waitHintMs: 0);
-        supervisor.RunAsync(_serviceCts.Token).GetAwaiter().GetResult();
+        supervisor.RunAsync(serviceCts.Token).GetAwaiter().GetResult();
 
         _supervisor = null;
+        _serviceCts = null;
         ReportStatus(ServiceStopped, waitHintMs: 0);
         GC.KeepAlive(_ctrlHandlerDelegate);
     }

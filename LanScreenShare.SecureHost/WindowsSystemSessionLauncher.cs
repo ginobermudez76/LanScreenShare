@@ -27,25 +27,58 @@ internal sealed partial class WindowsSystemSessionLauncher : ISessionAgentLaunch
         if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
             return null;
 
-        if (!OpenProcessToken(GetCurrentProcess(), TokenAllAccess, out IntPtr hSystemToken))
+        if (!TryCreateSessionPrimaryToken(sessionId, out IntPtr hPrimaryToken))
             return null;
 
-        IntPtr hPrimaryToken = IntPtr.Zero;
-        IntPtr envBlock = IntPtr.Zero;
-        IntPtr lpDesktop = IntPtr.Zero;
         try
         {
-            if (!DuplicateTokenEx(hSystemToken, MaximumAllowed, IntPtr.Zero, SecurityImpersonation, TokenPrimary, out hPrimaryToken))
-                return null;
+            return SpawnProcessWithToken(hPrimaryToken, exePath, parentPid, pipeName);
+        }
+        finally
+        {
+            CloseHandle(hPrimaryToken);
+        }
+    }
+
+    private static bool TryCreateSessionPrimaryToken(uint sessionId, out IntPtr hPrimaryToken)
+    {
+        hPrimaryToken = IntPtr.Zero;
+        if (!OpenProcessToken(GetCurrentProcess(), TokenAllAccess, out IntPtr hSystemToken))
+            return false;
+
+        try
+        {
+            if (!DuplicateTokenEx(hSystemToken, MaximumAllowed, IntPtr.Zero, SecurityImpersonation, TokenPrimary, out IntPtr dupToken))
+                return false;
 
             byte[] sessionBytes = BitConverter.GetBytes(sessionId);
-            if (!SetTokenInformation(hPrimaryToken, TokenSessionId, sessionBytes, (uint)sessionBytes.Length))
-                return null;
+            if (!SetTokenInformation(dupToken, TokenSessionId, sessionBytes, (uint)sessionBytes.Length))
+            {
+                CloseHandle(dupToken);
+                return false;
+            }
 
+            hPrimaryToken = dupToken;
+            return true;
+        }
+        finally
+        {
+            CloseHandle(hSystemToken);
+        }
+    }
+
+    private static SpawnedProcessWrapper? SpawnProcessWithToken(
+        IntPtr hPrimaryToken,
+        string exePath,
+        int parentPid,
+        string pipeName)
+    {
+        IntPtr envBlock = IntPtr.Zero;
+        IntPtr lpDesktop = Marshal.StringToHGlobalUni(@"winsta0\default");
+        try
+        {
             bool hasEnv = CreateEnvironmentBlock(out envBlock, hPrimaryToken, false);
             uint creationFlags = CreateNoWindow | (hasEnv ? CreateUnicodeEnvironment : 0);
-            lpDesktop = Marshal.StringToHGlobalUni(@"winsta0\default");
-
             var startupInfo = new StartupInfoW
             {
                 cb = Marshal.SizeOf<StartupInfoW>(),
@@ -56,7 +89,6 @@ internal sealed partial class WindowsSystemSessionLauncher : ISessionAgentLaunch
 
             string commandLine = $"\"{exePath}\" --session-agent --parent-pid {parentPid} --pipe \"{pipeName}\"";
             string workDir = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
-
             if (!CreateProcessAsUserW(
                 hPrimaryToken,
                 exePath,
@@ -75,19 +107,16 @@ internal sealed partial class WindowsSystemSessionLauncher : ISessionAgentLaunch
 
             if (procInfo.hThread != IntPtr.Zero) CloseHandle(procInfo.hThread);
             if (procInfo.hProcess != IntPtr.Zero) CloseHandle(procInfo.hProcess);
-
             return TryWrapProcess(procInfo.dwProcessId);
         }
         finally
         {
-            if (lpDesktop != IntPtr.Zero) Marshal.FreeHGlobal(lpDesktop);
+            Marshal.FreeHGlobal(lpDesktop);
             if (envBlock != IntPtr.Zero) DestroyEnvironmentBlock(envBlock);
-            if (hPrimaryToken != IntPtr.Zero) CloseHandle(hPrimaryToken);
-            CloseHandle(hSystemToken);
         }
     }
 
-    private static ISpawnedAgentProcess? TryWrapProcess(uint processId)
+    private static SpawnedProcessWrapper? TryWrapProcess(uint processId)
     {
         try
         {

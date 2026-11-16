@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("Install", "Uninstall", "RepairVdd")]
@@ -289,10 +289,14 @@ function Restore-SecureDesktopPolicyIfDisabled {
         return
     }
     $prop = Get-ItemProperty -Path $UacPolicyKeyPath -Name "PromptOnSecureDesktop" -ErrorAction SilentlyContinue
-    if ($null -ne $prop -and $null -ne $prop.PromptOnSecureDesktop -and [int]$prop.PromptOnSecureDesktop -eq 0) {
-        Set-ItemProperty -Path $UacPolicyKeyPath -Name "PromptOnSecureDesktop" -Value 1 -Type DWord -Force
-        Write-SetupLog "PromptOnSecureDesktop restaurado a 1 (Escritorio Seguro Winlogon habilitado)."
+    if ($null -eq $prop -or $null -eq $prop.PromptOnSecureDesktop) {
+        return
     }
+    if ([int]$prop.PromptOnSecureDesktop -ne 0) {
+        return
+    }
+    Set-ItemProperty -Path $UacPolicyKeyPath -Name "PromptOnSecureDesktop" -Value 1 -Type DWord -Force
+    Write-SetupLog "PromptOnSecureDesktop restaurado a 1 (Escritorio Seguro Winlogon habilitado)."
 }
 
 function Uninstall-SecureHostService {

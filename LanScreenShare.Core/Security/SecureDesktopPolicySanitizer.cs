@@ -61,8 +61,8 @@ public static class SecureDesktopPolicySanitizer
     }
 
     [SupportedOSPlatform("windows")]
-    private static IPromptOnSecureDesktopStore CreateDefaultWindowsStore() =>
-        new WindowsRegistryPromptOnSecureDesktopStore();
+    private static WindowsRegistryPromptOnSecureDesktopStore CreateDefaultWindowsStore() =>
+        new();
 
     [SupportedOSPlatform("windows")]
     private sealed class WindowsRegistryPromptOnSecureDesktopStore : IPromptOnSecureDesktopStore

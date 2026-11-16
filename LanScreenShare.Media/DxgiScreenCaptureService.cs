@@ -139,8 +139,8 @@ namespace LanScreenShare.Media
             HostFpsTracker fpsTracker,
             CancellationToken token)
         {
-            var (left, top, width, height) = ResolveWinlogonFallbackBounds();
-            if (width <= 0 || height <= 0)
+            var bounds = ResolveWinlogonFallbackBounds();
+            if (bounds.Width <= 0 || bounds.Height <= 0)
             {
                 token.WaitHandle.WaitOne(100);
                 return;
@@ -156,25 +156,29 @@ namespace LanScreenShare.Media
 
                 stopwatch.Restart();
                 int frameIntervalMs = Math.Max(5, 1000 / Math.Max(1, _targetFps));
-                var procSw = Stopwatch.StartNew();
-
-                using var dib = WindowsScreenCaptureService.CaptureScreenRegionToDib(left, top, width, height);
-                if (dib != null)
-                {
-                    var frame = EncodeFrameFromPointer(
-                        new RawFrameBuffer(dib.PBits, width, height, width * 4),
-                        new FrameEncodingOptions(_quality, ResolutionScale, left, top, _targetWidth, _targetHeight, ConsumeKeyframeRequest()));
-                    if (frame != null)
-                    {
-                        procSw.Stop();
-                        frame.HostFrameTimeMs = (int)procSw.ElapsedMilliseconds;
-                        frame.HostFps = fpsTracker.RecordFrameAndGetFps();
-                        OnFrameCaptured(frame);
-                    }
-                }
-
+                CaptureAndDispatchWinlogonGdiFrame(bounds, fpsTracker);
                 ApplyFramePacing(stopwatch, frameIntervalMs);
             }
+        }
+
+        private void CaptureAndDispatchWinlogonGdiFrame(
+            (int Left, int Top, int Width, int Height) bounds,
+            HostFpsTracker fpsTracker)
+        {
+            var procSw = Stopwatch.StartNew();
+            using var dib = WindowsScreenCaptureService.CaptureScreenRegionToDib(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
+            if (dib == null)
+                return;
+
+            var options = new FrameEncodingOptions(_quality, ResolutionScale, bounds.Left, bounds.Top, _targetWidth, _targetHeight, ConsumeKeyframeRequest());
+            var frame = EncodeFrameFromPointer(new RawFrameBuffer(dib.PBits, bounds.Width, bounds.Height, bounds.Width * 4), options);
+            if (frame == null)
+                return;
+
+            procSw.Stop();
+            frame.HostFrameTimeMs = (int)procSw.ElapsedMilliseconds;
+            frame.HostFps = fpsTracker.RecordFrameAndGetFps();
+            OnFrameCaptured(frame);
         }
 
         private void WaitForSecureDesktopExit(CancellationToken token)
@@ -204,44 +208,58 @@ namespace LanScreenShare.Media
             {
                 while (!token.IsCancellationRequested)
                 {
-                    bool attached = WindowsDesktopManager.TryAttachThreadToInputDesktopDetailed(out _, out bool isSecure, out _);
-                    if (DesktopSwitchClassifier.ResolveDxgiDisposition(isSecure, attached) == DxgiDesktopDisposition.PauseUnauthorizedSecureDesktop)
-                    {
-                        WaitForSecureDesktopExit(token);
-                        continue;
-                    }
-
-                    OnSecureDesktopChanged(false);
-                    try
-                    {
-                        using var session = CreateDxgiSession();
-                        RunSessionCaptureLoop(session, stopwatch, fpsTracker, token);
-                    }
-                    catch (Exception ex)
-                    {
-                        bool catchAttached = WindowsDesktopManager.TryAttachThreadToInputDesktopDetailed(out _, out bool catchSecure, out _);
-                        if (DesktopSwitchClassifier.ResolveDxgiDisposition(catchSecure, catchAttached) == DxgiDesktopDisposition.PauseUnauthorizedSecureDesktop)
-                        {
-                            WaitForSecureDesktopExit(token);
-                            continue;
-                        }
-
-                        if (catchSecure && catchAttached)
-                        {
-                            RunWinlogonGdiFallbackLoop(stopwatch, fpsTracker, token);
-                            continue;
-                        }
-
-                        Console.WriteLine($"[DXGI Capture] Error en bucle DXGI: {ex.Message}");
-                        CaptureFailed?.Invoke(this, ex);
-                        Thread.Sleep(500);
-                    }
+                    RunSingleDxgiIteration(stopwatch, fpsTracker, token);
                 }
             }
             finally
             {
                 RevertMmcss(mmcssHandle);
             }
+        }
+
+        private void RunSingleDxgiIteration(Stopwatch stopwatch, HostFpsTracker fpsTracker, CancellationToken token)
+        {
+            bool attached = WindowsDesktopManager.TryAttachThreadToInputDesktopDetailed(out _, out bool isSecure, out _);
+            if (DesktopSwitchClassifier.ResolveDxgiDisposition(isSecure, attached) == DxgiDesktopDisposition.PauseUnauthorizedSecureDesktop)
+            {
+                WaitForSecureDesktopExit(token);
+                return;
+            }
+
+            OnSecureDesktopChanged(false);
+            try
+            {
+                using var session = CreateDxgiSession();
+                RunSessionCaptureLoop(session, stopwatch, fpsTracker, token);
+            }
+            catch (Exception ex)
+            {
+                HandleCaptureLoopException(ex, stopwatch, fpsTracker, token);
+            }
+        }
+
+        private void HandleCaptureLoopException(
+            Exception ex,
+            Stopwatch stopwatch,
+            HostFpsTracker fpsTracker,
+            CancellationToken token)
+        {
+            bool catchAttached = WindowsDesktopManager.TryAttachThreadToInputDesktopDetailed(out _, out bool catchSecure, out _);
+            if (DesktopSwitchClassifier.ResolveDxgiDisposition(catchSecure, catchAttached) == DxgiDesktopDisposition.PauseUnauthorizedSecureDesktop)
+            {
+                WaitForSecureDesktopExit(token);
+                return;
+            }
+
+            if (catchSecure && catchAttached)
+            {
+                RunWinlogonGdiFallbackLoop(stopwatch, fpsTracker, token);
+                return;
+            }
+
+            Console.WriteLine($"[DXGI Capture] Error en bucle DXGI: {ex.Message}");
+            CaptureFailed?.Invoke(this, ex);
+            Thread.Sleep(500);
         }
 
         private bool ShouldEncodeFrame(
