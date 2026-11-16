@@ -46,6 +46,7 @@ Name: "installvdd"; Description: "Instalar controlador de Pantalla Inalámbrica 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Configure-LanScreenShareSetup.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "VddRootDeviceInstaller.cs.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
