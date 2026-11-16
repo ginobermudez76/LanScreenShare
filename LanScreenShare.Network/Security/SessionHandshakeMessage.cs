@@ -1,8 +1,5 @@
 using System;
-using System.Buffers.Binary;
 using System.IO;
-using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using LanScreenShare.Core.Security;
@@ -18,11 +15,12 @@ public sealed class SessionHandshakeMessage
 {
     public const int MaxSignalingPayloadBytes = 16 * 1024; // 16 KB
 
-    public string Type { get; set; } = "SESSION_OK"; // "SESSION_OK", "PROVISIONAL_PAIRING", "ERROR"
+    public string Type { get; set; } = "SESSION_OK"; // "SESSION_OK", "PROVISIONAL_PAIRING", "PROJECTION_CLAIM", "ERROR"
     public string SessionId { get; set; } = string.Empty;
     public string AudioToken { get; set; } = string.Empty;
     public string ControlToken { get; set; } = string.Empty;
     public string FileTransferToken { get; set; } = string.Empty;
+    public string ProjectionInvitationToken { get; set; } = string.Empty;
     public string HostFingerprint { get; set; } = string.Empty;
     public string ErrorMessage { get; set; } = string.Empty;
     public bool AllowRemoteControl { get; set; } = true;
@@ -46,45 +44,10 @@ public sealed class SessionHandshakeMessage
         AllowClipboardSync = permissions.AllowClipboardSync;
     }
 
-    public static async Task WriteAsync(Stream stream, SessionHandshakeMessage message, CancellationToken ct)
-    {
-        byte[] jsonBytes = JsonSerializer.SerializeToUtf8Bytes(message);
-        if (jsonBytes.Length > MaxSignalingPayloadBytes)
-        {
-            throw new InvalidOperationException($"La trama de señalización excede el límite de {MaxSignalingPayloadBytes} bytes.");
-        }
+    public static Task WriteAsync(Stream stream, SessionHandshakeMessage message, CancellationToken ct) =>
+        StreamConnectionHelper.WriteJsonFrameAsync(stream, message, MaxSignalingPayloadBytes, ct);
 
-        byte[] lengthPrefix = new byte[4];
-        BinaryPrimitives.WriteUInt32BigEndian(lengthPrefix, (uint)jsonBytes.Length);
-
-        await stream.WriteAsync(lengthPrefix, ct);
-        await stream.WriteAsync(jsonBytes, ct);
-        await stream.FlushAsync(ct);
-    }
-
-    public static async Task<SessionHandshakeMessage> ReadAsync(Stream stream, CancellationToken ct)
-    {
-        byte[] lengthPrefix = new byte[4];
-        await ReadExactBytesAsync(stream, lengthPrefix, ct);
-
-        uint length = BinaryPrimitives.ReadUInt32BigEndian(lengthPrefix);
-        if (length == 0 || length > MaxSignalingPayloadBytes)
-        {
-            throw new InvalidDataException($"Longitud de señalización inválida ({length} bytes). Límite: {MaxSignalingPayloadBytes} bytes.");
-        }
-
-        byte[] payload = new byte[length];
-        await ReadExactBytesAsync(stream, payload, ct);
-
-        var result = JsonSerializer.Deserialize<SessionHandshakeMessage>(payload);
-        return result ?? throw new InvalidDataException("No se pudo deserializar el mensaje de señalización JSON.");
-    }
-
-    private static Task ReadExactBytesAsync(Stream stream, Memory<byte> buffer, CancellationToken ct) =>
-        StreamConnectionHelper.ReadExactBytesAsync(
-            stream,
-            buffer,
-            ct,
-            "Flujo cerrado antes de completar la lectura del mensaje de señalización.");
+    public static Task<SessionHandshakeMessage> ReadAsync(Stream stream, CancellationToken ct) =>
+        StreamConnectionHelper.ReadJsonFrameAsync<SessionHandshakeMessage>(stream, MaxSignalingPayloadBytes, ct);
 }
 

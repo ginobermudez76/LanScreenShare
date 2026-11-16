@@ -4,6 +4,14 @@ using System.Runtime.CompilerServices;
 
 namespace LanScreenShare.Core.Models
 {
+    [Flags]
+    public enum DeviceCapabilities
+    {
+        None = 0,
+        ScreenHost = 1 << 0,
+        WirelessDisplay = 1 << 1
+    }
+
     public class DeviceInfo : INotifyPropertyChanged
     {
         private string _name = string.Empty;
@@ -11,6 +19,9 @@ namespace LanScreenShare.Core.Models
         private DateTime _lastSeen;
         private bool _isRemoteControlAllowed = true;
         private bool _isViewing;
+        private DeviceCapabilities _capabilities = DeviceCapabilities.None;
+        private int _displaySignalingPort;
+        private bool _isWirelessDisplayBusy;
 
         public string Name
         {
@@ -78,7 +89,46 @@ namespace LanScreenShare.Core.Models
             }
         }
 
+        public DeviceCapabilities Capabilities
+        {
+            get => _capabilities;
+            set
+            {
+                if (SetField(ref _capabilities, value))
+                {
+                    OnPropertyChanged(nameof(SupportsScreenHost));
+                    OnPropertyChanged(nameof(IsWirelessDisplay));
+                }
+            }
+        }
+
+        public int DisplaySignalingPort
+        {
+            get => _displaySignalingPort;
+            set => SetField(ref _displaySignalingPort, value);
+        }
+
+        public bool IsWirelessDisplayBusy
+        {
+            get => _isWirelessDisplayBusy;
+            set => SetField(ref _isWirelessDisplayBusy, value);
+        }
+
+        public bool SupportsScreenHost => (_capabilities & DeviceCapabilities.ScreenHost) != 0;
+
+        public bool IsWirelessDisplay => (_capabilities & DeviceCapabilities.WirelessDisplay) != 0;
+
         public string ActionButtonText => _isViewing ? "Viendo" : "Ver pantalla";
+
+        private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+        {
+            if (System.Collections.Generic.EqualityComparer<T>.Default.Equals(field, value))
+                return false;
+
+            field = value;
+            OnPropertyChanged(propertyName);
+            return true;
+        }
 
         public event PropertyChangedEventHandler? PropertyChanged;
 

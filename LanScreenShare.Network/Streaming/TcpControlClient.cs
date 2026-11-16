@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using LanScreenShare.Core.Display;
 using LanScreenShare.Core.Models;
 using LanScreenShare.Core.Security;
 using LanScreenShare.Network.Security;
@@ -26,6 +27,7 @@ namespace LanScreenShare.Network.Streaming
         public event EventHandler<string>? ClipboardTextReceived;
         public event EventHandler<string>? MonitorInfoReceived;
         public event EventHandler<string>? SecureDesktopStateReceived;
+        public event EventHandler<DisplaySessionControlMessage>? DisplayControlMessageReceived;
         public event EventHandler? Disconnected;
         public bool IsConnected => _client != null && _client.Connected && _stream != null;
 
@@ -134,6 +136,11 @@ namespace LanScreenShare.Network.Streaming
         {
             await ReadExactBytesAsync(stream, headerBuffer, token);
 
+            if (DisplayControlPacketProtocol.IsDisplayControlHeader(headerBuffer))
+            {
+                return await HandleDisplayControlMessageAsync(stream, headerBuffer, token);
+            }
+
             if (!Lsi2ControlPacket.TryReadPacket(
                     headerBuffer,
                     out _,
@@ -152,6 +159,29 @@ namespace LanScreenShare.Network.Streaming
                 return await ReadAndDispatchTextPayloadAsync(stream, message.Type, message.KeyCode, token);
             }
 
+            return true;
+        }
+
+        private async Task<bool> HandleDisplayControlMessageAsync(
+            Stream stream,
+            byte[] headerBuffer,
+            CancellationToken token)
+        {
+            if (!DisplayControlPacketProtocol.TryParseHeader(headerBuffer, out var header, out string? error))
+            {
+                Console.WriteLine($"[ControlClient] Encabezado LSDC inválido: {error}");
+                return false;
+            }
+
+            var message = await DisplayControlPacketProtocol.ReadMessagePayloadAsync(stream, header.PayloadLength, token);
+            try
+            {
+                DisplayControlMessageReceived?.Invoke(this, message);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ControlClient] Error procesando DisplayControlMessageReceived: {ex.Message}");
+            }
             return true;
         }
 
@@ -237,6 +267,17 @@ namespace LanScreenShare.Network.Streaming
 
         public Task SendClipboardTextAsync(string text) =>
             SendTextPayloadAsync(InputEventType.ClipboardText, text, "portapapeles LSI2");
+
+        public async Task SendDisplayControlMessageAsync(DisplaySessionControlMessage message)
+        {
+            ArgumentNullException.ThrowIfNull(message);
+            if (!IsConnected)
+                return;
+
+            ulong seq = Interlocked.Increment(ref _sequenceNumber);
+            byte[] packet = DisplayControlPacketProtocol.SerializePacket(seq, message);
+            await WritePacketWithLockAsync(packet, "control de pantalla LSDC");
+        }
 
         private static bool IsValidPayloadSize(int length) =>
             length > 0 && length <= Lsi2ControlPacket.MaxClipboardPayloadBytes;
