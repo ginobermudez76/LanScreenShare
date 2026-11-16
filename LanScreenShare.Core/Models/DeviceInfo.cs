@@ -19,6 +19,7 @@ namespace LanScreenShare.Core.Models
         private DateTime _lastSeen;
         private bool _isRemoteControlAllowed = true;
         private bool _isViewing;
+        private bool _isExtending;
         private DeviceCapabilities _capabilities = DeviceCapabilities.None;
         private int _displaySignalingPort;
         private bool _isWirelessDisplayBusy;
@@ -98,6 +99,8 @@ namespace LanScreenShare.Core.Models
                 {
                     OnPropertyChanged(nameof(SupportsScreenHost));
                     OnPropertyChanged(nameof(IsWirelessDisplay));
+                    OnPropertyChanged(nameof(ExtendButtonText));
+                    OnPropertyChanged(nameof(CanExtendToDevice));
                 }
             }
         }
@@ -111,7 +114,27 @@ namespace LanScreenShare.Core.Models
         public bool IsWirelessDisplayBusy
         {
             get => _isWirelessDisplayBusy;
-            set => SetField(ref _isWirelessDisplayBusy, value);
+            set
+            {
+                if (SetField(ref _isWirelessDisplayBusy, value))
+                {
+                    OnPropertyChanged(nameof(ExtendButtonText));
+                    OnPropertyChanged(nameof(CanExtendToDevice));
+                }
+            }
+        }
+
+        public bool IsExtending
+        {
+            get => _isExtending;
+            set
+            {
+                if (SetField(ref _isExtending, value))
+                {
+                    OnPropertyChanged(nameof(ExtendButtonText));
+                    OnPropertyChanged(nameof(CanExtendToDevice));
+                }
+            }
         }
 
         public bool SupportsScreenHost => (_capabilities & DeviceCapabilities.ScreenHost) != 0;
@@ -119,6 +142,13 @@ namespace LanScreenShare.Core.Models
         public bool IsWirelessDisplay => (_capabilities & DeviceCapabilities.WirelessDisplay) != 0;
 
         public string ActionButtonText => _isViewing ? "Viendo" : "Ver pantalla";
+
+        public string ExtendButtonText => _isExtending
+            ? "Extendiendo"
+            : (_isWirelessDisplayBusy ? "Ocupado" : "Extender pantalla");
+
+        public bool CanExtendToDevice =>
+            OperatingSystem.IsWindows() && IsWirelessDisplay && (!_isWirelessDisplayBusy || _isExtending);
 
         private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
         {

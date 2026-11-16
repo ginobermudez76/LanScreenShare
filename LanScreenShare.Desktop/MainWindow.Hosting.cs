@@ -44,11 +44,17 @@ namespace LanScreenShare.Desktop
 
         private StreamBadgeVisuals GetStreamBadgeVisuals()
         {
+            if (_isExtendingDisplay)
+                return new StreamBadgeVisuals("Extendiendo pantalla", WirelessIndigoHex);
+
             if (_isHosting)
                 return new StreamBadgeVisuals("Transmitiendo", StatusActiveGreenHex);
 
-            return _isViewing
-                ? new StreamBadgeVisuals("Visualizando", "#3B82F6")
+            if (_isViewing)
+                return new StreamBadgeVisuals("Visualizando", "#3B82F6");
+
+            return _isWirelessDisplayModeActive
+                ? new StreamBadgeVisuals("Monitor inalámbrico", "#8B5CF6")
                 : new StreamBadgeVisuals("Sin transmisión", "#7C8B9E");
         }
 
@@ -147,6 +153,16 @@ namespace LanScreenShare.Desktop
         {
             try
             {
+                if (_isWirelessDisplayModeActive)
+                {
+                    await DisableWirelessDisplayModeAsync();
+                }
+
+                if (_isExtendingDisplay)
+                {
+                    await StopExtendedProjectionAsync();
+                }
+
                 if (_isViewing)
                 {
                     await HandleViewerDisconnectedAsync("Iniciando transmisión local...");

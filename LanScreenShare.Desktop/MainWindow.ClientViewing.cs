@@ -53,6 +53,7 @@ namespace LanScreenShare.Desktop
             foreach (var d in Devices)
             {
                 d.IsViewing = _isViewing && !string.IsNullOrEmpty(_currentConnectedDeviceIp) && d.IPAddress == _currentConnectedDeviceIp;
+                d.IsExtending = _isExtendingDisplay && !string.IsNullOrEmpty(_extendedTargetIp) && d.IPAddress == _extendedTargetIp;
             }
         }
 
@@ -103,15 +104,23 @@ namespace LanScreenShare.Desktop
         private void UpsertDiscoveredDevice(DeviceInfo device)
         {
             var existing = Devices.FirstOrDefault(d => d.IPAddress == device.IPAddress);
-            if (existing != null)
-            {
-                existing.Name = device.Name;
-                existing.LastSeen = device.LastSeen;
-                existing.IsRemoteControlAllowed = device.IsRemoteControlAllowed;
-            }
-            else
+            if (existing == null)
             {
                 Devices.Add(device);
+                return;
+            }
+
+            existing.Name = device.Name;
+            existing.LastSeen = device.LastSeen;
+            existing.Capabilities |= device.Capabilities;
+            if (device.IsWirelessDisplay)
+            {
+                existing.DisplaySignalingPort = device.DisplaySignalingPort;
+                existing.IsWirelessDisplayBusy = device.IsWirelessDisplayBusy;
+            }
+            if (device.SupportsScreenHost)
+            {
+                existing.IsRemoteControlAllowed = device.IsRemoteControlAllowed;
             }
         }
 
@@ -585,6 +594,18 @@ namespace LanScreenShare.Desktop
 
         private async void DisconnectButton_Click(object? sender, RoutedEventArgs? e = null)
         {
+            if (_isExtendingDisplay)
+            {
+                await StopExtendedProjectionAsync();
+                return;
+            }
+
+            if (_isHosting)
+            {
+                StopHosting();
+                return;
+            }
+
             await HandleViewerDisconnectedAsync("Te has desconectado de la transmisión.");
         }
 
@@ -662,6 +683,7 @@ namespace LanScreenShare.Desktop
             OnSettingChanged();
 
             await DisconnectViewerServicesAsync();
+            await ResetWirelessReceiverSessionAsync();
 
             if (!_isHosting)
             {

@@ -164,6 +164,7 @@ namespace LanScreenShare.Desktop
             InitializeAudioControls();
             InitializeAccessAndApproval();
             InitializeEncoderAndSettingsControls();
+            InitializeVirtualDisplaySubsystem();
             InitializeTimersAndLifecycle();
             if (!string.IsNullOrEmpty(_appSettings.TransmissionPreset) && _appSettings.TransmissionPreset != "custom")
             {
@@ -263,6 +264,7 @@ namespace LanScreenShare.Desktop
 
             _discoveryService.StopHosting();
             _discoveryService.StopListening();
+            DisposeVirtualDisplaySubsystemSync();
         }
 
         #endregion
