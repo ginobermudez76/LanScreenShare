@@ -173,5 +173,9 @@ public class VirtualDisplayDriverInstallerTests
         Assert.IsFalse(VirtualDriversVddBackend.HasMttVddHardwareId(UnrelatedDisplayIds));
         Assert.IsTrue(VirtualDriversVddBackend.HasMttVddHardwareId(RootMttVddIds));
         Assert.IsTrue(VirtualDriversVddBackend.HasMttVddHardwareId(ShortMttVddIds));
+        Assert.IsTrue(VirtualDriversVddBackend.ResolveDriverPresence(true, false, () => false));
+        Assert.IsFalse(VirtualDriversVddBackend.ResolveDriverPresence(false, false, () => true));
+        Assert.IsFalse(VirtualDriversVddBackend.ResolveDriverPresence(false, true, () => false));
+        Assert.IsTrue(VirtualDriversVddBackend.ResolveDriverPresence(false, true, () => true));
     }
 }

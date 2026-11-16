@@ -88,16 +88,11 @@ namespace LanScreenShare.Media.Display
             return Path.Combine(baseRoot, "VirtualDisplayDriver");
         }
 
-        public bool IsDriverPresent()
-        {
-            if (IsNamedPipeAvailable("MTTVirtualDisplayPipe"))
-                return true;
-
-            if (!File.Exists(_infPath) && !File.Exists(_settingsPath))
-                return false;
-
-            return HasRegisteredMttVddDevice();
-        }
+        public bool IsDriverPresent() =>
+            VirtualDriversVddBackend.ResolveDriverPresence(
+                IsNamedPipeAvailable("MTTVirtualDisplayPipe"),
+                File.Exists(_infPath) || File.Exists(_settingsPath),
+                HasRegisteredMttVddDevice);
 
         private static bool IsNamedPipeAvailable(string pipeName)
         {
@@ -186,6 +181,15 @@ namespace LanScreenShare.Media.Display
             OperatingSystem.IsWindows() ? new WindowsVddEnvironment() : new NullVddEnvironment();
 
         public bool IsDriverInstalled() => _environment.IsDriverPresent();
+
+        internal static bool ResolveDriverPresence(bool pipeAvailable, bool filesExist, Func<bool> hasRegisteredDevice)
+        {
+            if (pipeAvailable)
+                return true;
+            if (!filesExist)
+                return false;
+            return hasRegisteredDevice();
+        }
 
         internal static bool HasMttVddHardwareId(string[]? hardwareIds) =>
             hardwareIds != null && hardwareIds.Any(IsMttVddId);

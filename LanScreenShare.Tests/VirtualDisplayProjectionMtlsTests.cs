@@ -430,4 +430,18 @@ public class VirtualDisplayProjectionMtlsTests
         Assert.IsFalse(streamServer.IsRunning);
         Assert.AreEqual(VirtualDisplayErrorCode.DriverNotInstalled.ToString(), start.ErrorCode);
     }
+
+    [TestMethod]
+    public async Task NetworkHelpers_NormalizeMappedIpv6AndTimeoutConnectCleanly()
+    {
+        var mapped = IPAddress.Parse("192.168.1.55").MapToIPv6();
+        Assert.AreEqual("192.168.1.55", DisplaySignalingServer.NormalizeRemoteIp(new IPEndPoint(mapped, 5005)));
+        Assert.AreEqual("10.0.0.9", DisplaySignalingServer.NormalizeRemoteIp(new IPEndPoint(IPAddress.Parse("10.0.0.9"), 5005)));
+        Assert.AreEqual(string.Empty, DisplaySignalingServer.NormalizeRemoteIp(null));
+
+        using var client = new TcpClient();
+        var options = new StreamClientConnectionOptions("192.0.2.1", 5001);
+        await Assert.ThrowsExceptionAsync<SocketException>(() =>
+            TcpStreamClient.ConnectTcpWithTimeoutAsync(client, options, CancellationToken.None, TimeSpan.FromMilliseconds(25)));
+    }
 }
