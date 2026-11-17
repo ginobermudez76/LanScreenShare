@@ -4,14 +4,14 @@ Este plan recoge, prioriza y estructura técnicamente todas las observaciones, a
 
 ---
 
-## 📌 Estado del Repositorio
+## Estado del Repositorio
 * **Rama de trabajo activa:** `feature/ui-and-architecture-refinement`
 * **Base:** `main` (commit `fbda5b8`)
 * **Framework y runtime:** .NET 9.0 (C# 13), Avalonia 12.0.2, Vortice 3.8.3, NAudio 3.3.0.
 
 ---
 
-## 🗺️ Mapa de Fases de Implementación
+## Mapa de Fases de Implementación
 
 ```mermaid
 flowchart TD
@@ -52,7 +52,7 @@ flowchart TD
 
 ## Detalle de Tareas por Fase
 
-### 🚀 Fase 1: Claridad Técnica y Ergonomía Visual (Inmediata)
+### Fase 1: Claridad Técnica y Ergonomía Visual (Inmediata)
 > [!IMPORTANT]
 > El objetivo es resolver la saturación visual de la barra lateral y transparentar el estado real de la aplicación sin alterar la lógica de transporte de forma invasiva.
 
@@ -71,7 +71,7 @@ flowchart TD
 
 ---
 
-### 🛡️ Fase 1 (P0): Seguridad de Sesión y Control Remoto (mTLS 1.3 y Autoridad de Sesión)
+### Fase 1 (P0): Seguridad de Sesión y Control Remoto (mTLS 1.3 y Autoridad de Sesión)
 > [!CRITICAL]
 > **Prioridad Máxima (P0):** La seguridad del sistema no depende de tokens estáticos caseros, sino de estándares criptográficos consolidados (TLS 1.3 con autenticación mutua mTLS). Los tres canales TCP (5001, 5002, 5003) se vinculan a una única autoridad de sesión central en el anfitrión.
 
@@ -107,7 +107,7 @@ Session (Anfitrión - Autoridad Central)
 
 ---
 
-### 🎛️ Fase 3: Perfiles de Transmisión (Modo Sencillo vs Avanzado)
+### Fase 3: Perfiles de Transmisión (Modo Sencillo vs Avanzado)
 1. **Selector de Perfil Rápido:**
    * **Calidad Alta / Nitidez:** Resolución nativa (100%), 60 FPS, Bitrate 12 Mbps (H.264) / 85% (JPEG). Ideal para texto, programación y diseño.
    * **Equilibrado (Recomendado):** Resolución 70-80%, 60 FPS, Bitrate 8 Mbps (H.264) / 75% (JPEG). Balance óptimo para uso general.
@@ -117,7 +117,7 @@ Session (Anfitrión - Autoridad Central)
 
 ---
 
-### ⚙️ Fase 4: Pipeline de Video y Aceleración MFT Real
+### Fase 4: Pipeline de Video y Aceleración MFT Real
 1. **Enumeración dinámica de MFT por Hardware:**
    * Usar `MFTEnumEx` de Media Foundation con el flag `MFT_ENUM_FLAG_HARDWARE` y `MFT_CATEGORY_VIDEO_ENCODER`.
    * Identificar y seleccionar el MFT provisto por el fabricante de la GPU instalada (NVIDIA NVENC, Intel QuickSync, AMD AMF).
@@ -128,7 +128,7 @@ Session (Anfitrión - Autoridad Central)
 
 ---
 
-### 📊 Fase 5: Métricas de Red, Latencia y Sincronización A/V
+### Fase 5: Métricas de Red, Latencia y Sincronización A/V
 1. **Telemetría transparente en pantalla:**
    * Mostrar métricas diferenciadas:
      * *FPS de Captura (Host)* vs *FPS de Renderizado (Visor)*.
@@ -141,7 +141,7 @@ Session (Anfitrión - Autoridad Central)
 
 ---
 
-## 📝 Registro de Actualizaciones del Plan
+## Registro de Actualizaciones del Plan
 * **2026-11-04 (Paso 2):** Incorporación del Inventario Funcional Verificable y matriz de limitaciones conocidas (Reconexión automática ausente, control multicliente concurrente sin exclusividad, límites de DXGI ante pantalla completa exclusiva / minimización de ventanas, y compresión de audio PCM).
 * **2026-11-04 (Paso 1):** Creación inicial del plan en la rama `feature/ui-and-architecture-refinement` tras el análisis y contraste técnico con la IA externa.
 
