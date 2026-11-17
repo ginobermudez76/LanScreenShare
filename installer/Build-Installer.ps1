@@ -73,13 +73,7 @@ function Invoke-InstallerBuild {
     New-Item -ItemType Directory -Path $StageAppDir -Force | Out-Null
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
-    Write-Host "[2/4] Compilando Watchdog, SecureHost y publicando LanScreenShare.Desktop (uiAccess=true)..." -ForegroundColor Cyan
-    & dotnet build $WatchdogProj --configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "Falló compilación de LanScreenShare.DisplayWatchdog." }
-
-    & dotnet build $SecureHostProj --configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "Falló compilación de LanScreenShare.SecureHost." }
-
+    Write-Host "[2/4] Publicando LanScreenShare.Desktop (uiAccess=true), Watchdog y SecureHost (self-contained)..." -ForegroundColor Cyan
     $selfContainedArg = if ($SelfContained) { "true" } else { "false" }
     & dotnet publish $DesktopProj `
         --configuration Release `
@@ -88,6 +82,20 @@ function Invoke-InstallerBuild {
         "-p:UsePackagedUiAccessManifest=true" `
         --output $StageAppDir
     if ($LASTEXITCODE -ne 0) { throw "Falló publicación de LanScreenShare.Desktop." }
+
+    & dotnet publish $WatchdogProj `
+        --configuration Release `
+        --runtime win-x64 `
+        --self-contained $selfContainedArg `
+        --output $StageAppDir
+    if ($LASTEXITCODE -ne 0) { throw "Falló publicación de LanScreenShare.DisplayWatchdog." }
+
+    & dotnet publish $SecureHostProj `
+        --configuration Release `
+        --runtime win-x64 `
+        --self-contained $selfContainedArg `
+        --output $StageAppDir
+    if ($LASTEXITCODE -ne 0) { throw "Falló publicación de LanScreenShare.SecureHost." }
 
     Assert-StagedExecutableExists "LanScreenShare.Desktop.exe"
     Assert-StagedExecutableExists "LanScreenShare.DisplayWatchdog.exe"
