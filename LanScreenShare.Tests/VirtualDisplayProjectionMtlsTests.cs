@@ -484,4 +484,82 @@ public class VirtualDisplayProjectionMtlsTests
         Assert.IsTrue(result.Accepted);
         Assert.AreEqual(new VirtualDisplayMode(1366, 768, 60), result.InvitationToken!.NegotiatedMode);
     }
+
+    [TestMethod]
+    public async Task ProjectionHost_RefreshCaptureSourceFromTopology_RestartsCaptureOnBoundsChange()
+    {
+        using var peers = await CreatePairedPeersAsync();
+        var displayService = new StubVirtualDisplayService();
+        var invitationStore = new ProjectionInvitationStore();
+        var captureInstances = new List<StubCaptureService>();
+        var authority = new SessionAuthority(peers.SenderStore);
+        using var streamServer = new TcpStreamServer(authority, TlsConfigurationHelper.CreateServerOptions(peers.SenderCert, peers.SenderStore), peers.SenderStore);
+        using var controlServer = new TcpControlServer(authority, null, TlsConfigurationHelper.CreateServerOptions(peers.SenderCert, peers.SenderStore));
+
+        var topologyAdapter = new StubTopologyManager();
+        await using var host = new VirtualDisplayProjectionHost(new VirtualDisplayProjectionHostDependencies
+        {
+            DisplayService = displayService,
+            InvitationStore = invitationStore,
+            StreamServer = streamServer,
+            ControlServer = controlServer,
+            TopologyManager = topologyAdapter,
+            CaptureFactory = _ =>
+            {
+                var stub = new StubCaptureService();
+                captureInstances.Add(stub);
+                return stub;
+            }
+        });
+
+        host.RefreshCaptureSourceFromTopology();
+        Assert.AreEqual(0, captureInstances.Count);
+
+        using var streamClient = new TcpStreamClient();
+        using var controlClient = new TcpControlClient();
+        var acceptedTcs = new TaskCompletionSource<DisplayInvitationAcceptanceContext>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var receiver = CreateProjectionReceiver(new ReceiverCreationArgs(peers, acceptedTcs, streamClient, controlClient));
+        int signalingPort = GetAvailableTcpPort();
+        await receiver.StartListeningAsync(signalingPort);
+
+        var start = await host.StartProjectionAsync(new DisplayNegotiationRequest
+        {
+            TargetIp = "127.0.0.1",
+            TargetPort = signalingPort,
+            SslOptions = TlsConfigurationHelper.CreateClientOptions(peers.SenderCert, "localhost", peers.SenderStore),
+            InvitationStore = invitationStore,
+            HostStreamPort = GetAvailableTcpPort(),
+            HostControlPort = GetAvailableTcpPort()
+        });
+        Assert.IsTrue(start.Success);
+        Assert.AreEqual(1, captureInstances.Count);
+
+        topologyAdapter.NextSnapshot = new DisplayTopologySnapshot
+        {
+            Paths =
+            [
+                new DisplayPathSnapshot
+                {
+                    DeviceName = displayService.CurrentSession!.DeviceName!,
+                    Width = 1280,
+                    Height = 720,
+                    PositionX = 2560,
+                    PositionY = 0
+                }
+            ]
+        };
+
+        host.RefreshCaptureSourceFromTopology();
+        Assert.AreEqual(2, captureInstances.Count);
+        Assert.AreEqual(1280, host.ActiveCaptureSource!.Width);
+        Assert.AreEqual(2560, host.ActiveCaptureSource.X);
+    }
+
+    private sealed class StubTopologyManager : IDisplayTopologyManager
+    {
+        public DisplayTopologySnapshot NextSnapshot { get; set; } = new() { Paths = [] };
+        public DisplayTopologySnapshot CaptureSnapshot() => NextSnapshot;
+        public bool ApplyExtendTopology(string? preferredDeviceName, VirtualDisplayMode mode) => true;
+        public bool RestoreSnapshot(DisplayTopologySnapshot snapshot) => true;
+    }
 }

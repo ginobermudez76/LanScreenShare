@@ -598,11 +598,9 @@ namespace LanScreenShare.Media.Display
                 mode = default;
                 dpiScale = 1.0;
 
-                const uint monitorDefaultToNearest = 2;
-                const uint monitorDefaultToPrimary = 1;
                 nint hMonitor = hwnd != IntPtr.Zero
-                    ? MonitorFromWindow(hwnd, monitorDefaultToNearest)
-                    : MonitorFromWindow(IntPtr.Zero, monitorDefaultToPrimary);
+                    ? MonitorFromWindow(hwnd, 2u /* MONITOR_DEFAULTTONEAREST */)
+                    : MonitorFromWindow(IntPtr.Zero, 1u /* MONITOR_DEFAULTTOPRIMARY */);
                 if (hMonitor == IntPtr.Zero)
                     return false;
 
@@ -618,17 +616,7 @@ namespace LanScreenShare.Media.Display
                     return true;
                 }
 
-                int monWidth = BinaryPrimitives.ReadInt32LittleEndian(mi.AsSpan(12, 4)) -
-                               BinaryPrimitives.ReadInt32LittleEndian(mi.AsSpan(4, 4));
-                int monHeight = BinaryPrimitives.ReadInt32LittleEndian(mi.AsSpan(16, 4)) -
-                                BinaryPrimitives.ReadInt32LittleEndian(mi.AsSpan(8, 4));
-                if (monWidth > 0 && monHeight > 0)
-                {
-                    mode = new VirtualDisplayMode(monWidth, monHeight, 60);
-                    return true;
-                }
-
-                return false;
+                return TryParseMonitorRectFallback(mi, out mode);
             }
 
             private static bool TryReadDevModePhysicalResolution(
@@ -645,21 +633,53 @@ namespace LanScreenShare.Media.Display
                 if (!EnumDisplaySettingsW(deviceName, enumCurrentSettings, devMode))
                     return false;
 
-                int logPixels = BinaryPrimitives.ReadUInt16LittleEndian(devMode.AsSpan(166, 2));
-                if (logPixels >= 96)
-                {
-                    dpiScale = logPixels / 96.0;
-                }
-
-                int pelsW = (int)BinaryPrimitives.ReadUInt32LittleEndian(devMode.AsSpan(172, 4));
-                int pelsH = (int)BinaryPrimitives.ReadUInt32LittleEndian(devMode.AsSpan(176, 4));
-                int freq = (int)BinaryPrimitives.ReadUInt32LittleEndian(devMode.AsSpan(184, 4));
-                if (pelsW <= 0 || pelsH <= 0)
-                    return false;
-
-                mode = new VirtualDisplayMode(pelsW, pelsH, freq > 0 ? freq : 60);
-                return true;
+                return TryParseDevModePhysicalMode(devMode, out mode, out dpiScale);
             }
+        }
+
+        internal static bool TryParseMonitorRectFallback(
+            ReadOnlySpan<byte> mi,
+            out VirtualDisplayMode mode)
+        {
+            mode = default;
+            if (mi.Length < 20)
+                return false;
+
+            int monWidth = BinaryPrimitives.ReadInt32LittleEndian(mi.Slice(12, 4)) -
+                           BinaryPrimitives.ReadInt32LittleEndian(mi.Slice(4, 4));
+            int monHeight = BinaryPrimitives.ReadInt32LittleEndian(mi.Slice(16, 4)) -
+                            BinaryPrimitives.ReadInt32LittleEndian(mi.Slice(8, 4));
+            if (monWidth <= 0 || monHeight <= 0)
+                return false;
+
+            mode = new VirtualDisplayMode(monWidth, monHeight, 60);
+            return true;
+        }
+
+        internal static bool TryParseDevModePhysicalMode(
+            ReadOnlySpan<byte> devMode,
+            out VirtualDisplayMode mode,
+            out double dpiScale)
+        {
+            mode = default;
+            dpiScale = 1.0;
+            if (devMode.Length < 188)
+                return false;
+
+            int logPixels = BinaryPrimitives.ReadUInt16LittleEndian(devMode.Slice(166, 2));
+            if (logPixels >= 96)
+            {
+                dpiScale = logPixels / 96.0;
+            }
+
+            int pelsW = (int)BinaryPrimitives.ReadUInt32LittleEndian(devMode.Slice(172, 4));
+            int pelsH = (int)BinaryPrimitives.ReadUInt32LittleEndian(devMode.Slice(176, 4));
+            int freq = (int)BinaryPrimitives.ReadUInt32LittleEndian(devMode.Slice(184, 4));
+            if (pelsW <= 0 || pelsH <= 0)
+                return false;
+
+            mode = new VirtualDisplayMode(pelsW, pelsH, freq > 0 ? freq : 60);
+            return true;
         }
 
         public static bool TryGetWindowMonitorPhysicalMode(

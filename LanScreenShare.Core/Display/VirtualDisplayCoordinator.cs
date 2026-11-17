@@ -177,16 +177,11 @@ namespace LanScreenShare.Core.Display
 
         internal static string? FindAddedDeviceName(
             IReadOnlyList<DisplayPathSnapshot> beforePaths,
-            IReadOnlyList<DisplayPathSnapshot> afterPaths)
-        {
-            foreach (var candidate in afterPaths)
-            {
-                if (!string.IsNullOrWhiteSpace(candidate.DeviceName) && !PathExistedBefore(beforePaths, candidate))
-                    return candidate.DeviceName;
-            }
-
-            return null;
-        }
+            IReadOnlyList<DisplayPathSnapshot> afterPaths) =>
+            afterPaths
+                .Where(c => !string.IsNullOrWhiteSpace(c.DeviceName) && !PathExistedBefore(beforePaths, c))
+                .Select(c => c.DeviceName)
+                .FirstOrDefault();
 
         private static bool PathExistedBefore(
             IReadOnlyList<DisplayPathSnapshot> beforePaths,

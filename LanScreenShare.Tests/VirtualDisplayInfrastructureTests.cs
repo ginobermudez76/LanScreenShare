@@ -781,6 +781,25 @@ public class VirtualDisplayInfrastructureTests
         Assert.IsNotNull(fallback.NativeMode);
         Assert.AreEqual(1920, fallback.NativeMode.Value.Width);
         Assert.AreEqual(1.5, fallback.DpiScaleFactor);
+
+        byte[] mi = new byte[104];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(mi.AsSpan(4, 4), 100);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(mi.AsSpan(8, 4), 50);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(mi.AsSpan(12, 4), 2660);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(mi.AsSpan(16, 4), 1490);
+        Assert.IsTrue(WindowsDisplayTopologyManager.TryParseMonitorRectFallback(mi, out var rectMode));
+        Assert.AreEqual(new VirtualDisplayMode(2560, 1440, 60), rectMode);
+        Assert.IsFalse(WindowsDisplayTopologyManager.TryParseMonitorRectFallback(new byte[4], out _));
+
+        byte[] devMode = new byte[220];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(devMode.AsSpan(166, 2), 144);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(devMode.AsSpan(172, 4), 2560);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(devMode.AsSpan(176, 4), 1440);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(devMode.AsSpan(184, 4), 75);
+        Assert.IsTrue(WindowsDisplayTopologyManager.TryParseDevModePhysicalMode(devMode, out var devParsed, out double dpi));
+        Assert.AreEqual(new VirtualDisplayMode(2560, 1440, 75), devParsed);
+        Assert.AreEqual(1.5, dpi, 0.01);
+        Assert.IsFalse(WindowsDisplayTopologyManager.TryParseDevModePhysicalMode(new byte[10], out _, out _));
     }
 
     private sealed class FakeVddPipeTransport : IVddPipeTransport
