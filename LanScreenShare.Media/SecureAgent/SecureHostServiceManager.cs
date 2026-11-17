@@ -227,7 +227,7 @@ public sealed class SecureHostServiceManager
                     return (-1, string.Empty);
 
                 string stdout = proc.StandardOutput.ReadToEnd();
-                proc.WaitForExit(4000);
+                proc.WaitForExit(8000);
                 return (proc.ExitCode, stdout);
             }
             catch
