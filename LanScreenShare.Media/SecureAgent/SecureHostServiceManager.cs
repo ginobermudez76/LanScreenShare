@@ -57,8 +57,9 @@ public sealed class SecureHostServiceManager
         if (status == SecureHostServiceStatus.Running && _backend.IsAgentPipeReady())
             return true;
 
+        FileInfo? exeFile = string.IsNullOrWhiteSpace(secureHostExePath) ? null : new FileInfo(secureHostExePath);
         bool started = status == SecureHostServiceStatus.NotInstalled
-            ? TryInstallAndStartPortable(string.IsNullOrWhiteSpace(secureHostExePath) ? null : new FileInfo(secureHostExePath))
+            ? TryInstallAndStartPortable(exeFile)
             : TryStartExistingService();
 
         if (!started)
