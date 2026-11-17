@@ -802,6 +802,39 @@ public class VirtualDisplayInfrastructureTests
         Assert.IsFalse(WindowsDisplayTopologyManager.TryParseDevModePhysicalMode(new byte[10], out _, out _));
     }
 
+    [TestMethod]
+    public async Task Coordinator_ResolvesAddedDeviceNameAfterExtend_AndAppliesRefreshRate()
+    {
+        using var scope = new TempSnapshotScope();
+        var ccd = new FakeCcdAdapter
+        {
+            Paths = [new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, AdapterLuidLow = 1, TargetId = 1 }]
+        };
+        ccd.OnExtend = () =>
+        {
+            ccd.Paths =
+            [
+                new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, PositionX = 0, AdapterLuidLow = 1, TargetId = 1 },
+                new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY4", Width = 1920, Height = 1080, PositionX = 0, AdapterLuidLow = 2, TargetId = 2, RefreshRateNumerator = 30, RefreshRateDenominator = 1 }
+            ];
+        };
+
+        var env = new FakeVddEnvironment { Present = true, DeviceName = null, Xml = "<vdd_settings><monitors><count>0</count></monitors></vdd_settings>" };
+        var backend = new VirtualDriversVddBackend(new FakeVddPipeTransport(), env);
+        await using var coord = new VirtualDisplayCoordinator(
+            [backend],
+            new WindowsDisplayTopologyManager(ccd),
+            null,
+            new VirtualDisplayCoordinatorOptions { SnapshotFilePath = scope.BackupFilePath });
+
+        var res = await coord.StartExtendedDisplayAsync(new VirtualDisplayMode(2560, 1440, 60));
+        Assert.IsTrue(res.Success);
+        Assert.AreEqual(@"\\.\DISPLAY4", res.Session!.DeviceName);
+        Assert.IsNotNull(ccd.LastApplied);
+        Assert.AreEqual(1920, ccd.LastApplied[1].PositionX);
+        Assert.AreEqual(2560, ccd.LastApplied[1].Width);
+    }
+
     private sealed class FakeVddPipeTransport : IVddPipeTransport
     {
         public bool ShouldFail { get; set; }
@@ -859,6 +892,7 @@ public class VirtualDisplayInfrastructureTests
     {
         public IReadOnlyList<DisplayPathSnapshot> Paths { get; set; } = Array.Empty<DisplayPathSnapshot>();
         public IReadOnlyList<DisplayPathSnapshot>? LastApplied { get; private set; }
+        public Action? OnExtend { get; set; }
         public int ExtendCalls { get; private set; }
         public bool FailExtend { get; set; }
         public bool FailQueryPaths { get; set; }
@@ -872,6 +906,8 @@ public class VirtualDisplayInfrastructureTests
         public bool ApplyExtendTopology()
         {
             ExtendCalls++;
+            if (!FailExtend)
+                OnExtend?.Invoke();
             return !FailExtend;
         }
 

@@ -129,16 +129,13 @@ namespace LanScreenShare.Desktop
                 try
                 {
                     await Task.Delay(300, token);
-                    if (token.IsCancellationRequested || !_isExtendingDisplay)
+                    if (token.IsCancellationRequested)
                         return;
 
-                    var host = _projectionHost;
-                    var topo = _topologyManager;
-                    if (host == null || !host.IsProjecting || topo == null)
-                        return;
-
-                    topo.EnsureExtendedLayout(host.ActiveDisplaySession?.DeviceName);
-                    host.RefreshCaptureSourceFromTopology();
+                    GuardExtendedTopologyStep(
+                        _isExtendingDisplay,
+                        _projectionHost,
+                        _topologyManager);
                 }
                 catch (OperationCanceledException)
                 {
@@ -149,6 +146,28 @@ namespace LanScreenShare.Desktop
                     Console.WriteLine($"[VirtualDisplay] Advertencia validando topología tras WM_DISPLAYCHANGE: {ex.Message}");
                 }
             }, CancellationToken.None);
+        }
+
+        internal static void GuardExtendedTopologyStep(
+            bool isExtendingDisplay,
+            VirtualDisplayProjectionHost? host,
+            IDisplayTopologyManager? topologyManager)
+        {
+            if (!isExtendingDisplay || host == null || !host.IsProjecting || topologyManager == null)
+                return;
+
+            if (topologyManager is WindowsDisplayTopologyManager winTopo)
+            {
+                winTopo.EnsureExtendedLayout(host.ActiveDisplaySession?.DeviceName);
+            }
+            else
+            {
+                topologyManager.ApplyExtendTopology(
+                    host.ActiveDisplaySession?.DeviceName,
+                    host.ActiveDisplaySession?.ActiveMode ?? VirtualDisplayMode.Default);
+            }
+
+            host.RefreshCaptureSourceFromTopology();
         }
 
         private async Task HandleResumeAndKeyframeAsync()
@@ -355,7 +374,7 @@ namespace LanScreenShare.Desktop
             height = Math.Clamp(height & ~1, VirtualDisplayModeValidator.MinHeight, VirtualDisplayModeValidator.MaxHeight);
             int hz = Math.Clamp(raw.RefreshRateHz > 0 ? raw.RefreshRateHz : 60,
                 VirtualDisplayModeValidator.MinRefreshRateHz,
-                VirtualDisplayModeValidator.MaxRefreshRateHz);
+                60);
 
             var normalized = new VirtualDisplayMode(width, height, hz);
             return VirtualDisplayModeValidator.IsSupported(in normalized) ? normalized : null;

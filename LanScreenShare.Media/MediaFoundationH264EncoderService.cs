@@ -455,14 +455,7 @@ namespace LanScreenShare.Media
                 if (outputMs.Length > 0)
                     break;
 
-                if (waitSw.ElapsedMilliseconds < 3)
-                {
-                    Thread.SpinWait(200);
-                }
-                else
-                {
-                    Thread.Sleep(1);
-                }
+                Thread.Sleep(1);
             }
 
             return outputMs.ToArray();
@@ -606,7 +599,11 @@ namespace LanScreenShare.Media
             int halfHeight = evenHeight / 2;
             int bgraRowBytes = width * 4;
 
-            Parallel.For(0, halfHeight, k =>
+            var parallelOptions = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 4)
+            };
+            Parallel.For(0, halfHeight, parallelOptions, k =>
             {
                 int y0 = 2 * k;
                 int y1 = y0 + 1;

@@ -553,13 +553,25 @@ public class VirtualDisplayProjectionMtlsTests
         Assert.AreEqual(2, captureInstances.Count);
         Assert.AreEqual(1280, host.ActiveCaptureSource!.Width);
         Assert.AreEqual(2560, host.ActiveCaptureSource.X);
+
+        LanScreenShare.Desktop.MainWindow.GuardExtendedTopologyStep(false, host, topologyAdapter);
+        LanScreenShare.Desktop.MainWindow.GuardExtendedTopologyStep(true, null, topologyAdapter);
+        LanScreenShare.Desktop.MainWindow.GuardExtendedTopologyStep(true, host, null);
+        LanScreenShare.Desktop.MainWindow.GuardExtendedTopologyStep(true, host, topologyAdapter);
+        Assert.AreEqual(2, captureInstances.Count);
+        Assert.AreEqual(1, topologyAdapter.ExtendCalls);
     }
 
     private sealed class StubTopologyManager : IDisplayTopologyManager
     {
         public DisplayTopologySnapshot NextSnapshot { get; set; } = new() { Paths = [] };
+        public int ExtendCalls { get; private set; }
         public DisplayTopologySnapshot CaptureSnapshot() => NextSnapshot;
-        public bool ApplyExtendTopology(string? preferredDeviceName, VirtualDisplayMode mode) => true;
+        public bool ApplyExtendTopology(string? preferredDeviceName, VirtualDisplayMode mode)
+        {
+            ExtendCalls++;
+            return true;
+        }
         public bool RestoreSnapshot(DisplayTopologySnapshot snapshot) => true;
     }
 }

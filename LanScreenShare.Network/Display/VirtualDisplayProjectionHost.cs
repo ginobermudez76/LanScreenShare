@@ -148,7 +148,7 @@ public sealed class VirtualDisplayProjectionHost : IAsyncDisposable
 
         var effectiveProfile = profile with
         {
-            TargetFps = Math.Clamp(session.ActiveMode.RefreshRateHz, 30, 120),
+            TargetFps = Math.Clamp(session.ActiveMode.RefreshRateHz, 30, 60),
             ResolutionScale = 1.0,
             TargetWidth = session.ActiveMode.Width,
             TargetHeight = session.ActiveMode.Height

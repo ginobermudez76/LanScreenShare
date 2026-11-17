@@ -88,6 +88,47 @@ namespace LanScreenShare.Media
 
             return -1;
         }
+
+        public static int ComputeFramePaceSleepMs(double elapsedMs, int targetFps, bool isNoFrame)
+        {
+            double targetIntervalMs = 1000.0 / Math.Max(1, targetFps);
+            double remainingMs = targetIntervalMs - elapsedMs;
+            if (remainingMs <= 0.5)
+                return 0;
+
+            if (isNoFrame && remainingMs <= 1.5)
+                return 0;
+
+            return Math.Max(0, (int)Math.Floor(remainingMs));
+        }
+
+        public static bool IsCursorNearCaptureBounds(
+            int cursorX,
+            int cursorY,
+            in DxgiOutputRect bounds,
+            int marginPx = 64)
+        {
+            if (!bounds.IsValid)
+                return false;
+
+            return cursorX >= bounds.Left - marginPx &&
+                   cursorX < bounds.Left + bounds.Width + marginPx &&
+                   cursorY >= bounds.Top - marginPx &&
+                   cursorY < bounds.Top + bounds.Height + marginPx;
+        }
+
+        public static bool ShouldTrackExternalSourceResolution(
+            bool requireExactTargetMatch,
+            int scalePercent,
+            int targetWidth,
+            int targetHeight,
+            int actualWidth,
+            int actualHeight) =>
+            requireExactTargetMatch &&
+            scalePercent >= 99 &&
+            targetWidth > 0 &&
+            targetHeight > 0 &&
+            (actualWidth != targetWidth || actualHeight != targetHeight);
     }
 
     internal readonly record struct CursorSample

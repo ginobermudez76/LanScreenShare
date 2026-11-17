@@ -85,16 +85,7 @@ namespace LanScreenShare.Media
             int mmcssTaskIndex = 0;
             try
             {
-                Thread.CurrentThread.Priority = ThreadPriority.Highest;
-                try
-                {
-                    Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[DXGI] No se pudo elevar prioridad del proceso: {ex.Message}");
-                }
-
+                Thread.CurrentThread.Priority = ThreadPriority.AboveNormal;
                 mmcssHandle = AvSetMmThreadCharacteristics("DisplayPostProcessing", ref mmcssTaskIndex);
                 if (mmcssHandle != IntPtr.Zero)
                 {
@@ -449,7 +440,13 @@ namespace LanScreenShare.Media
 
         private FrameEncodingOptions BuildFrameEncodingOptions(DxgiSessionResources session, bool forceKeyframe)
         {
-            bool trackExternalResolution = ShouldTrackExternalResolution(session.Bounds);
+            bool trackExternalResolution = DxgiOutputSelector.ShouldTrackExternalSourceResolution(
+                RequireExactTargetMatch,
+                _scalePercent,
+                _targetSourceWidth,
+                _targetSourceHeight,
+                session.Bounds.ScreenWidth,
+                session.Bounds.ScreenHeight);
             return new FrameEncodingOptions(
                 _quality,
                 ResolutionScale,
@@ -460,35 +457,15 @@ namespace LanScreenShare.Media
                 forceKeyframe);
         }
 
-        private bool ShouldTrackExternalResolution(in DesktopBounds bounds) =>
-            RequireExactTargetMatch &&
-            _scalePercent >= 99 &&
-            _targetSourceWidth > 0 &&
-            _targetSourceHeight > 0 &&
-            (bounds.ScreenWidth != _targetSourceWidth || bounds.ScreenHeight != _targetSourceHeight);
-
         private static void ApplyFramePacing(Stopwatch stopwatch, int targetFps, FrameAcquireStatus status)
         {
-            double targetIntervalMs = 1000.0 / Math.Max(1, targetFps);
-            double remainingMs = targetIntervalMs - stopwatch.Elapsed.TotalMilliseconds;
-            if (remainingMs <= 0.5)
-                return;
-
-            if (status == FrameAcquireStatus.NoFrame && remainingMs <= 2.5)
-                return;
-
-            if (remainingMs > 2.5)
+            int sleepMs = DxgiOutputSelector.ComputeFramePaceSleepMs(
+                stopwatch.Elapsed.TotalMilliseconds,
+                targetFps,
+                status == FrameAcquireStatus.NoFrame);
+            if (sleepMs > 0)
             {
-                int sleepMs = (int)Math.Floor(remainingMs - 1.5);
-                if (sleepMs > 0)
-                {
-                    Thread.Sleep(sleepMs);
-                }
-            }
-
-            while (stopwatch.Elapsed.TotalMilliseconds < targetIntervalMs - 0.15)
-            {
-                Thread.SpinWait(50);
+                Thread.Sleep(sleepMs);
             }
         }
 
@@ -744,8 +721,8 @@ namespace LanScreenShare.Media
                 using var dxgiDevice = device.QueryInterface<IDXGIDevice>();
                 if (dxgiDevice != null)
                 {
-                    dxgiDevice.SetGPUThreadPriority(7);
-                    Console.WriteLine("[DXGI] GPU Thread Priority establecido al nivel máximo (7)");
+                    dxgiDevice.SetGPUThreadPriority(1);
+                    Console.WriteLine("[DXGI] GPU Thread Priority establecido en nivel balanceado (1)");
                 }
             }
             catch (Exception ex)
@@ -794,11 +771,8 @@ namespace LanScreenShare.Media
             if (!sample.IsVisible)
                 return false;
 
-            const int spriteMarginPx = 64;
-            return sample.X >= screenLeft - spriteMarginPx &&
-                   sample.X < screenLeft + width + spriteMarginPx &&
-                   sample.Y >= screenTop - spriteMarginPx &&
-                   sample.Y < screenTop + height + spriteMarginPx;
+            var bounds = new DxgiOutputRect { Left = screenLeft, Top = screenTop, Width = width, Height = height };
+            return DxgiOutputSelector.IsCursorNearCaptureBounds(sample.X, sample.Y, in bounds);
         }
 
         private SKBitmap EnsureReusableWorkBitmap(int width, int height)

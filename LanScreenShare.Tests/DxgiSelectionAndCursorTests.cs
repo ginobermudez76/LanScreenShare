@@ -242,4 +242,23 @@ public class DxgiSelectionAndCursorTests
 
         Assert.AreEqual((-1, -1, 1), (missingNamedDevice, unmatchedBounds, matchedBounds));
     }
+
+    [TestMethod]
+    public void DxgiOutputSelector_PacingCursorBoundsAndExternalResolution_WorkAsExpected()
+    {
+        Assert.AreEqual(0, DxgiOutputSelector.ComputeFramePaceSleepMs(16.3, 60, isNoFrame: false));
+        Assert.AreEqual(0, DxgiOutputSelector.ComputeFramePaceSleepMs(15.5, 60, isNoFrame: true));
+        Assert.AreEqual(12, DxgiOutputSelector.ComputeFramePaceSleepMs(4.2, 60, isNoFrame: false));
+
+        var rect = new DxgiOutputRect { Left = 1920, Top = 0, Width = 2560, Height = 1440 };
+        Assert.IsTrue(DxgiOutputSelector.IsCursorNearCaptureBounds(1900, 100, in rect));
+        Assert.IsFalse(DxgiOutputSelector.IsCursorNearCaptureBounds(500, 500, in rect));
+        var invalidRect = new DxgiOutputRect { Left = 0, Top = 0, Width = 0, Height = 0 };
+        Assert.IsFalse(DxgiOutputSelector.IsCursorNearCaptureBounds(0, 0, in invalidRect));
+
+        Assert.IsTrue(DxgiOutputSelector.ShouldTrackExternalSourceResolution(true, 100, 1920, 1080, 1280, 720));
+        Assert.IsFalse(DxgiOutputSelector.ShouldTrackExternalSourceResolution(true, 75, 1920, 1080, 1280, 720));
+        Assert.IsFalse(DxgiOutputSelector.ShouldTrackExternalSourceResolution(false, 100, 1920, 1080, 1280, 720));
+        Assert.IsFalse(DxgiOutputSelector.ShouldTrackExternalSourceResolution(true, 100, 1920, 1080, 1920, 1080));
+    }
 }
