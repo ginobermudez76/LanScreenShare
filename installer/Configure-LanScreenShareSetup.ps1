@@ -171,7 +171,7 @@ function Find-MttVddDevice {
         Select-Object -First 1
 }
 
-function Register-SingleVddTask($Service, $Folder, [string]$TaskName, [string]$Arguments) {
+function Register-SingleVddTask($Service, $Folder, [string]$TaskName, [string]$Command) {
     $taskDef = $Service.NewTask(0)
     $taskDef.RegistrationInfo.Description = "LanScreenShare Virtual Display Controller"
     $taskDef.Principal.UserId = "NT AUTHORITY\SYSTEM"
@@ -184,8 +184,8 @@ function Register-SingleVddTask($Service, $Folder, [string]$TaskName, [string]$A
     $taskDef.Settings.Hidden = $true
 
     $action = $taskDef.Actions.Create(0)
-    $action.Path = (Join-Path $env:SystemRoot "System32\pnputil.exe")
-    $action.Arguments = $Arguments
+    $action.Path = (Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe")
+    $action.Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$Command`""
 
     $sddl = "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;AU)"
     $Folder.RegisterTaskDefinition($TaskName, $taskDef, 6, "NT AUTHORITY\SYSTEM", $null, 5, $sddl) | Out-Null
@@ -196,8 +196,9 @@ function Register-VddControlTasks([string]$InstanceId) {
         $service = New-Object -ComObject Schedule.Service
         $service.Connect()
         $rootFolder = $service.GetFolder([string][char]92)
-        Register-SingleVddTask $service $rootFolder "LanScreenShare-EnableVdd" "/enable-device `"$InstanceId`""
-        Register-SingleVddTask $service $rootFolder "LanScreenShare-DisableVdd" "/disable-device `"$InstanceId`""
+        $escapedId = $InstanceId.Replace("'", "''")
+        Register-SingleVddTask $service $rootFolder "LanScreenShare-EnableVdd" "Enable-PnpDevice -InstanceId '$escapedId' -Confirm:`$false -ErrorAction Stop"
+        Register-SingleVddTask $service $rootFolder "LanScreenShare-DisableVdd" "Disable-PnpDevice -InstanceId '$escapedId' -Confirm:`$false -ErrorAction Stop"
         Write-SetupLog "Tareas programadas LanScreenShare-EnableVdd / DisableVdd registradas para $InstanceId."
     } catch {
         Write-SetupLog "Advertencia registrando tareas programadas VDD: $($_.Exception.Message)"
@@ -243,7 +244,11 @@ function Wait-ForMttVddReady {
 
 function Complete-VddRegistration($Device, [string]$StatusNote) {
     Register-VddControlTasks -InstanceId $Device.InstanceId
-    & pnputil.exe /disable-device $Device.InstanceId | Out-Null
+    try {
+        Disable-PnpDevice -InstanceId $Device.InstanceId -Confirm:$false -ErrorAction Stop
+    } catch {
+        & pnputil.exe /disable-device $Device.InstanceId | Out-Null
+    }
     Write-SetupLog "$StatusNote ($($Device.InstanceId))."
 }
 
@@ -252,7 +257,11 @@ function TryUpdateExistingVdd($ExistingDevice, [string]$InfPath) {
         return $false
     }
     if ($ExistingDevice.Status -ne "OK") {
-        & pnputil.exe /enable-device $ExistingDevice.InstanceId | Out-Null
+        try {
+            Enable-PnpDevice -InstanceId $ExistingDevice.InstanceId -Confirm:$false -ErrorAction Stop
+        } catch {
+            & pnputil.exe /enable-device $ExistingDevice.InstanceId | Out-Null
+        }
     }
     & pnputil.exe /add-driver $InfPath /install | Out-Null
     $readyDev = Wait-ForMttVddReady
@@ -433,7 +442,11 @@ function Invoke-UninstallAction {
 
     $existingVdd = Find-MttVddDevice
     if ($null -ne $existingVdd) {
-        & pnputil.exe /disable-device $existingVdd.InstanceId | Out-Null
+        try {
+            Disable-PnpDevice -InstanceId $existingVdd.InstanceId -Confirm:$false -ErrorAction Stop
+        } catch {
+            & pnputil.exe /disable-device $existingVdd.InstanceId | Out-Null
+        }
     }
     Unregister-VddControlTasks
     Remove-LanScreenShareFirewallRules

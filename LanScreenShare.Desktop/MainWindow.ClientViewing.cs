@@ -573,7 +573,7 @@ namespace LanScreenShare.Desktop
 
                 if (!_streamClient.IsConnected)
                 {
-                    if (!_isHosting && _isViewing)
+                    if (!_isHosting && (_isViewing || (_isWirelessDisplayModeActive && _projectionReceiver?.IsSessionBusy == true)))
                     {
                         HandleViewerDisconnected(status);
                         return;

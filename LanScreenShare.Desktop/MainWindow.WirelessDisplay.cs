@@ -436,6 +436,12 @@ namespace LanScreenShare.Desktop
             try
             {
                 await _projectionReceiver.ConnectToHostAsync(context, _sslClientOptions, CancellationToken.None);
+                if (!_streamClient.IsConnected)
+                {
+                    await HandleViewerDisconnectedAsync("El anfitrión ha finalizado la transmisión.");
+                    return;
+                }
+
                 _isViewing = true;
                 UpdateStreamStateBadge();
                 ShowViewerControls(new DeviceInfo { Name = context.PeerDeviceName, IPAddress = context.SenderIpAddress });

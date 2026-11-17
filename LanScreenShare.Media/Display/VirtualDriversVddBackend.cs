@@ -106,7 +106,7 @@ namespace LanScreenShare.Media.Display
             VirtualDriversVddBackend.EnsureDriverEnabledCoreAsync(
                 () => IsNamedPipeAvailable(VddPipeName),
                 () => RunScheduledTask(EnableTaskName),
-                TimeSpan.FromSeconds(5),
+                TimeSpan.FromSeconds(10),
                 ct);
 
         public Task DisableDriverAsync(CancellationToken ct = default) =>
