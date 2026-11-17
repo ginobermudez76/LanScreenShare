@@ -677,6 +677,41 @@ public class VirtualDisplayInfrastructureTests
         Assert.AreEqual((64, true, false), (allAdapters.Count, procOk, procMissing));
     }
 
+    [TestMethod]
+    public void TopologyManagerAndVddMatching_PreventPrimaryFallbackAndRepairOverlap()
+    {
+        Assert.IsTrue(VirtualDriversVddBackend.IsMatchingVddAdapter(@"ROOT\MTTVDD\0000", "VDD by MTT"));
+
+        string initialXml = VddSettingsXmlHelper.UpdateMonitorCountAndMode(null, 1, new VirtualDisplayMode(1920, 1080, 60));
+        Assert.IsTrue(VddSettingsXmlHelper.ContainsMode(initialXml, new VirtualDisplayMode(1920, 1080, 60)));
+        Assert.IsFalse(VddSettingsXmlHelper.ContainsMode(initialXml, new VirtualDisplayMode(1366, 768, 60)));
+
+        var overlappedPaths = new[]
+        {
+            new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", PositionX = 0, PositionY = 0, Width = 1920, Height = 1080, RefreshRateNumerator = 60, RefreshRateDenominator = 1 },
+            new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY2", PositionX = 0, PositionY = 0, Width = 1280, Height = 720, RefreshRateNumerator = 60, RefreshRateDenominator = 1 }
+        };
+
+        var updated = WindowsDisplayTopologyManager.ApplyModeToTargetPath(overlappedPaths, @"\\.\DISPLAY2", new VirtualDisplayMode(1366, 768, 60));
+        Assert.IsNotNull(updated);
+        Assert.AreEqual((1366, 768, 1920), (updated[1].Width, updated[1].Height, updated[1].PositionX));
+
+        var missingTarget = WindowsDisplayTopologyManager.ApplyModeToTargetPath(overlappedPaths, @"\\.\MISSING", new VirtualDisplayMode(1366, 768, 60));
+        Assert.IsNull(missingTarget);
+
+        var ccd = new FakeCcdAdapter { Paths = overlappedPaths };
+        var manager = new WindowsDisplayTopologyManager(ccd);
+        bool repaired = manager.EnsureExtendedLayout(@"\\.\DISPLAY2");
+        Assert.IsTrue(repaired);
+        Assert.IsNotNull(ccd.LastApplied);
+        Assert.AreEqual((1920, 1280, 720), (ccd.LastApplied[1].PositionX, ccd.LastApplied[1].Width, ccd.LastApplied[1].Height));
+
+        string? addedDevice = VirtualDisplayCoordinator.FindAddedDeviceName(
+            [overlappedPaths[0]],
+            overlappedPaths);
+        Assert.AreEqual(@"\\.\DISPLAY2", addedDevice);
+    }
+
     private static IDisposable? StartSelfCheckProcess(string snapshotPath)
     {
         string cmdPath = Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.SystemDirectory, "cmd.exe");

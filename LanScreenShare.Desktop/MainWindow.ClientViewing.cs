@@ -526,6 +526,8 @@ namespace LanScreenShare.Desktop
             Dispatcher.UIThread.Post(() => ApplyViewerFrameToUi(bitmap, "JPEG"));
         }
 
+        private string? _lastViewerFrameStatusText;
+
         private void ApplyViewerFrameToUi(IImage? frameImage, string codecLabel)
         {
             if (frameImage == null) return;
@@ -551,7 +553,12 @@ namespace LanScreenShare.Desktop
                 placeholder.IsVisible = false;
             }
 
-            UpdateStatus($"Recibiendo pantalla de {_currentConnectedDeviceName} ({codecLabel})", "#22C55E");
+            string statusMsg = $"Recibiendo pantalla de {_currentConnectedDeviceName} ({codecLabel})";
+            if (!string.Equals(_lastViewerFrameStatusText, statusMsg, StringComparison.Ordinal))
+            {
+                _lastViewerFrameStatusText = statusMsg;
+                UpdateStatus(statusMsg, "#22C55E");
+            }
         }
 
         private void StreamClient_StatusChanged(object? sender, string status)
@@ -678,6 +685,7 @@ namespace LanScreenShare.Desktop
             StopDeviceSearch();
             _currentConnectedDeviceIp = null;
             _currentConnectedDeviceName = null;
+            _lastViewerFrameStatusText = null;
             UpdateDevicesViewingState();
             UpdateSourceUI();
             OnSettingChanged();

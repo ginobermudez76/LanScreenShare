@@ -40,6 +40,22 @@ namespace LanScreenShare.Media.Display
             }
         }
 
+        public static bool ContainsMode(string? xmlContent, VirtualDisplayMode mode)
+        {
+            if (string.IsNullOrWhiteSpace(xmlContent) || !VirtualDisplayModeValidator.IsSupported(in mode))
+                return false;
+
+            try
+            {
+                var doc = XDocument.Parse(xmlContent);
+                return doc.Root?.Element("resolutions")?.Elements("resolution").Any(el => MatchesMode(el, mode)) ?? false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static string UpdateMonitorCountAndMode(string? existingXml, int monitorCount, VirtualDisplayMode mode)
         {
             var doc = ParseOrCreateRoot(existingXml);

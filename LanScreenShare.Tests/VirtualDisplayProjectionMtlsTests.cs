@@ -444,4 +444,44 @@ public class VirtualDisplayProjectionMtlsTests
         await Assert.ThrowsExceptionAsync<SocketException>(() =>
             TcpStreamClient.ConnectTcpWithTimeoutAsync(client, options, TimeSpan.FromMilliseconds(25), CancellationToken.None));
     }
+
+    [TestMethod]
+    public async Task BuildDisplayCapabilities_ClampsToReceiverNativeModeAndSignalingSelectsIt()
+    {
+        var capabilities = LanScreenShare.Desktop.MainWindow.BuildDisplayCapabilities(
+            new VirtualDisplayMode(1366, 768, 60),
+            1.25,
+            isBusy: false);
+
+        Assert.AreEqual(new VirtualDisplayMode(1366, 768, 60), capabilities.NativeMode);
+        var supported = new List<VirtualDisplayMode>(capabilities.SupportedModes);
+        Assert.IsTrue(supported.Contains(new VirtualDisplayMode(1366, 768, 60)));
+        Assert.IsFalse(supported.Contains(new VirtualDisplayMode(1920, 1080, 60)));
+        Assert.IsFalse(supported.Contains(new VirtualDisplayMode(2560, 1440, 60)));
+
+        using var peers = await CreatePairedPeersAsync();
+        int port = GetAvailableTcpPort();
+        using var server = new DisplaySignalingServer(new DisplaySignalingServerOptions
+        {
+            SslServerOptions = TlsConfigurationHelper.CreateServerOptions(peers.ReceiverCert, peers.ReceiverStore),
+            IsBusyProvider = () => false,
+            CapabilitiesProvider = () => capabilities
+        });
+        await server.StartAsync(port);
+
+        var store = new ProjectionInvitationStore();
+        var client = new DisplaySignalingClient();
+        var clientSsl = TlsConfigurationHelper.CreateClientOptions(peers.SenderCert, "localhost", peers.SenderStore);
+
+        var result = await client.NegotiateAndInviteAsync(new DisplayNegotiationRequest
+        {
+            TargetIp = "127.0.0.1",
+            TargetPort = port,
+            SslOptions = clientSsl,
+            InvitationStore = store
+        });
+
+        Assert.IsTrue(result.Accepted);
+        Assert.AreEqual(new VirtualDisplayMode(1366, 768, 60), result.InvitationToken!.NegotiatedMode);
+    }
 }

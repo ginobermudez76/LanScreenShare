@@ -50,7 +50,7 @@ namespace LanScreenShare.Media.Display
             if (!VirtualDisplayModeValidator.IsSupported(in mode))
                 return true;
 
-            if (!_adapter.TryQueryActiveDisplayPaths(out var activePaths) || activePaths.Count == 0)
+            if (!TryQueryPathsReadyForTarget(preferredDeviceName, out var activePaths) || activePaths.Count == 0)
                 return true;
 
             var updated = ApplyModeToTargetPath(activePaths, preferredDeviceName, mode);
@@ -58,6 +58,53 @@ namespace LanScreenShare.Media.Display
                 return true;
 
             _adapter.ApplySuppliedConfig(updated);
+            return true;
+        }
+
+        public bool EnsureExtendedLayout(string? preferredDeviceName)
+        {
+            if (!_adapter.TryQueryActiveDisplayPaths(out var activePaths))
+                return false;
+
+            int targetIdx = FindTargetPathIndexOrNegative(activePaths, preferredDeviceName);
+            bool needsExtend = activePaths.Count < 2 || (targetIdx >= 0 && HasOverlappingBounds(activePaths, targetIdx));
+            if (!needsExtend)
+                return true;
+
+            if (!_adapter.ApplyExtendTopology())
+                return false;
+
+            if (!TryQueryPathsReadyForTarget(preferredDeviceName, out var afterExtend) || afterExtend.Count < 2)
+                return afterExtend.Count >= 2;
+
+            targetIdx = FindTargetPathIndexOrNegative(afterExtend, preferredDeviceName);
+            if (targetIdx >= 0 && HasOverlappingBounds(afterExtend, targetIdx))
+            {
+                var separated = SeparateOverlappingTargetPath(afterExtend, targetIdx);
+                return _adapter.ApplySuppliedConfig(separated);
+            }
+
+            return true;
+        }
+
+        private bool TryQueryPathsReadyForTarget(string? preferredDeviceName, out IReadOnlyList<DisplayPathSnapshot> activePaths)
+        {
+            if (!_adapter.TryQueryActiveDisplayPaths(out activePaths))
+                return false;
+
+            if (_adapter is not Win32CcdAdapter || string.IsNullOrWhiteSpace(preferredDeviceName))
+                return true;
+
+            for (int attempt = 0; attempt < 12; attempt++)
+            {
+                if (activePaths.Any(p => string.Equals(p.DeviceName, preferredDeviceName, StringComparison.OrdinalIgnoreCase)))
+                    return true;
+
+                System.Threading.Thread.Sleep(50);
+                if (!_adapter.TryQueryActiveDisplayPaths(out activePaths))
+                    return false;
+            }
+
             return true;
         }
 
@@ -78,20 +125,103 @@ namespace LanScreenShare.Media.Display
             if (activePaths.Count == 0)
                 return null;
 
-            int targetIdx = FindTargetPathIndex(activePaths, preferredDeviceName);
-            var target = activePaths[targetIdx];
-            if (target.Width == mode.Width && target.Height == mode.Height)
+            int targetIdx = FindTargetPathIndexOrNegative(activePaths, preferredDeviceName);
+            if (targetIdx < 0)
                 return null;
+
+            var target = activePaths[targetIdx];
+            bool overlapsOther = activePaths.Count > 1 && HasOverlappingBounds(activePaths, targetIdx);
+            bool refreshMismatch = target.RefreshRateNumerator > 0 &&
+                (target.RefreshRateNumerator / Math.Max(1u, target.RefreshRateDenominator)) != (uint)mode.RefreshRateHz;
+
+            if (target.Width == mode.Width && target.Height == mode.Height && !refreshMismatch && !overlapsOther)
+                return null;
+
+            int posX = overlapsOther ? ComputeNonOverlappingPositionX(activePaths, targetIdx) : target.PositionX;
+            int posY = overlapsOther ? 0 : target.PositionY;
 
             var copy = activePaths.ToList();
             copy[targetIdx] = target with
             {
                 Width = mode.Width,
                 Height = mode.Height,
+                PositionX = posX,
+                PositionY = posY,
                 RefreshRateNumerator = (uint)mode.RefreshRateHz,
                 RefreshRateDenominator = 1
             };
             return copy;
+        }
+
+        private static bool HasOverlappingBounds(IReadOnlyList<DisplayPathSnapshot> paths, int targetIdx)
+        {
+            var target = paths[targetIdx];
+            int targetRight = target.PositionX + Math.Max(1, target.Width);
+            int targetBottom = target.PositionY + Math.Max(1, target.Height);
+
+            for (int i = 0; i < paths.Count; i++)
+            {
+                if (i == targetIdx)
+                    continue;
+
+                var other = paths[i];
+                int otherRight = other.PositionX + Math.Max(1, other.Width);
+                int otherBottom = other.PositionY + Math.Max(1, other.Height);
+
+                bool overlapX = target.PositionX < otherRight && targetRight > other.PositionX;
+                bool overlapY = target.PositionY < otherBottom && targetBottom > other.PositionY;
+                if (overlapX && overlapY)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static int ComputeNonOverlappingPositionX(IReadOnlyList<DisplayPathSnapshot> paths, int targetIdx)
+        {
+            int maxRight = 0;
+            for (int i = 0; i < paths.Count; i++)
+            {
+                if (i == targetIdx)
+                    continue;
+
+                int right = paths[i].PositionX + Math.Max(1, paths[i].Width);
+                if (right > maxRight)
+                    maxRight = right;
+            }
+
+            return maxRight;
+        }
+
+        private static IReadOnlyList<DisplayPathSnapshot> SeparateOverlappingTargetPath(
+            IReadOnlyList<DisplayPathSnapshot> paths,
+            int targetIdx)
+        {
+            var copy = paths.ToList();
+            copy[targetIdx] = copy[targetIdx] with
+            {
+                PositionX = ComputeNonOverlappingPositionX(paths, targetIdx),
+                PositionY = 0
+            };
+            return copy;
+        }
+
+        private static int FindTargetPathIndexOrNegative(IReadOnlyList<DisplayPathSnapshot> paths, string? preferredDeviceName)
+        {
+            if (!string.IsNullOrWhiteSpace(preferredDeviceName))
+            {
+                for (int i = 0; i < paths.Count; i++)
+                {
+                    if (string.Equals(paths[i].DeviceName, preferredDeviceName, StringComparison.OrdinalIgnoreCase))
+                        return i;
+                }
+
+                // Si se especificó un dispositivo concreto y no aparece entre las rutas activas,
+                // evitamos sobrescribir la resolución de otro monitor físico.
+                return -1;
+            }
+
+            return paths.Count - 1;
         }
 
         internal const int SourceDeviceNamePacketSize = 84;
@@ -130,20 +260,6 @@ namespace LanScreenShare.Media.Display
                 return true;
 
             return pathCount == 1 && applyInternalTopology();
-        }
-
-        private static int FindTargetPathIndex(IReadOnlyList<DisplayPathSnapshot> paths, string? preferredDeviceName)
-        {
-            if (!string.IsNullOrWhiteSpace(preferredDeviceName))
-            {
-                for (int i = 0; i < paths.Count; i++)
-                {
-                    if (string.Equals(paths[i].DeviceName, preferredDeviceName, StringComparison.OrdinalIgnoreCase))
-                        return i;
-                }
-            }
-
-            return paths.Count - 1;
         }
 
         private const uint DisplayConfigModeInfoTypeSource = 1;
@@ -443,6 +559,110 @@ namespace LanScreenShare.Media.Display
                 uint numModeInfoArrayElements,
                 IntPtr modeInfoArray,
                 uint flags);
+
+            [LibraryImport("user32.dll")]
+            private static partial nint MonitorFromWindow(nint hwnd, uint dwFlags);
+
+            [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static partial bool GetMonitorInfoW(nint hMonitor, [In, Out] byte[] lpmi);
+
+            [LibraryImport("user32.dll", EntryPoint = "EnumDisplaySettingsW", StringMarshalling = StringMarshalling.Utf16)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static partial bool EnumDisplaySettingsW(string lpszDeviceName, uint iModeNum, [In, Out] byte[] lpDevMode);
+
+            public static bool TryGetWindowMonitorPhysicalMode(
+                nint hwnd,
+                out VirtualDisplayMode mode,
+                out double dpiScale)
+            {
+                mode = default;
+                dpiScale = 1.0;
+
+                const uint monitorDefaultToNearest = 2;
+                const uint monitorDefaultToPrimary = 1;
+                nint hMonitor = hwnd != IntPtr.Zero
+                    ? MonitorFromWindow(hwnd, monitorDefaultToNearest)
+                    : MonitorFromWindow(IntPtr.Zero, monitorDefaultToPrimary);
+                if (hMonitor == IntPtr.Zero)
+                    return false;
+
+                byte[] mi = new byte[104];
+                BinaryPrimitives.WriteInt32LittleEndian(mi.AsSpan(0, 4), mi.Length);
+                if (!GetMonitorInfoW(hMonitor, mi))
+                    return false;
+
+                string deviceName = VirtualDriversVddBackend.ReadUtf16NullTerminated(mi.AsSpan(40, 64));
+                if (!string.IsNullOrWhiteSpace(deviceName) &&
+                    TryReadDevModePhysicalResolution(deviceName, out mode, out dpiScale))
+                {
+                    return true;
+                }
+
+                int monWidth = BinaryPrimitives.ReadInt32LittleEndian(mi.AsSpan(12, 4)) -
+                               BinaryPrimitives.ReadInt32LittleEndian(mi.AsSpan(4, 4));
+                int monHeight = BinaryPrimitives.ReadInt32LittleEndian(mi.AsSpan(16, 4)) -
+                                BinaryPrimitives.ReadInt32LittleEndian(mi.AsSpan(8, 4));
+                if (monWidth > 0 && monHeight > 0)
+                {
+                    mode = new VirtualDisplayMode(monWidth, monHeight, 60);
+                    return true;
+                }
+
+                return false;
+            }
+
+            private static bool TryReadDevModePhysicalResolution(
+                string deviceName,
+                out VirtualDisplayMode mode,
+                out double dpiScale)
+            {
+                mode = default;
+                dpiScale = 1.0;
+
+                byte[] devMode = new byte[220];
+                BinaryPrimitives.WriteUInt16LittleEndian(devMode.AsSpan(68, 2), (ushort)devMode.Length);
+                const uint enumCurrentSettings = unchecked((uint)-1);
+                if (!EnumDisplaySettingsW(deviceName, enumCurrentSettings, devMode))
+                    return false;
+
+                int logPixels = BinaryPrimitives.ReadUInt16LittleEndian(devMode.AsSpan(166, 2));
+                if (logPixels >= 96)
+                {
+                    dpiScale = logPixels / 96.0;
+                }
+
+                int pelsW = (int)BinaryPrimitives.ReadUInt32LittleEndian(devMode.AsSpan(172, 4));
+                int pelsH = (int)BinaryPrimitives.ReadUInt32LittleEndian(devMode.AsSpan(176, 4));
+                int freq = (int)BinaryPrimitives.ReadUInt32LittleEndian(devMode.AsSpan(184, 4));
+                if (pelsW <= 0 || pelsH <= 0)
+                    return false;
+
+                mode = new VirtualDisplayMode(pelsW, pelsH, freq > 0 ? freq : 60);
+                return true;
+            }
+        }
+
+        public static bool TryGetWindowMonitorPhysicalMode(
+            nint hwnd,
+            out VirtualDisplayMode mode,
+            out double dpiScale)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                try
+                {
+                    return Win32CcdAdapter.TryGetWindowMonitorPhysicalMode(hwnd, out mode, out dpiScale);
+                }
+                catch
+                {
+                    // Fallback al proveedor multiplataforma
+                }
+            }
+
+            mode = default;
+            dpiScale = 1.0;
+            return false;
         }
 
         internal sealed class NullCcdAdapter : ICcdPlatformAdapter

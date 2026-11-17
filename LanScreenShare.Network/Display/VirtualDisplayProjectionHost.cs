@@ -246,6 +246,16 @@ public sealed class VirtualDisplayProjectionHost : IAsyncDisposable
             DisplaySessionControlMessage.CreateModeChanged(changeResult.Session.ActiveMode));
     }
 
+    public void RefreshCaptureSourceFromTopology()
+    {
+        if (!_isProjecting || _deps.DisplayService.CurrentSession is not { } session)
+            return;
+
+        var topology = _deps.TopologyManager?.CaptureSnapshot();
+        ActiveCaptureSource = VirtualDisplayCaptureSourceFactory.CreateCaptureSource(session, topology);
+        _captureService?.RequestKeyframe();
+    }
+
     public async Task StopProjectionAsync(CancellationToken ct = default)
     {
         await _stateLock.WaitAsync(ct);

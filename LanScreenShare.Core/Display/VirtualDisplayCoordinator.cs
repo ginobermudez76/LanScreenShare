@@ -107,12 +107,13 @@ namespace LanScreenShare.Core.Display
             if (!configured)
                 return VirtualDisplayOperationResult.Fail(VirtualDisplayErrorCode.TopologyFailed, "No se pudo aplicar la topología extendida en Windows.");
 
+            var effectiveInstance = _activeInstance ?? instance;
             CurrentSession = new VirtualDisplaySessionInfo
             {
                 BackendId = backend.Capabilities.BackendId,
-                MonitorId = instance.MonitorId,
-                DeviceName = instance.DeviceName,
-                ActiveMode = instance.Mode,
+                MonitorId = effectiveInstance.MonitorId,
+                DeviceName = effectiveInstance.DeviceName,
+                ActiveMode = effectiveInstance.Mode,
                 SnapshotPath = _options.SnapshotFilePath
             };
 
@@ -148,11 +149,53 @@ namespace LanScreenShare.Core.Display
 
             TransitionState(VirtualDisplayState.ConfiguringTopology, "Aplicando topología Extendida (CCD)");
             if (_topologyManager.ApplyExtendTopology(setup.Instance.DeviceName, setup.Instance.Mode))
+            {
+                await TryResolveDiscoveredDeviceNameAsync(setup, ct);
                 return true;
+            }
 
             await TeardownActiveResourcesAsync(_savedSnapshot, ct);
             TransitionState(VirtualDisplayState.Inactive, "No se pudo aplicar la topología extendida en Windows.");
             return false;
+        }
+
+        private async Task TryResolveDiscoveredDeviceNameAsync(SessionSetupContext setup, CancellationToken ct)
+        {
+            if (!string.IsNullOrWhiteSpace(setup.Instance.DeviceName))
+                return;
+
+            var postExtend = _topologyManager.CaptureSnapshot();
+            string? discoveredName = FindAddedDeviceName(setup.BaseSnapshot.Paths, postExtend.Paths);
+            if (string.IsNullOrWhiteSpace(discoveredName))
+                return;
+
+            _activeInstance = setup.Instance with { DeviceName = discoveredName };
+            _savedSnapshot = _savedSnapshot! with { VirtualDeviceName = discoveredName };
+            await _savedSnapshot.SaveToFileAsync(_options.SnapshotFilePath, ct);
+            _topologyManager.ApplyExtendTopology(discoveredName, setup.Instance.Mode);
+        }
+
+        internal static string? FindAddedDeviceName(
+            IReadOnlyList<DisplayPathSnapshot> beforePaths,
+            IReadOnlyList<DisplayPathSnapshot> afterPaths)
+        {
+            foreach (var candidate in afterPaths)
+            {
+                if (string.IsNullOrWhiteSpace(candidate.DeviceName))
+                    continue;
+
+                bool existed = beforePaths.Any(b =>
+                    string.Equals(b.DeviceName, candidate.DeviceName, StringComparison.OrdinalIgnoreCase) ||
+                    (b.AdapterLuidLow == candidate.AdapterLuidLow &&
+                     b.AdapterLuidHigh == candidate.AdapterLuidHigh &&
+                     b.TargetId == candidate.TargetId &&
+                     b.TargetId != 0));
+
+                if (!existed)
+                    return candidate.DeviceName;
+            }
+
+            return null;
         }
 
         private static async Task<VirtualDisplayInstance?> TryCreateVirtualMonitorAsync(

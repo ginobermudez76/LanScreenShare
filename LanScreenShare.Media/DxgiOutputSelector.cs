@@ -38,7 +38,8 @@ namespace LanScreenShare.Media
     {
         public static int SelectBestIndex(
             IReadOnlyList<DxgiOutputDescriptor> candidates,
-            in DxgiOutputTarget target)
+            in DxgiOutputTarget target,
+            bool requireExactMatch = false)
         {
             if (candidates.Count == 0)
                 return -1;
@@ -47,9 +48,15 @@ namespace LanScreenShare.Media
             if (byDeviceName >= 0)
                 return byDeviceName;
 
+            if (requireExactMatch && !string.IsNullOrWhiteSpace(target.DeviceName))
+                return -1;
+
             int byBounds = FindByBounds(candidates, target.Bounds);
             if (byBounds >= 0)
                 return byBounds;
+
+            if (requireExactMatch)
+                return -1;
 
             if (target.MonitorIndex >= 0 && target.MonitorIndex < candidates.Count)
                 return target.MonitorIndex;

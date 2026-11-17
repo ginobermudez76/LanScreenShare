@@ -242,7 +242,8 @@ namespace LanScreenShare.Media.Display
             if (HasMttVddHardwareId([deviceId]))
                 return true;
 
-            return deviceString.Contains("Virtual Display Driver", StringComparison.OrdinalIgnoreCase);
+            return deviceString.Contains("Virtual Display Driver", StringComparison.OrdinalIgnoreCase)
+                || deviceString.Contains("VDD by MTT", StringComparison.OrdinalIgnoreCase);
         }
 
         internal static string ReadUtf16NullTerminated(ReadOnlySpan<byte> utf16Bytes)
@@ -379,8 +380,8 @@ namespace LanScreenShare.Media.Display
         }
 
         private static bool IsMttVddId(string id) =>
-            string.Equals(id, @"Root\MttVDD", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(id, "MttVDD", StringComparison.OrdinalIgnoreCase);
+            !string.IsNullOrWhiteSpace(id) &&
+            id.Contains("MttVDD", StringComparison.OrdinalIgnoreCase);
 
         public async Task<VirtualDisplayInstance?> CreateVirtualMonitorAsync(
             VirtualDisplayMode mode,
@@ -390,6 +391,7 @@ namespace LanScreenShare.Media.Display
                 return null;
 
             string? existingXml = _environment.ReadSettingsXml();
+            bool hadRequestedMode = VddSettingsXmlHelper.ContainsMode(existingXml, mode);
             _previousCount = VddSettingsXmlHelper.ReadMonitorCount(existingXml ?? string.Empty);
             int targetCount = Math.Max(1, _previousCount + 1);
 
@@ -408,6 +410,13 @@ namespace LanScreenShare.Media.Display
                 RestorePreviousCountInSettings(mode);
                 await _environment.DisableDriverAsync(CancellationToken.None);
                 return null;
+            }
+
+            if (!hadRequestedMode)
+            {
+                // Si el controlador ya estaba cargado con una tabla EDID previa, recargamos vdd_settings.xml
+                // para exponer de inmediato la resolución nativa del receptor.
+                await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.ReloadDriver), ct);
             }
 
             TimeSpan deviceLookupTimeout = _environment is WindowsVddEnvironment

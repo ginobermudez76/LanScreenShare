@@ -153,7 +153,8 @@ public sealed class DisplaySignalingClient : IDisplaySignalingClient
                 Failure: DisplayNegotiationResult.Fail(DisplaySignalingMessage.ErrorDisplayBusy, "El receptor ya está ocupado en otra sesión."));
         }
 
-        var selectedMode = VirtualDisplayModeValidator.SelectBestSupportedMode(response.Capabilities.SupportedModes, preferredMode);
+        var effectivePreference = preferredMode ?? response.Capabilities.NativeMode;
+        var selectedMode = VirtualDisplayModeValidator.SelectBestSupportedMode(response.Capabilities.SupportedModes, effectivePreference);
         if (selectedMode == null)
         {
             return new CapabilitiesQueryOutcome(

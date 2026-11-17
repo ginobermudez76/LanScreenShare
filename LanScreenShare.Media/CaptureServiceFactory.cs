@@ -45,7 +45,8 @@ namespace LanScreenShare.Media
                 TargetX = source.X,
                 TargetY = source.Y,
                 TargetSourceWidth = source.Width,
-                TargetSourceHeight = source.Height
+                TargetSourceHeight = source.Height,
+                RequireExactTargetMatch = source.Id.StartsWith("vdd:", StringComparison.OrdinalIgnoreCase)
             };
             return dxgi;
         }

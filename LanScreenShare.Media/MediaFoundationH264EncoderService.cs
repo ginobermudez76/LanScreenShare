@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -446,14 +447,22 @@ namespace LanScreenShare.Media
             // 2. Enviar el nuevo fotograma de entrada
             _encoder.ProcessInput(0, inputSample, 0);
 
-            // 3. Drenar eventos generados con breve margen de espera para la GPU (sale en <2ms en cuanto está listo)
-            for (int retry = 0; retry < 15; retry++)
+            // 3. Drenar eventos generados sin sufrir saltos de 15.6 ms por Thread.Sleep sin timer de alta precisión
+            var waitSw = Stopwatch.StartNew();
+            while (outputMs.Length == 0 && waitSw.ElapsedMilliseconds < 30)
             {
                 DrainAsyncEvents(outputMs);
                 if (outputMs.Length > 0)
                     break;
 
-                System.Threading.Thread.Sleep(2);
+                if (waitSw.ElapsedMilliseconds < 3)
+                {
+                    Thread.SpinWait(200);
+                }
+                else
+                {
+                    Thread.Sleep(1);
+                }
             }
 
             return outputMs.ToArray();

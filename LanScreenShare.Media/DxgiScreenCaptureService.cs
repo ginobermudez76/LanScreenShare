@@ -25,9 +25,11 @@ namespace LanScreenShare.Media
         private volatile int _targetSourceWidth = 0;
         private volatile int _targetSourceHeight = 0;
         private readonly CursorSpriteRenderer _cursorRenderer = new(new Win32NativeCursorProvider());
+        private SKBitmap? _reusableWorkBitmap;
 
         public event EventHandler<Exception>? CaptureFailed;
         public bool IncludeCursor { get; set; } = true;
+        public bool RequireExactTargetMatch { get; set; }
 
         protected override int StopWaitTimeoutMs => 1000;
         protected override bool ClearSecureDesktopOnStop => false;
@@ -155,9 +157,9 @@ namespace LanScreenShare.Media
                     break;
 
                 stopwatch.Restart();
-                int frameIntervalMs = Math.Max(5, 1000 / Math.Max(1, _targetFps));
+                int targetFps = Math.Max(1, _targetFps);
                 CaptureAndDispatchWinlogonGdiFrame(bounds, fpsTracker);
-                ApplyFramePacing(stopwatch, frameIntervalMs);
+                ApplyFramePacing(stopwatch, targetFps, FrameAcquireStatus.NewFrame);
             }
         }
 
@@ -200,6 +202,7 @@ namespace LanScreenShare.Media
 
         private void CaptureLoop(CancellationToken token)
         {
+            uint timerPeriodResult = timeBeginPeriod(1);
             IntPtr mmcssHandle = ConfigureCaptureThreadPriority();
             var stopwatch = new Stopwatch();
             var fpsTracker = new HostFpsTracker();
@@ -213,6 +216,10 @@ namespace LanScreenShare.Media
             }
             finally
             {
+                if (timerPeriodResult == 0)
+                {
+                    timeEndPeriod(1);
+                }
                 RevertMmcss(mmcssHandle);
             }
         }
@@ -257,6 +264,14 @@ namespace LanScreenShare.Media
                 return;
             }
 
+            if (RequireExactTargetMatch)
+            {
+                // En transiciones de resolución/modo en Configuración de Windows, la salida virtual puede
+                // desaparecer brevemente de DXGI; reintentamos sin hacer fallback al monitor principal ni a GDI.
+                token.WaitHandle.WaitOne(120);
+                return;
+            }
+
             Console.WriteLine($"[DXGI Capture] Error en bucle DXGI: {ex.Message}");
             CaptureFailed?.Invoke(this, ex);
             Thread.Sleep(500);
@@ -295,8 +310,8 @@ namespace LanScreenShare.Media
             {
                 stopwatch.Restart();
 
-                int currentFps = _targetFps;
-                int frameIntervalMs = Math.Max(5, 1000 / Math.Max(1, currentFps));
+                int currentFps = Math.Max(1, _targetFps);
+                int frameIntervalMs = Math.Max(4, (int)Math.Round(1000.0 / currentFps));
                 var frameProcStopwatch = Stopwatch.StartNew();
 
                 var status = TryAcquireAndCopyFrame(session, frameIntervalMs, ref hasCapturedAtLeastOneFrame);
@@ -322,7 +337,7 @@ namespace LanScreenShare.Media
                     ProcessAndDispatchFrame(session, frameProcStopwatch, fpsTracker);
                 }
 
-                ApplyFramePacing(stopwatch, frameIntervalMs);
+                ApplyFramePacing(stopwatch, currentFps, status);
             }
         }
 
@@ -338,7 +353,7 @@ namespace LanScreenShare.Media
             int frameIntervalMs,
             ref bool hasCapturedAtLeastOneFrame)
         {
-            uint timeoutMs = (uint)Math.Max(5, Math.Min(10, frameIntervalMs / 2));
+            uint timeoutMs = (uint)Math.Clamp(frameIntervalMs - 2, 4, 16);
             var acquireResult = session.Duplication!.AcquireNextFrame(timeoutMs, out _, out IDXGIResource? desktopResource);
 
             if (acquireResult.Success && desktopResource != null)
@@ -415,13 +430,19 @@ namespace LanScreenShare.Media
                     session.Bounds.ScreenHeight,
                     (int)mapped.RowPitch);
 
+                bool trackExternalResolution = RequireExactTargetMatch &&
+                    _scalePercent >= 99 &&
+                    _targetSourceWidth > 0 &&
+                    _targetSourceHeight > 0 &&
+                    (session.Bounds.ScreenWidth != _targetSourceWidth || session.Bounds.ScreenHeight != _targetSourceHeight);
+
                 var options = new FrameEncodingOptions(
                     _quality,
                     ResolutionScale,
                     session.Bounds.ScreenLeft,
                     session.Bounds.ScreenTop,
-                    _targetWidth,
-                    _targetHeight,
+                    trackExternalResolution ? 0 : _targetWidth,
+                    trackExternalResolution ? 0 : _targetHeight,
                     forceKeyframe);
 
                 var frame = EncodeFrameFromPointer(buffer, options);
@@ -440,13 +461,28 @@ namespace LanScreenShare.Media
             }
         }
 
-        private static void ApplyFramePacing(Stopwatch stopwatch, int frameIntervalMs)
+        private static void ApplyFramePacing(Stopwatch stopwatch, int targetFps, FrameAcquireStatus status)
         {
-            int elapsed = (int)stopwatch.ElapsedMilliseconds;
-            int delay = frameIntervalMs - elapsed;
-            if (delay > 0)
+            double targetIntervalMs = 1000.0 / Math.Max(1, targetFps);
+            double remainingMs = targetIntervalMs - stopwatch.Elapsed.TotalMilliseconds;
+            if (remainingMs <= 0.5)
+                return;
+
+            if (status == FrameAcquireStatus.NoFrame && remainingMs <= 2.5)
+                return;
+
+            if (remainingMs > 2.5)
             {
-                Thread.Sleep(delay);
+                int sleepMs = (int)Math.Floor(remainingMs - 1.5);
+                if (sleepMs > 0)
+                {
+                    Thread.Sleep(sleepMs);
+                }
+            }
+
+            while (stopwatch.Elapsed.TotalMilliseconds < targetIntervalMs - 0.15)
+            {
+                Thread.SpinWait(50);
             }
         }
 
@@ -645,7 +681,7 @@ namespace LanScreenShare.Media
                 Height = _targetSourceHeight
             });
 
-            int selectedIndex = DxgiOutputSelector.SelectBestIndex(descriptors, target);
+            int selectedIndex = DxgiOutputSelector.SelectBestIndex(descriptors, target, RequireExactTargetMatch);
             if (selectedIndex >= 0)
             {
                 var winner = entries[selectedIndex];
@@ -656,6 +692,11 @@ namespace LanScreenShare.Media
             }
 
             DisposeUnusedDxgiResources(adapters, entries);
+            if (RequireExactTargetMatch)
+            {
+                throw new InvalidOperationException($"La salida DXGI objetivo ('{_deviceName}') no está disponible temporalmente.");
+            }
+
             (adapter, output) = GetFallbackPrimaryAdapterAndOutput(factory);
         }
 
@@ -707,22 +748,82 @@ namespace LanScreenShare.Media
             }
         }
 
-        private static (SKBitmap bitmapToEncode, SKBitmap? disposableBitmap, int finalWidth, int finalHeight) PrepareEncodingBitmap(
+        private (SKBitmap bitmapToEncode, SKBitmap? disposableBitmap, int finalWidth, int finalHeight, bool shouldDrawCursor) PrepareEncodingBitmap(
             SKBitmap skBitmap,
             in RawFrameBuffer buffer,
             in FrameEncodingOptions options)
         {
+            bool shouldDrawCursor = ShouldCompositeCursorOnFrame(options.ScreenLeft, options.ScreenTop, buffer.Width, buffer.Height);
+
             var (bitmapToEncode, resizedBitmap, finalWidth, finalHeight) = PrepareResizedBitmap(
                 skBitmap,
                 new BitmapResizeOptions(buffer.Width, buffer.Height, options.Scale, options.CustomTargetWidth, options.CustomTargetHeight));
 
             if (resizedBitmap != null)
             {
-                return (bitmapToEncode, resizedBitmap, finalWidth, finalHeight);
+                return (bitmapToEncode, resizedBitmap, finalWidth, finalHeight, shouldDrawCursor);
             }
 
-            var copied = skBitmap.Copy();
-            return (copied ?? skBitmap, copied, buffer.Width, buffer.Height);
+            int tightRowBytes = buffer.Width * 4;
+            if (!shouldDrawCursor && buffer.RowPitch == tightRowBytes)
+            {
+                return (skBitmap, null, buffer.Width, buffer.Height, false);
+            }
+
+            var workBitmap = EnsureReusableWorkBitmap(buffer.Width, buffer.Height);
+            CopyBufferIntoWorkBitmap(in buffer, workBitmap);
+            return (workBitmap, null, buffer.Width, buffer.Height, shouldDrawCursor);
+        }
+
+        private bool ShouldCompositeCursorOnFrame(int screenLeft, int screenTop, int width, int height)
+        {
+            if (!IncludeCursor || Win32NativeCursorProvider.AreMouseTrailsActive())
+                return false;
+
+            var sample = TryGetCurrentCursorSample();
+            if (!sample.IsVisible)
+                return false;
+
+            const int spriteMarginPx = 64;
+            return sample.X >= screenLeft - spriteMarginPx &&
+                   sample.X < screenLeft + width + spriteMarginPx &&
+                   sample.Y >= screenTop - spriteMarginPx &&
+                   sample.Y < screenTop + height + spriteMarginPx;
+        }
+
+        private SKBitmap EnsureReusableWorkBitmap(int width, int height)
+        {
+            if (_reusableWorkBitmap != null &&
+                _reusableWorkBitmap.Width == width &&
+                _reusableWorkBitmap.Height == height)
+            {
+                return _reusableWorkBitmap;
+            }
+
+            _reusableWorkBitmap?.Dispose();
+            _reusableWorkBitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
+            return _reusableWorkBitmap;
+        }
+
+        private static unsafe void CopyBufferIntoWorkBitmap(in RawFrameBuffer buffer, SKBitmap target)
+        {
+            IntPtr dstBase = target.GetPixels();
+            int tightRowBytes = buffer.Width * 4;
+            if (buffer.RowPitch == tightRowBytes)
+            {
+                long totalBytes = (long)tightRowBytes * buffer.Height;
+                Buffer.MemoryCopy((void*)buffer.DataPointer, (void*)dstBase, totalBytes, totalBytes);
+                return;
+            }
+
+            byte* srcRow = (byte*)buffer.DataPointer;
+            byte* dstRow = (byte*)dstBase;
+            for (int y = 0; y < buffer.Height; y++)
+            {
+                Buffer.MemoryCopy(srcRow, dstRow, tightRowBytes, tightRowBytes);
+                srcRow += buffer.RowPitch;
+                dstRow += tightRowBytes;
+            }
         }
 
         private CapturedFrame? EncodeFrameFromPointer(
@@ -735,19 +836,22 @@ namespace LanScreenShare.Media
                 using var skBitmap = new SKBitmap();
                 skBitmap.InstallPixels(imageInfo, buffer.DataPointer, buffer.RowPitch);
 
-                var (bitmapToEncode, resizedBitmap, finalWidth, finalHeight) = PrepareEncodingBitmap(skBitmap, buffer, options);
+                var (bitmapToEncode, resizedBitmap, finalWidth, finalHeight, shouldDrawCursor) = PrepareEncodingBitmap(skBitmap, buffer, options);
 
                 try
                 {
-                    float scaleX = (float)finalWidth / Math.Max(1, buffer.Width);
-                    float scaleY = (float)finalHeight / Math.Max(1, buffer.Height);
-                    DrawCursorOnBitmap(bitmapToEncode, new CursorRenderTarget
+                    if (shouldDrawCursor)
                     {
-                        ScreenLeft = options.ScreenLeft,
-                        ScreenTop = options.ScreenTop,
-                        ScaleX = scaleX,
-                        ScaleY = scaleY
-                    });
+                        float scaleX = (float)finalWidth / Math.Max(1, buffer.Width);
+                        float scaleY = (float)finalHeight / Math.Max(1, buffer.Height);
+                        DrawCursorOnBitmap(bitmapToEncode, new CursorRenderTarget
+                        {
+                            ScreenLeft = options.ScreenLeft,
+                            ScreenTop = options.ScreenTop,
+                            ScaleX = scaleX,
+                            ScaleY = scaleY
+                        });
+                    }
 
                     string currentCodec = _codec;
                     byte[]? encodedBytes = currentCodec == "h264"
@@ -801,6 +905,8 @@ namespace LanScreenShare.Media
             base.Dispose(disposing);
             if (disposing)
             {
+                _reusableWorkBitmap?.Dispose();
+                _reusableWorkBitmap = null;
                 _cursorRenderer.Dispose();
             }
         }
@@ -834,6 +940,12 @@ namespace LanScreenShare.Media
         [LibraryImport("avrt.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static partial bool AvRevertMmThreadCharacteristics(IntPtr avrtHandle);
+
+        [LibraryImport("winmm.dll")]
+        private static partial uint timeBeginPeriod(uint uPeriod);
+
+        [LibraryImport("winmm.dll")]
+        private static partial uint timeEndPeriod(uint uPeriod);
 
         private sealed partial class Win32NativeCursorProvider : INativeCursorProvider
         {

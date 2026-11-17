@@ -215,4 +215,31 @@ public class DxgiSelectionAndCursorTests
         Assert.AreNotEqual(SKColors.Navy, arrowTipPixel);
         Assert.AreEqual((false, false), (emptyResult.HasVisiblePixels, shortResult.HasVisiblePixels));
     }
+
+    [TestMethod]
+    public void SelectBestIndex_ExactTargetMatch_NeverFallsBackToPrimaryMonitor()
+    {
+        var candidates = new[]
+        {
+            CreateOutput((0, 0), @"\\.\DISPLAY1", new DxgiOutputRect { Left = 0, Top = 0, Width = 1920, Height = 1080 }),
+            CreateOutput((1, 0), @"\\.\DISPLAY3", new DxgiOutputRect { Left = 1920, Top = 0, Width = 1280, Height = 720 })
+        };
+
+        int missingNamedDevice = DxgiOutputSelector.SelectBestIndex(
+            candidates,
+            new DxgiOutputTarget(@"\\.\DISPLAY2", 0, new DxgiOutputRect { Left = 1920, Top = 0, Width = 1366, Height = 768 }),
+            requireExactMatch: true);
+
+        int unmatchedBounds = DxgiOutputSelector.SelectBestIndex(
+            candidates,
+            new DxgiOutputTarget(null, 0, new DxgiOutputRect { Left = 1920, Top = 0, Width = 1366, Height = 768 }),
+            requireExactMatch: true);
+
+        int matchedBounds = DxgiOutputSelector.SelectBestIndex(
+            candidates,
+            new DxgiOutputTarget(null, 0, new DxgiOutputRect { Left = 1920, Top = 0, Width = 1280, Height = 720 }),
+            requireExactMatch: true);
+
+        Assert.AreEqual((-1, -1, 1), (missingNamedDevice, unmatchedBounds, matchedBounds));
+    }
 }

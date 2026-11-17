@@ -29,6 +29,7 @@ namespace LanScreenShare.Desktop
     public partial class MainWindow
     {
         private const uint WmPowerBroadcast = 0x0218;
+        private const uint WmDisplayChange = 0x007E;
         private const int PbtApmSuspend = 0x0004;
         private const int PbtApmResumeSuspended = 0x0007;
         private const int PbtApmResumeAutomatic = 0x0012;
@@ -40,6 +41,8 @@ namespace LanScreenShare.Desktop
         private VirtualDisplayProjectionHost? _projectionHost;
         private VirtualDisplayProjectionReceiver? _projectionReceiver;
         private Win32Properties.CustomWndProcHookCallback? _powerWndProcHook;
+        private CancellationTokenSource? _displayChangeGuardCts;
+        private nint _cachedWindowHwnd;
 
         private bool _isWirelessDisplayModeActive;
         private bool _isExtendingDisplay;
@@ -75,8 +78,13 @@ namespace LanScreenShare.Desktop
 
             if (OperatingSystem.IsWindows())
             {
-                _powerWndProcHook = (nint _, uint msg, nint wParam, nint _, ref bool _) =>
+                _cachedWindowHwnd = TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+                _powerWndProcHook = (nint hwnd, uint msg, nint wParam, nint _, ref bool _) =>
                 {
+                    if (hwnd != IntPtr.Zero)
+                    {
+                        _cachedWindowHwnd = hwnd;
+                    }
                     DispatchPowerBroadcastMessage(msg, wParam);
                     return IntPtr.Zero;
                 };
@@ -88,6 +96,15 @@ namespace LanScreenShare.Desktop
 
         private void DispatchPowerBroadcastMessage(uint msg, nint wParam)
         {
+            if (msg == WmDisplayChange)
+            {
+                if (_isExtendingDisplay)
+                {
+                    ScheduleExtendedTopologyGuardCheck();
+                }
+                return;
+            }
+
             var powerEvent = ParsePowerBroadcast(msg, wParam);
             if (powerEvent == VirtualDisplayPowerEvent.Suspend)
             {
@@ -97,6 +114,41 @@ namespace LanScreenShare.Desktop
             {
                 _ = HandleResumeAndKeyframeAsync();
             }
+        }
+
+        private void ScheduleExtendedTopologyGuardCheck()
+        {
+            _displayChangeGuardCts?.Cancel();
+            _displayChangeGuardCts?.Dispose();
+            var cts = new CancellationTokenSource();
+            _displayChangeGuardCts = cts;
+            var token = cts.Token;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(300, token);
+                    if (token.IsCancellationRequested || !_isExtendingDisplay)
+                        return;
+
+                    var host = _projectionHost;
+                    var topo = _topologyManager;
+                    if (host == null || !host.IsProjecting || topo == null)
+                        return;
+
+                    topo.EnsureExtendedLayout(host.ActiveDisplaySession?.DeviceName);
+                    host.RefreshCaptureSourceFromTopology();
+                }
+                catch (OperationCanceledException)
+                {
+                    // Reemplazado por un evento WM_DISPLAYCHANGE más reciente
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[VirtualDisplay] Advertencia validando topología tras WM_DISPLAYCHANGE: {ex.Message}");
+                }
+            }, CancellationToken.None);
         }
 
         private async Task HandleResumeAndKeyframeAsync()
@@ -161,6 +213,11 @@ namespace LanScreenShare.Desktop
             if (_isExtendingDisplay) await StopExtendedProjectionAsync();
             if (_isViewing) await HandleViewerDisconnectedAsync("Cambiando a Modo Pantalla Inalámbrica...");
 
+            if (OperatingSystem.IsWindows())
+            {
+                _cachedWindowHwnd = TryGetPlatformHandle()?.Handle ?? _cachedWindowHwnd;
+            }
+
             _discoveryService.IsWirelessDisplayBusyProvider = () => _projectionReceiver?.IsSessionBusy ?? _isViewing;
             _projectionReceiver = new VirtualDisplayProjectionReceiver(new VirtualDisplayProjectionReceiverOptions
             {
@@ -205,31 +262,131 @@ namespace LanScreenShare.Desktop
 
         private DisplayCapabilitiesDto BuildLocalDisplayCapabilities()
         {
-            var modes = new List<VirtualDisplayMode>
-            {
-                new(1920, 1080, 60),
-                new(2560, 1440, 60),
-                new(1600, 900, 60),
-                new(1280, 720, 60)
-            };
+            var (nativeMode, dpiScale) = ResolveLocalPhysicalDisplayMode();
+            bool isBusy = _isViewing || _isHosting || _isExtendingDisplay;
+            return BuildDisplayCapabilities(nativeMode, dpiScale, isBusy);
+        }
 
-            if (Screens.Primary is { } primary)
+        internal static DisplayCapabilitiesDto BuildDisplayCapabilities(
+            VirtualDisplayMode? detectedNativeMode,
+            double dpiScale,
+            bool isBusy)
+        {
+            var normalizedNative = NormalizeDisplayMode(detectedNativeMode);
+            var modes = new List<VirtualDisplayMode>();
+
+            if (normalizedNative is { } native && VirtualDisplayModeValidator.IsSupported(in native))
             {
-                var nativeMode = new VirtualDisplayMode(primary.Bounds.Width, primary.Bounds.Height, 60);
-                if (VirtualDisplayModeValidator.IsSupported(in nativeMode) && !modes.Contains(nativeMode))
+                modes.Add(native);
+            }
+
+            int maxW = normalizedNative?.Width ?? 1920;
+            int maxH = normalizedNative?.Height ?? 1080;
+            int hz = normalizedNative?.RefreshRateHz ?? 60;
+
+            (int Width, int Height)[] standardCandidates =
+            [
+                (3840, 2160),
+                (2560, 1440),
+                (1920, 1080),
+                (1600, 900),
+                (1366, 768),
+                (1280, 720)
+            ];
+
+            foreach (var (w, h) in standardCandidates)
+            {
+                if (w > maxW || h > maxH)
+                    continue;
+
+                var candidate = new VirtualDisplayMode(w, h, hz);
+                if (VirtualDisplayModeValidator.IsSupported(in candidate) && !modes.Contains(candidate))
                 {
-                    modes.Insert(0, nativeMode);
+                    modes.Add(candidate);
                 }
+
+                if (hz != 60)
+                {
+                    var fallback60 = new VirtualDisplayMode(w, h, 60);
+                    if (VirtualDisplayModeValidator.IsSupported(in fallback60) && !modes.Contains(fallback60))
+                    {
+                        modes.Add(fallback60);
+                    }
+                }
+            }
+
+            if (modes.Count == 0)
+            {
+                modes.Add(VirtualDisplayMode.Default);
             }
 
             return new DisplayCapabilitiesDto
             {
                 DeviceName = Environment.MachineName,
                 SupportedModes = modes,
-                DpiScaleFactor = Screens.Primary?.Scaling ?? 1.0,
+                NativeMode = normalizedNative ?? modes[0],
+                DpiScaleFactor = dpiScale > 0 ? dpiScale : 1.0,
                 SupportsAuxiliaryInput = false,
-                IsBusy = _isViewing || _isHosting || _isExtendingDisplay
+                IsBusy = isBusy
             };
+        }
+
+        private static VirtualDisplayMode? NormalizeDisplayMode(VirtualDisplayMode? rawMode)
+        {
+            if (rawMode is not { } raw || raw.Width <= 0 || raw.Height <= 0)
+                return null;
+
+            int width = raw.Width;
+            int height = raw.Height;
+
+            if (width > VirtualDisplayModeValidator.MaxWidth || height > VirtualDisplayModeValidator.MaxHeight)
+            {
+                double ratio = Math.Min(
+                    (double)VirtualDisplayModeValidator.MaxWidth / width,
+                    (double)VirtualDisplayModeValidator.MaxHeight / height);
+                width = (int)Math.Floor(width * ratio);
+                height = (int)Math.Floor(height * ratio);
+            }
+
+            width = Math.Clamp(width & ~1, VirtualDisplayModeValidator.MinWidth, VirtualDisplayModeValidator.MaxWidth);
+            height = Math.Clamp(height & ~1, VirtualDisplayModeValidator.MinHeight, VirtualDisplayModeValidator.MaxHeight);
+            int hz = Math.Clamp(raw.RefreshRateHz > 0 ? raw.RefreshRateHz : 60,
+                VirtualDisplayModeValidator.MinRefreshRateHz,
+                VirtualDisplayModeValidator.MaxRefreshRateHz);
+
+            var normalized = new VirtualDisplayMode(width, height, hz);
+            return VirtualDisplayModeValidator.IsSupported(in normalized) ? normalized : null;
+        }
+
+        private (VirtualDisplayMode? Mode, double DpiScale) ResolveLocalPhysicalDisplayMode()
+        {
+            if (WindowsDisplayTopologyManager.TryGetWindowMonitorPhysicalMode(_cachedWindowHwnd, out var winMode, out double winScale))
+            {
+                return (winMode, winScale);
+            }
+
+            try
+            {
+                if (Dispatcher.UIThread.CheckAccess())
+                {
+                    return ReadAvaloniaScreenMode();
+                }
+
+                return Dispatcher.UIThread.Invoke(ReadAvaloniaScreenMode);
+            }
+            catch
+            {
+                return (null, 1.0);
+            }
+        }
+
+        private (VirtualDisplayMode? Mode, double DpiScale) ReadAvaloniaScreenMode()
+        {
+            var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+            if (screen == null)
+                return (null, 1.0);
+
+            return (new VirtualDisplayMode(screen.Bounds.Width, screen.Bounds.Height, 60), screen.Scaling);
         }
 
         private async Task<bool> HandleIncomingProjectionInviteAsync(DisplayInvitationAcceptanceContext context)
@@ -448,6 +605,10 @@ namespace LanScreenShare.Desktop
 
         private void DisposeVirtualDisplaySubsystemSync()
         {
+            _displayChangeGuardCts?.Cancel();
+            _displayChangeGuardCts?.Dispose();
+            _displayChangeGuardCts = null;
+
             if (_powerWndProcHook != null && OperatingSystem.IsWindows())
             {
                 Win32Properties.RemoveWndProcHookCallback(this, _powerWndProcHook);
