@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Version = "1.0.0",
     [bool]$SelfContained = $true,
     [switch]$SkipVddDownload
@@ -11,6 +11,7 @@ $StageAppDir = Join-Path $PSScriptRoot "stage\app"
 $OutputDir = Join-Path $PSScriptRoot "output"
 $DesktopProj = Join-Path $RepoRoot "LanScreenShare.Desktop\LanScreenShare.Desktop.csproj"
 $WatchdogProj = Join-Path $RepoRoot "LanScreenShare.DisplayWatchdog\LanScreenShare.DisplayWatchdog.csproj"
+$SecureHostProj = Join-Path $RepoRoot "LanScreenShare.SecureHost\LanScreenShare.SecureHost.csproj"
 $IssScript = Join-Path $PSScriptRoot "LanScreenShare.iss"
 
 $VddDriverUrl = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-x86.Driver.Only.zip"
@@ -31,34 +32,18 @@ function Find-InnoSetupCompiler {
     throw "No se encontró Inno Setup 6 (ISCC.exe). Instálalo con: winget install JRSoftware.InnoSetup"
 }
 
-Write-Host "[1/4] Limpiando staging anterior..." -ForegroundColor Cyan
-if (Test-Path (Join-Path $PSScriptRoot "stage")) {
-    Remove-Item (Join-Path $PSScriptRoot "stage") -Recurse -Force
-}
-New-Item -ItemType Directory -Path $StageAppDir -Force | Out-Null
-New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
-
-Write-Host "[2/4] Compilando Watchdog y publicando LanScreenShare.Desktop (uiAccess=true)..." -ForegroundColor Cyan
-& dotnet build $WatchdogProj --configuration Release
-if ($LASTEXITCODE -ne 0) { throw "Falló compilación de LanScreenShare.DisplayWatchdog." }
-
-$selfContainedArg = if ($SelfContained) { "true" } else { "false" }
-& dotnet publish $DesktopProj `
-    --configuration Release `
-    --runtime win-x64 `
-    --self-contained $selfContainedArg `
-    "-p:UsePackagedUiAccessManifest=true" `
-    --output $StageAppDir
-if ($LASTEXITCODE -ne 0) { throw "Falló publicación de LanScreenShare.Desktop." }
-
-if (-not (Test-Path (Join-Path $StageAppDir "LanScreenShare.Desktop.exe"))) {
-    throw "Falta LanScreenShare.Desktop.exe en staging."
-}
-if (-not (Test-Path (Join-Path $StageAppDir "LanScreenShare.DisplayWatchdog.exe"))) {
-    throw "Falta LanScreenShare.DisplayWatchdog.exe en staging."
+function Assert-StagedExecutableExists([string]$ExeName) {
+    if (-not (Test-Path (Join-Path $StageAppDir $ExeName))) {
+        throw "Falta $ExeName en staging."
+    }
 }
 
-if (-not $SkipVddDownload) {
+function Stage-VirtualDisplayDriverPackage {
+    if ($SkipVddDownload) {
+        Write-Host "[3/4] Omitiendo descarga offline de Drivers\VDD (-SkipVddDownload)." -ForegroundColor Yellow
+        return
+    }
+
     Write-Host "[3/4] Descargando paquete firmado Virtual-Display-Driver (MIT) en carpeta temporal..." -ForegroundColor Cyan
     $tempCache = Join-Path $env:TEMP ("LanScreenShare-BuildCache-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $tempCache -Force | Out-Null
@@ -78,14 +63,45 @@ if (-not $SkipVddDownload) {
     } finally {
         Remove-Item -Path $tempCache -Recurse -Force -ErrorAction SilentlyContinue
     }
-} else {
-    Write-Host "[3/4] Omitiendo descarga offline de Drivers\VDD (-SkipVddDownload)." -ForegroundColor Yellow
 }
 
-Write-Host "[4/4] Compilando instalador con Inno Setup..." -ForegroundColor Cyan
-$iscc = Find-InnoSetupCompiler
-& $iscc "/DMyAppVersion=$Version" "/DPublishDir=$StageAppDir" "/DOutputDir=$OutputDir" $IssScript
-if ($LASTEXITCODE -ne 0) { throw "Falló compilación de Inno Setup." }
+function Invoke-InstallerBuild {
+    Write-Host "[1/4] Limpiando staging anterior..." -ForegroundColor Cyan
+    if (Test-Path (Join-Path $PSScriptRoot "stage")) {
+        Remove-Item (Join-Path $PSScriptRoot "stage") -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $StageAppDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
-$setupExe = Join-Path $OutputDir "LanScreenShare-Setup.exe"
-Write-Host "`nInstalador generado exitosamente: $setupExe" -ForegroundColor Green
+    Write-Host "[2/4] Compilando Watchdog, SecureHost y publicando LanScreenShare.Desktop (uiAccess=true)..." -ForegroundColor Cyan
+    & dotnet build $WatchdogProj --configuration Release
+    if ($LASTEXITCODE -ne 0) { throw "Falló compilación de LanScreenShare.DisplayWatchdog." }
+
+    & dotnet build $SecureHostProj --configuration Release
+    if ($LASTEXITCODE -ne 0) { throw "Falló compilación de LanScreenShare.SecureHost." }
+
+    $selfContainedArg = if ($SelfContained) { "true" } else { "false" }
+    & dotnet publish $DesktopProj `
+        --configuration Release `
+        --runtime win-x64 `
+        --self-contained $selfContainedArg `
+        "-p:UsePackagedUiAccessManifest=true" `
+        --output $StageAppDir
+    if ($LASTEXITCODE -ne 0) { throw "Falló publicación de LanScreenShare.Desktop." }
+
+    Assert-StagedExecutableExists "LanScreenShare.Desktop.exe"
+    Assert-StagedExecutableExists "LanScreenShare.DisplayWatchdog.exe"
+    Assert-StagedExecutableExists "LanScreenShare.SecureHost.exe"
+
+    Stage-VirtualDisplayDriverPackage
+
+    Write-Host "[4/4] Compilando instalador con Inno Setup..." -ForegroundColor Cyan
+    $iscc = Find-InnoSetupCompiler
+    & $iscc "/DMyAppVersion=$Version" "/DPublishDir=$StageAppDir" "/DOutputDir=$OutputDir" $IssScript
+    if ($LASTEXITCODE -ne 0) { throw "Falló compilación de Inno Setup." }
+
+    $setupExe = Join-Path $OutputDir "LanScreenShare-Setup.exe"
+    Write-Host "`nInstalador generado exitosamente: $setupExe" -ForegroundColor Green
+}
+
+Invoke-InstallerBuild

@@ -378,6 +378,20 @@ namespace LanScreenShare.Desktop
 
         private IScreenCaptureService CreateCaptureService(CaptureSource source, string engine)
         {
+            if (OperatingSystem.IsWindows() && _secureAgentClient != null)
+            {
+                return new LanScreenShare.Media.SecureAgent.AgentBackedScreenCaptureService(
+                    _secureAgentClient,
+                    source,
+                    engine,
+                    () => CreateLocalCaptureService(source, engine));
+            }
+
+            return CreateLocalCaptureService(source, engine);
+        }
+
+        private IScreenCaptureService CreateLocalCaptureService(CaptureSource source, string engine)
+        {
             var captureService = CaptureServiceFactory.Create(source, engine);
             if (OperatingSystem.IsWindows() && captureService is DxgiScreenCaptureService dxgi)
             {

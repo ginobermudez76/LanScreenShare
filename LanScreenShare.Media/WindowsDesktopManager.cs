@@ -5,9 +5,44 @@ using System.Text;
 
 namespace LanScreenShare.Media
 {
+    public enum DesktopSwitchOutcome
+    {
+        Attached,
+        AlreadyAttached,
+        AccessDenied,
+        ThreadBusyOrHasGui,
+        Failed,
+        UnsupportedPlatform
+    }
+
+    internal enum DxgiDesktopDisposition
+    {
+        CaptureOnDesktop,
+        PauseUnauthorizedSecureDesktop
+    }
+
+    internal static class DesktopSwitchClassifier
+    {
+        internal const int ErrorAccessDenied = 5;
+        internal const int ErrorBusy = 170;
+
+        internal static DesktopSwitchOutcome ClassifyAttachFailure(int win32Error) =>
+            win32Error switch
+            {
+                ErrorAccessDenied => DesktopSwitchOutcome.AccessDenied,
+                ErrorBusy => DesktopSwitchOutcome.ThreadBusyOrHasGui,
+                _ => DesktopSwitchOutcome.Failed
+            };
+
+        internal static DxgiDesktopDisposition ResolveDxgiDisposition(bool isSecureDesktop, bool attachedToInputDesktop) =>
+            isSecureDesktop && !attachedToInputDesktop
+                ? DxgiDesktopDisposition.PauseUnauthorizedSecureDesktop
+                : DxgiDesktopDisposition.CaptureOnDesktop;
+    }
+
     /// <summary>
     /// Administra la detección y conmutación de escritorios Win32 (Default vs Winlogon / Escritorio Seguro).
-    /// Especificación: ADR-002.
+    /// Especificación: ADR-002 / Issue #40.
     /// </summary>
     [SupportedOSPlatform("windows")]
     public static partial class WindowsDesktopManager
@@ -106,12 +141,19 @@ namespace LanScreenShare.Media
             }
         }
 
-        public static bool TryAttachThreadToInputDesktop(out string desktopName, out bool isSecureDesktop)
+        public static bool TryAttachThreadToInputDesktop(out string desktopName, out bool isSecureDesktop) =>
+            TryAttachThreadToInputDesktopDetailed(out desktopName, out isSecureDesktop, out _);
+
+        public static bool TryAttachThreadToInputDesktopDetailed(
+            out string desktopName,
+            out bool isSecureDesktop,
+            out DesktopSwitchOutcome outcome)
         {
             if (!OperatingSystem.IsWindows())
             {
                 desktopName = DesktopDefault;
                 isSecureDesktop = false;
+                outcome = DesktopSwitchOutcome.UnsupportedPlatform;
                 return false;
             }
 
@@ -123,11 +165,13 @@ namespace LanScreenShare.Media
                 {
                     desktopName = DesktopWinlogon;
                     isSecureDesktop = true;
+                    outcome = DesktopSwitchOutcome.AccessDenied;
                     return false;
                 }
 
                 desktopName = "Unknown";
                 isSecureDesktop = false;
+                outcome = DesktopSwitchClassifier.ClassifyAttachFailure(err);
                 return false;
             }
 
@@ -141,10 +185,18 @@ namespace LanScreenShare.Media
                 string? currentThreadDesktopName = GetDesktopName(hThreadDesktop);
                 if (string.Equals(desktopName, currentThreadDesktopName, StringComparison.OrdinalIgnoreCase))
                 {
+                    outcome = DesktopSwitchOutcome.AlreadyAttached;
                     return true;
                 }
 
-                return SetThreadDesktop(hDesktop);
+                if (SetThreadDesktop(hDesktop))
+                {
+                    outcome = DesktopSwitchOutcome.Attached;
+                    return true;
+                }
+
+                outcome = DesktopSwitchClassifier.ClassifyAttachFailure(Marshal.GetLastWin32Error());
+                return false;
             }
             finally
             {

@@ -15,6 +15,7 @@ using LanScreenShare.Core.Models;
 using LanScreenShare.Core.Security;
 using LanScreenShare.Core.Services;
 using LanScreenShare.Media;
+using LanScreenShare.Media.SecureAgent;
 using LanScreenShare.Network;
 using LanScreenShare.Network.Security;
 using LanScreenShare.Network.Streaming;
@@ -64,13 +65,39 @@ namespace LanScreenShare.Desktop
             }
         }
 
-        private static IInputSimulatorService CreateInputSimulator() =>
-            OperatingSystem.IsWindows()
+        private IInputSimulatorService CreateInputSimulator(SecureAgentClient? secureAgentClient)
+        {
+            IInputSimulatorService local = OperatingSystem.IsWindows()
                 ? new WindowsInputSimulatorService()
                 : new NullInputSimulatorService();
 
+            if (OperatingSystem.IsWindows())
+            {
+                _agentInputSimulatorProxy = new AgentBackedInputSimulatorService(local, secureAgentClient);
+                return _agentInputSimulatorProxy;
+            }
+
+            return local;
+        }
+
+        private static SecureAgentClient? TryConnectSecureAgentClient()
+        {
+            if (!OperatingSystem.IsWindows() || !SecureAgentClient.IsAgentAvailable())
+                return null;
+
+            var client = new SecureAgentClient();
+            if (client.TryConnectAsync(250).GetAwaiter().GetResult())
+                return client;
+
+            client.Dispose();
+            return null;
+        }
+
         private void InitializeCaptureAndDiscovery()
         {
+            SecureDesktopPolicySanitizer.RestoreIfDisabled();
+            _secureAgentClient = TryConnectSecureAgentClient();
+
             _currentSource = ResolveInitialCaptureSource(_appSettings.CaptureSourceId);
             _h264Decoder = TryCreateH264Decoder();
 
@@ -80,7 +107,7 @@ namespace LanScreenShare.Desktop
             _screenCaptureService = CreateCaptureService(_currentSource, _appSettings.Engine);
             _screenCaptureService.FrameCaptured += ScreenCaptureService_FrameCaptured;
             _screenCaptureService.SecureDesktopChanged += ScreenCaptureService_SecureDesktopChanged;
-            _inputSimulatorService = CreateInputSimulator();
+            _inputSimulatorService = CreateInputSimulator(_secureAgentClient);
         }
 
         private bool ShouldApplyAbrBitrate(int newBitrate) =>

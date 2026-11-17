@@ -38,11 +38,8 @@ namespace LanScreenShare.Media
         {
         }
 
-        protected override Task RunCaptureLoopAsync(CancellationToken token)
-        {
-            CaptureLoop(token);
-            return Task.CompletedTask;
-        }
+        protected override Task RunCaptureLoopAsync(CancellationToken token) =>
+            RunDedicatedThreadLoopAsync("LssDxgiCapture", CaptureLoop, token);
 
         public int MonitorIndex
         {
@@ -122,9 +119,71 @@ namespace LanScreenShare.Media
             }
         }
 
+        private (int Left, int Top, int Width, int Height) ResolveWinlogonFallbackBounds()
+        {
+            int width = _targetSourceWidth;
+            int height = _targetSourceHeight;
+            int left = _targetX;
+            int top = _targetY;
+
+            if (width <= 0 || height <= 0)
+            {
+                return WindowsScreenCaptureService.GetPrimaryScreenBounds();
+            }
+
+            return (left, top, width & ~1, height & ~1);
+        }
+
+        private void RunWinlogonGdiFallbackLoop(
+            Stopwatch stopwatch,
+            HostFpsTracker fpsTracker,
+            CancellationToken token)
+        {
+            var bounds = ResolveWinlogonFallbackBounds();
+            if (bounds.Width <= 0 || bounds.Height <= 0)
+            {
+                token.WaitHandle.WaitOne(100);
+                return;
+            }
+
+            OnSecureDesktopChanged(false);
+            Console.WriteLine("[DXGI] Driver no permitió DuplicateOutput en Winlogon; usando respaldo GDI en Escritorio Seguro.");
+
+            while (!token.IsCancellationRequested && WindowsDesktopManager.IsActiveDesktopSecure(out _))
+            {
+                if (!WindowsDesktopManager.TryAttachThreadToInputDesktopDetailed(out _, out _, out _))
+                    break;
+
+                stopwatch.Restart();
+                int frameIntervalMs = Math.Max(5, 1000 / Math.Max(1, _targetFps));
+                CaptureAndDispatchWinlogonGdiFrame(bounds, fpsTracker);
+                ApplyFramePacing(stopwatch, frameIntervalMs);
+            }
+        }
+
+        private void CaptureAndDispatchWinlogonGdiFrame(
+            (int Left, int Top, int Width, int Height) bounds,
+            HostFpsTracker fpsTracker)
+        {
+            var procSw = Stopwatch.StartNew();
+            using var dib = WindowsScreenCaptureService.CaptureScreenRegionToDib(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
+            if (dib == null)
+                return;
+
+            var options = new FrameEncodingOptions(_quality, ResolutionScale, bounds.Left, bounds.Top, _targetWidth, _targetHeight, ConsumeKeyframeRequest());
+            var frame = EncodeFrameFromPointer(new RawFrameBuffer(dib.PBits, bounds.Width, bounds.Height, bounds.Width * 4), options);
+            if (frame == null)
+                return;
+
+            procSw.Stop();
+            frame.HostFrameTimeMs = (int)procSw.ElapsedMilliseconds;
+            frame.HostFps = fpsTracker.RecordFrameAndGetFps();
+            OnFrameCaptured(frame);
+        }
+
         private void WaitForSecureDesktopExit(CancellationToken token)
         {
-            Console.WriteLine("[DXGI] Escritorio seguro (UAC / Winlogon) detectado. Pausando captura DXGI...");
+            Console.WriteLine("[DXGI] Escritorio seguro (UAC / Winlogon) detectado sin privilegios SYSTEM. Pausando captura...");
             OnSecureDesktopChanged(true);
 
             while (!token.IsCancellationRequested && WindowsDesktopManager.IsActiveDesktopSecure(out _))
@@ -149,35 +208,58 @@ namespace LanScreenShare.Media
             {
                 while (!token.IsCancellationRequested)
                 {
-                    if (WindowsDesktopManager.IsActiveDesktopSecure(out _))
-                    {
-                        WaitForSecureDesktopExit(token);
-                        continue;
-                    }
-
-                    try
-                    {
-                        using var session = CreateDxgiSession();
-                        RunSessionCaptureLoop(session, stopwatch, fpsTracker, token);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (WindowsDesktopManager.IsActiveDesktopSecure(out _))
-                        {
-                            WaitForSecureDesktopExit(token);
-                            continue;
-                        }
-
-                        Console.WriteLine($"[DXGI Capture] Error en bucle DXGI: {ex.Message}");
-                        CaptureFailed?.Invoke(this, ex);
-                        Thread.Sleep(500);
-                    }
+                    RunSingleDxgiIteration(stopwatch, fpsTracker, token);
                 }
             }
             finally
             {
                 RevertMmcss(mmcssHandle);
             }
+        }
+
+        private void RunSingleDxgiIteration(Stopwatch stopwatch, HostFpsTracker fpsTracker, CancellationToken token)
+        {
+            bool attached = WindowsDesktopManager.TryAttachThreadToInputDesktopDetailed(out _, out bool isSecure, out _);
+            if (DesktopSwitchClassifier.ResolveDxgiDisposition(isSecure, attached) == DxgiDesktopDisposition.PauseUnauthorizedSecureDesktop)
+            {
+                WaitForSecureDesktopExit(token);
+                return;
+            }
+
+            OnSecureDesktopChanged(false);
+            try
+            {
+                using var session = CreateDxgiSession();
+                RunSessionCaptureLoop(session, stopwatch, fpsTracker, token);
+            }
+            catch (Exception ex)
+            {
+                HandleCaptureLoopException(ex, stopwatch, fpsTracker, token);
+            }
+        }
+
+        private void HandleCaptureLoopException(
+            Exception ex,
+            Stopwatch stopwatch,
+            HostFpsTracker fpsTracker,
+            CancellationToken token)
+        {
+            bool catchAttached = WindowsDesktopManager.TryAttachThreadToInputDesktopDetailed(out _, out bool catchSecure, out _);
+            if (DesktopSwitchClassifier.ResolveDxgiDisposition(catchSecure, catchAttached) == DxgiDesktopDisposition.PauseUnauthorizedSecureDesktop)
+            {
+                WaitForSecureDesktopExit(token);
+                return;
+            }
+
+            if (catchSecure && catchAttached)
+            {
+                RunWinlogonGdiFallbackLoop(stopwatch, fpsTracker, token);
+                return;
+            }
+
+            Console.WriteLine($"[DXGI Capture] Error en bucle DXGI: {ex.Message}");
+            CaptureFailed?.Invoke(this, ex);
+            Thread.Sleep(500);
         }
 
         private bool ShouldEncodeFrame(
@@ -221,9 +303,14 @@ namespace LanScreenShare.Media
                 if (status == FrameAcquireStatus.AccessLost)
                 {
                     Console.WriteLine("[DXGI] Acceso perdido o cambio de escritorio. Reinicializando...");
-                    if (WindowsDesktopManager.IsActiveDesktopSecure(out _))
+                    bool attached = WindowsDesktopManager.TryAttachThreadToInputDesktopDetailed(out _, out bool isSecure, out _);
+                    if (DesktopSwitchClassifier.ResolveDxgiDisposition(isSecure, attached) == DxgiDesktopDisposition.PauseUnauthorizedSecureDesktop)
                     {
                         WaitForSecureDesktopExit(token);
+                    }
+                    else
+                    {
+                        OnSecureDesktopChanged(false);
                     }
                     break;
                 }

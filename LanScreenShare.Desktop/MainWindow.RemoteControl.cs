@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using LanScreenShare.Core.Models;
 using LanScreenShare.Core.Security;
+using LanScreenShare.Media.SecureAgent;
 using LanScreenShare.Network.Streaming;
 
 namespace LanScreenShare.Desktop
@@ -76,6 +77,138 @@ namespace LanScreenShare.Desktop
                     SaveCurrentSettings();
                 };
             }
+
+            InitializeSecureDesktopToggle();
+        }
+
+        private void InitializeSecureDesktopToggle()
+        {
+            var panel = this.FindControl<Grid>("SecureDesktopControlPanel");
+            var toggle = this.FindControl<CheckBox>("AllowSecureDesktopServiceCheckBox");
+            if (panel != null)
+            {
+                panel.IsVisible = OperatingSystem.IsWindows();
+            }
+
+            if (!OperatingSystem.IsWindows() || toggle == null)
+                return;
+
+            var status = _secureHostServiceManager.GetStatus();
+            bool isReady = status == SecureHostServiceStatus.Running && _secureAgentClient is { IsConnected: true };
+            SetSecureDesktopSwitchState(toggle, isReady);
+            UpdateSecureDesktopServiceStatusLabel(status, isReady);
+
+            toggle.IsCheckedChanged += async (s, e) =>
+            {
+                if (_isUpdatingSecureDesktopSwitch)
+                    return;
+
+                bool desired = toggle.IsChecked == true;
+                await HandleSecureDesktopToggleChangedAsync(toggle, desired);
+            };
+        }
+
+        private void SetSecureDesktopSwitchState(CheckBox toggle, bool isChecked)
+        {
+            _isUpdatingSecureDesktopSwitch = true;
+            try
+            {
+                toggle.IsChecked = isChecked;
+            }
+            finally
+            {
+                _isUpdatingSecureDesktopSwitch = false;
+            }
+        }
+
+        private void UpdateSecureDesktopServiceStatusLabel(SecureHostServiceStatus status, bool active)
+        {
+            var label = this.FindControl<TextBlock>("SecureDesktopServiceStatusText");
+            if (label == null)
+                return;
+
+            if (active)
+            {
+                label.Text = "Servicio SYSTEM activo (UAC / Winlogon)";
+                label.Foreground = new SolidColorBrush(Color.Parse("#34D399"));
+                return;
+            }
+
+            label.Text = status == SecureHostServiceStatus.NotInstalled
+                ? "Modo portátil · pedirá UAC al activar"
+                : "Servicio SYSTEM en reposo";
+            label.Foreground = new SolidColorBrush(Color.Parse("#7C8B9E"));
+        }
+
+        private async Task HandleSecureDesktopToggleChangedAsync(CheckBox toggle, bool enable)
+        {
+            toggle.IsEnabled = false;
+            var label = this.FindControl<TextBlock>("SecureDesktopServiceStatusText");
+            if (label != null)
+            {
+                label.Text = enable ? "Iniciando servicio SYSTEM..." : "Deteniendo servicio SYSTEM...";
+                label.Foreground = new SolidColorBrush(Color.Parse("#F59E0B"));
+            }
+
+            try
+            {
+                if (enable)
+                {
+                    await EnableSecureDesktopServiceFromUiAsync(toggle, label);
+                }
+                else
+                {
+                    await DisableSecureDesktopServiceFromUiAsync();
+                }
+            }
+            finally
+            {
+                toggle.IsEnabled = true;
+            }
+        }
+
+        private async Task EnableSecureDesktopServiceFromUiAsync(CheckBox toggle, TextBlock? label)
+        {
+            string exePath = System.IO.Path.Combine(AppContext.BaseDirectory, "LanScreenShare.SecureHost.exe");
+            bool started = await Task.Run(() => _secureHostServiceManager.EnsureServiceRunningAsync(exePath, CancellationToken.None), CancellationToken.None);
+            var client = started ? await Task.Run(TryConnectSecureAgentClient, CancellationToken.None) : null;
+            if (client == null)
+            {
+                SetSecureDesktopSwitchState(toggle, false);
+                if (label != null)
+                {
+                    label.Text = "No se pudo activar el servicio SYSTEM";
+                    label.Foreground = new SolidColorBrush(Color.Parse("#EF4444"));
+                }
+                return;
+            }
+
+            _secureAgentClient?.Dispose();
+            _secureAgentClient = client;
+            _agentInputSimulatorProxy?.SetClient(client);
+            _startedSecureHostServiceInSession = true;
+            UpdateSecureDesktopServiceStatusLabel(SecureHostServiceStatus.Running, active: true);
+
+            if (_isHosting)
+            {
+                SwitchCaptureSource(_currentSource, GetSelectedEngine(), BuildCurrentCaptureProfile());
+            }
+        }
+
+        private async Task DisableSecureDesktopServiceFromUiAsync()
+        {
+            _agentInputSimulatorProxy?.SetClient(null);
+            _secureAgentClient?.Dispose();
+            _secureAgentClient = null;
+            _startedSecureHostServiceInSession = false;
+
+            if (_isHosting)
+            {
+                SwitchCaptureSource(_currentSource, GetSelectedEngine(), BuildCurrentCaptureProfile());
+            }
+
+            await Task.Run(() => _secureHostServiceManager.StopServiceAsync(removeIfTemporary: true, CancellationToken.None), CancellationToken.None);
+            UpdateSecureDesktopServiceStatusLabel(_secureHostServiceManager.GetStatus(), active: false);
         }
 
         private bool CanHostHandleRemoteControl => _isHosting && _allowRemoteControl;

@@ -30,6 +30,7 @@ using LanScreenShare.Core.Models;
 using LanScreenShare.Core.Security;
 using LanScreenShare.Core.Services;
 using LanScreenShare.Media;
+using LanScreenShare.Media.SecureAgent;
 using LanScreenShare.Network;
 using LanScreenShare.Network.Security;
 using LanScreenShare.Network.Streaming;
@@ -39,6 +40,11 @@ namespace LanScreenShare.Desktop
     public partial class MainWindow : Window
     {
         private DiscoveryService _discoveryService = null!;
+        private readonly SecureHostServiceManager _secureHostServiceManager = new();
+        private SecureAgentClient? _secureAgentClient;
+        private AgentBackedInputSimulatorService? _agentInputSimulatorProxy;
+        private bool _startedSecureHostServiceInSession;
+        private bool _isUpdatingSecureDesktopSwitch;
         private IScreenCaptureService _screenCaptureService = null!;
         private TcpStreamServer _streamServer = null!;
         private TcpStreamClient _streamClient = null!;
@@ -255,6 +261,19 @@ namespace LanScreenShare.Desktop
             _controlServer.Dispose();
             _controlClient.Dispose();
             _inputSimulatorService?.Dispose();
+            _secureAgentClient?.Dispose();
+            if (_startedSecureHostServiceInSession)
+            {
+                try
+                {
+                    Task.Run(() => _secureHostServiceManager.StopServiceAsync(removeIfTemporary: true, CancellationToken.None), CancellationToken.None)
+                        .Wait(1500, CancellationToken.None);
+                }
+                catch
+                {
+                    // Mejor esfuerzo al detener servicio temporal al cerrar
+                }
+            }
 
             _fileTransferBannerTimer?.Stop();
             _activeTransferCts?.Cancel();

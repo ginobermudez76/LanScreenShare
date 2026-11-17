@@ -21,6 +21,7 @@
     <ProjectReference Include="..\LanScreenShare.Desktop\LanScreenShare.Desktop.csproj" />
     <ProjectReference Include="..\LanScreenShare.Media\LanScreenShare.Media.csproj" />
     <ProjectReference Include="..\LanScreenShare.Network\LanScreenShare.Network.csproj" />
+    <ProjectReference Include="..\LanScreenShare.SecureHost\LanScreenShare.SecureHost.csproj" />
   </ItemGroup>
 
 </Project>
