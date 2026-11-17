@@ -275,45 +275,15 @@ namespace LanScreenShare.Desktop
             var normalizedNative = NormalizeDisplayMode(detectedNativeMode);
             var modes = new List<VirtualDisplayMode>();
 
-            if (normalizedNative is { } native && VirtualDisplayModeValidator.IsSupported(in native))
+            if (normalizedNative is { } native)
             {
-                modes.Add(native);
+                AddModeIfSupported(modes, native);
             }
 
             int maxW = normalizedNative?.Width ?? 1920;
             int maxH = normalizedNative?.Height ?? 1080;
             int hz = normalizedNative?.RefreshRateHz ?? 60;
-
-            (int Width, int Height)[] standardCandidates =
-            [
-                (3840, 2160),
-                (2560, 1440),
-                (1920, 1080),
-                (1600, 900),
-                (1366, 768),
-                (1280, 720)
-            ];
-
-            foreach (var (w, h) in standardCandidates)
-            {
-                if (w > maxW || h > maxH)
-                    continue;
-
-                var candidate = new VirtualDisplayMode(w, h, hz);
-                if (VirtualDisplayModeValidator.IsSupported(in candidate) && !modes.Contains(candidate))
-                {
-                    modes.Add(candidate);
-                }
-
-                if (hz != 60)
-                {
-                    var fallback60 = new VirtualDisplayMode(w, h, 60);
-                    if (VirtualDisplayModeValidator.IsSupported(in fallback60) && !modes.Contains(fallback60))
-                    {
-                        modes.Add(fallback60);
-                    }
-                }
-            }
+            AddStandardCandidateModes(modes, maxW, maxH, hz);
 
             if (modes.Count == 0)
             {
@@ -329,6 +299,39 @@ namespace LanScreenShare.Desktop
                 SupportsAuxiliaryInput = false,
                 IsBusy = isBusy
             };
+        }
+
+        private static void AddStandardCandidateModes(List<VirtualDisplayMode> modes, int maxW, int maxH, int hz)
+        {
+            (int Width, int Height)[] standardCandidates =
+            [
+                (3840, 2160),
+                (2560, 1440),
+                (1920, 1080),
+                (1600, 900),
+                (1366, 768),
+                (1280, 720)
+            ];
+
+            foreach (var (w, h) in standardCandidates)
+            {
+                if (w > maxW || h > maxH)
+                    continue;
+
+                AddModeIfSupported(modes, new VirtualDisplayMode(w, h, hz));
+                if (hz != 60)
+                {
+                    AddModeIfSupported(modes, new VirtualDisplayMode(w, h, 60));
+                }
+            }
+        }
+
+        private static void AddModeIfSupported(List<VirtualDisplayMode> modes, VirtualDisplayMode candidate)
+        {
+            if (VirtualDisplayModeValidator.IsSupported(in candidate) && !modes.Contains(candidate))
+            {
+                modes.Add(candidate);
+            }
         }
 
         private static VirtualDisplayMode? NormalizeDisplayMode(VirtualDisplayMode? rawMode)

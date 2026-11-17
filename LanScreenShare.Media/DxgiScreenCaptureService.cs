@@ -218,7 +218,7 @@ namespace LanScreenShare.Media
             {
                 if (timerPeriodResult == 0)
                 {
-                    timeEndPeriod(1);
+                    _ = timeEndPeriod(1);
                 }
                 RevertMmcss(mmcssHandle);
             }
@@ -430,21 +430,7 @@ namespace LanScreenShare.Media
                     session.Bounds.ScreenHeight,
                     (int)mapped.RowPitch);
 
-                bool trackExternalResolution = RequireExactTargetMatch &&
-                    _scalePercent >= 99 &&
-                    _targetSourceWidth > 0 &&
-                    _targetSourceHeight > 0 &&
-                    (session.Bounds.ScreenWidth != _targetSourceWidth || session.Bounds.ScreenHeight != _targetSourceHeight);
-
-                var options = new FrameEncodingOptions(
-                    _quality,
-                    ResolutionScale,
-                    session.Bounds.ScreenLeft,
-                    session.Bounds.ScreenTop,
-                    trackExternalResolution ? 0 : _targetWidth,
-                    trackExternalResolution ? 0 : _targetHeight,
-                    forceKeyframe);
-
+                var options = BuildFrameEncodingOptions(session, forceKeyframe);
                 var frame = EncodeFrameFromPointer(buffer, options);
                 if (frame != null)
                 {
@@ -460,6 +446,26 @@ namespace LanScreenShare.Media
                 session.Context.Unmap(session.StagingTexture!, 0);
             }
         }
+
+        private FrameEncodingOptions BuildFrameEncodingOptions(DxgiSessionResources session, bool forceKeyframe)
+        {
+            bool trackExternalResolution = ShouldTrackExternalResolution(session.Bounds);
+            return new FrameEncodingOptions(
+                _quality,
+                ResolutionScale,
+                session.Bounds.ScreenLeft,
+                session.Bounds.ScreenTop,
+                trackExternalResolution ? 0 : _targetWidth,
+                trackExternalResolution ? 0 : _targetHeight,
+                forceKeyframe);
+        }
+
+        private bool ShouldTrackExternalResolution(in DesktopBounds bounds) =>
+            RequireExactTargetMatch &&
+            _scalePercent >= 99 &&
+            _targetSourceWidth > 0 &&
+            _targetSourceHeight > 0 &&
+            (bounds.ScreenWidth != _targetSourceWidth || bounds.ScreenHeight != _targetSourceHeight);
 
         private static void ApplyFramePacing(Stopwatch stopwatch, int targetFps, FrameAcquireStatus status)
         {
@@ -771,7 +777,11 @@ namespace LanScreenShare.Media
             }
 
             var workBitmap = EnsureReusableWorkBitmap(buffer.Width, buffer.Height);
-            CopyBufferIntoWorkBitmap(in buffer, workBitmap);
+            using var pixmap = skBitmap.PeekPixels();
+            if (pixmap == null || !pixmap.ReadPixels(workBitmap.Info, workBitmap.GetPixels(), workBitmap.RowBytes))
+            {
+                return (skBitmap, null, buffer.Width, buffer.Height, false);
+            }
             return (workBitmap, null, buffer.Width, buffer.Height, shouldDrawCursor);
         }
 
@@ -803,27 +813,6 @@ namespace LanScreenShare.Media
             _reusableWorkBitmap?.Dispose();
             _reusableWorkBitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
             return _reusableWorkBitmap;
-        }
-
-        private static unsafe void CopyBufferIntoWorkBitmap(in RawFrameBuffer buffer, SKBitmap target)
-        {
-            IntPtr dstBase = target.GetPixels();
-            int tightRowBytes = buffer.Width * 4;
-            if (buffer.RowPitch == tightRowBytes)
-            {
-                long totalBytes = (long)tightRowBytes * buffer.Height;
-                Buffer.MemoryCopy((void*)buffer.DataPointer, (void*)dstBase, totalBytes, totalBytes);
-                return;
-            }
-
-            byte* srcRow = (byte*)buffer.DataPointer;
-            byte* dstRow = (byte*)dstBase;
-            for (int y = 0; y < buffer.Height; y++)
-            {
-                Buffer.MemoryCopy(srcRow, dstRow, tightRowBytes, tightRowBytes);
-                srcRow += buffer.RowPitch;
-                dstRow += tightRowBytes;
-            }
         }
 
         private CapturedFrame? EncodeFrameFromPointer(

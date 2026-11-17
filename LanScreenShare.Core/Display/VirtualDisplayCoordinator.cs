@@ -181,22 +181,22 @@ namespace LanScreenShare.Core.Display
         {
             foreach (var candidate in afterPaths)
             {
-                if (string.IsNullOrWhiteSpace(candidate.DeviceName))
-                    continue;
-
-                bool existed = beforePaths.Any(b =>
-                    string.Equals(b.DeviceName, candidate.DeviceName, StringComparison.OrdinalIgnoreCase) ||
-                    (b.AdapterLuidLow == candidate.AdapterLuidLow &&
-                     b.AdapterLuidHigh == candidate.AdapterLuidHigh &&
-                     b.TargetId == candidate.TargetId &&
-                     b.TargetId != 0));
-
-                if (!existed)
+                if (!string.IsNullOrWhiteSpace(candidate.DeviceName) && !PathExistedBefore(beforePaths, candidate))
                     return candidate.DeviceName;
             }
 
             return null;
         }
+
+        private static bool PathExistedBefore(
+            IReadOnlyList<DisplayPathSnapshot> beforePaths,
+            DisplayPathSnapshot candidate) =>
+            beforePaths.Any(b =>
+                string.Equals(b.DeviceName, candidate.DeviceName, StringComparison.OrdinalIgnoreCase) ||
+                (b.AdapterLuidLow == candidate.AdapterLuidLow &&
+                 b.AdapterLuidHigh == candidate.AdapterLuidHigh &&
+                 b.TargetId == candidate.TargetId &&
+                 b.TargetId != 0));
 
         private static async Task<VirtualDisplayInstance?> TryCreateVirtualMonitorAsync(
             IVirtualDisplayBackend backend,

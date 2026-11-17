@@ -55,14 +55,11 @@ namespace LanScreenShare.Media
             if (byBounds >= 0)
                 return byBounds;
 
-            if (requireExactMatch)
-                return -1;
-
-            if (target.MonitorIndex >= 0 && target.MonitorIndex < candidates.Count)
-                return target.MonitorIndex;
-
-            return 0;
+            return requireExactMatch ? -1 : TrySelectFallbackIndex(candidates.Count, target.MonitorIndex);
         }
+
+        private static int TrySelectFallbackIndex(int candidateCount, int monitorIndex) =>
+            monitorIndex >= 0 && monitorIndex < candidateCount ? monitorIndex : 0;
 
         private static int FindByDeviceName(IReadOnlyList<DxgiOutputDescriptor> candidates, string? targetDeviceName)
         {

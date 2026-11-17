@@ -252,8 +252,23 @@ public sealed class VirtualDisplayProjectionHost : IAsyncDisposable
             return;
 
         var topology = _deps.TopologyManager?.CaptureSnapshot();
-        ActiveCaptureSource = VirtualDisplayCaptureSourceFactory.CreateCaptureSource(session, topology);
-        _captureService?.RequestKeyframe();
+        var updatedSource = VirtualDisplayCaptureSourceFactory.CreateCaptureSource(session, topology);
+        bool changed = ActiveCaptureSource == null ||
+                       !string.Equals(ActiveCaptureSource.DeviceName, updatedSource.DeviceName, StringComparison.OrdinalIgnoreCase) ||
+                       ActiveCaptureSource.X != updatedSource.X ||
+                       ActiveCaptureSource.Y != updatedSource.Y ||
+                       ActiveCaptureSource.Width != updatedSource.Width ||
+                       ActiveCaptureSource.Height != updatedSource.Height;
+
+        ActiveCaptureSource = updatedSource;
+        if (changed)
+        {
+            StartIsolatedCapture(session, _baseProfile);
+        }
+        else
+        {
+            _captureService?.RequestKeyframe();
+        }
     }
 
     public async Task StopProjectionAsync(CancellationToken ct = default)

@@ -117,7 +117,7 @@ namespace LanScreenShare.Media.Display
             return _adapter.ApplySuppliedConfig(snapshot.Paths);
         }
 
-        internal static IReadOnlyList<DisplayPathSnapshot>? ApplyModeToTargetPath(
+        internal static List<DisplayPathSnapshot>? ApplyModeToTargetPath(
             IReadOnlyList<DisplayPathSnapshot> activePaths,
             string? preferredDeviceName,
             VirtualDisplayMode mode)
@@ -131,26 +131,45 @@ namespace LanScreenShare.Media.Display
 
             var target = activePaths[targetIdx];
             bool overlapsOther = activePaths.Count > 1 && HasOverlappingBounds(activePaths, targetIdx);
-            bool refreshMismatch = target.RefreshRateNumerator > 0 &&
-                (target.RefreshRateNumerator / Math.Max(1u, target.RefreshRateDenominator)) != (uint)mode.RefreshRateHz;
-
-            if (target.Width == mode.Width && target.Height == mode.Height && !refreshMismatch && !overlapsOther)
+            if (!NeedsTargetPathUpdate(in target, in mode, overlapsOther))
                 return null;
 
-            int posX = overlapsOther ? ComputeNonOverlappingPositionX(activePaths, targetIdx) : target.PositionX;
-            int posY = overlapsOther ? 0 : target.PositionY;
-
             var copy = activePaths.ToList();
-            copy[targetIdx] = target with
+            copy[targetIdx] = BuildUpdatedTargetPath(in target, activePaths, targetIdx, in mode, overlapsOther);
+            return copy;
+        }
+
+        private static bool NeedsTargetPathUpdate(
+            in DisplayPathSnapshot target,
+            in VirtualDisplayMode mode,
+            bool overlapsOther)
+        {
+            if (overlapsOther || target.Width != mode.Width || target.Height != mode.Height)
+                return true;
+
+            if (target.RefreshRateNumerator == 0)
+                return false;
+
+            uint currentHz = target.RefreshRateNumerator / Math.Max(1u, target.RefreshRateDenominator);
+            return currentHz != (uint)mode.RefreshRateHz;
+        }
+
+        private static DisplayPathSnapshot BuildUpdatedTargetPath(
+            in DisplayPathSnapshot target,
+            IReadOnlyList<DisplayPathSnapshot> activePaths,
+            int targetIdx,
+            in VirtualDisplayMode mode,
+            bool overlapsOther)
+        {
+            return target with
             {
                 Width = mode.Width,
                 Height = mode.Height,
-                PositionX = posX,
-                PositionY = posY,
+                PositionX = overlapsOther ? ComputeNonOverlappingPositionX(activePaths, targetIdx) : target.PositionX,
+                PositionY = overlapsOther ? 0 : target.PositionY,
                 RefreshRateNumerator = (uint)mode.RefreshRateHz,
                 RefreshRateDenominator = 1
             };
-            return copy;
         }
 
         private static bool HasOverlappingBounds(IReadOnlyList<DisplayPathSnapshot> paths, int targetIdx)
@@ -193,7 +212,7 @@ namespace LanScreenShare.Media.Display
             return maxRight;
         }
 
-        private static IReadOnlyList<DisplayPathSnapshot> SeparateOverlappingTargetPath(
+        private static List<DisplayPathSnapshot> SeparateOverlappingTargetPath(
             IReadOnlyList<DisplayPathSnapshot> paths,
             int targetIdx)
         {
@@ -571,7 +590,7 @@ namespace LanScreenShare.Media.Display
             [return: MarshalAs(UnmanagedType.Bool)]
             private static partial bool EnumDisplaySettingsW(string lpszDeviceName, uint iModeNum, [In, Out] byte[] lpDevMode);
 
-            public static bool TryGetWindowMonitorPhysicalMode(
+            public static bool TryGetWindowMonitorPhysicalModeCore(
                 nint hwnd,
                 out VirtualDisplayMode mode,
                 out double dpiScale)
@@ -652,7 +671,7 @@ namespace LanScreenShare.Media.Display
             {
                 try
                 {
-                    return Win32CcdAdapter.TryGetWindowMonitorPhysicalMode(hwnd, out mode, out dpiScale);
+                    return Win32CcdAdapter.TryGetWindowMonitorPhysicalModeCore(hwnd, out mode, out dpiScale);
                 }
                 catch
                 {

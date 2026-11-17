@@ -542,11 +542,16 @@ namespace LanScreenShare.Desktop
                 screenImage.InvalidateVisual();
             }
 
-            if (_isPopoutActive && _popoutWindow != null)
+            if (_isPopoutActive)
             {
-                _popoutWindow.UpdateFrame(frameImage);
+                _popoutWindow?.UpdateFrame(frameImage);
             }
 
+            UpdateViewerFrameStatus(codecLabel);
+        }
+
+        private void UpdateViewerFrameStatus(string codecLabel)
+        {
             var placeholder = this.FindControl<StackPanel>("PlaceholderPanel");
             if (placeholder != null && placeholder.IsVisible)
             {

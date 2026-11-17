@@ -728,6 +728,61 @@ public class VirtualDisplayInfrastructureTests
         });
     }
 
+    [TestMethod]
+    public void EnsureExtendedLayout_SeparatesOverlappingOrSinglePaths_AndSkipsWhenAlreadyExtended()
+    {
+        var alreadyExtended = new FakeCcdAdapter
+        {
+            Paths =
+            [
+                new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, PositionX = 0, PositionY = 0 },
+                new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY2", Width = 2560, Height = 1440, PositionX = 1920, PositionY = 0 }
+            ]
+        };
+        var mgrOk = new WindowsDisplayTopologyManager(alreadyExtended);
+        Assert.IsTrue(mgrOk.EnsureExtendedLayout(@"\\.\DISPLAY2"));
+        Assert.AreEqual(0, alreadyExtended.ExtendCalls);
+
+        var overlapping = new FakeCcdAdapter
+        {
+            Paths =
+            [
+                new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, PositionX = 0, PositionY = 0 },
+                new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY2", Width = 2560, Height = 1440, PositionX = 0, PositionY = 0 }
+            ]
+        };
+        var mgrOverlap = new WindowsDisplayTopologyManager(overlapping);
+        Assert.IsTrue(mgrOverlap.EnsureExtendedLayout(@"\\.\DISPLAY2"));
+        Assert.AreEqual(1, overlapping.ExtendCalls);
+        Assert.IsNotNull(overlapping.LastApplied);
+        Assert.AreEqual(1920, overlapping.LastApplied[1].PositionX);
+
+        var queryFail = new FakeCcdAdapter { FailQueryPaths = true };
+        Assert.IsFalse(new WindowsDisplayTopologyManager(queryFail).EnsureExtendedLayout(@"\\.\DISPLAY2"));
+    }
+
+    [TestMethod]
+    public void VddSettingsAndDisplayCapabilities_HandleEdgeCasesCleanly()
+    {
+        Assert.IsFalse(VddSettingsXmlHelper.ContainsMode(null, VirtualDisplayMode.Default));
+        Assert.IsFalse(VddSettingsXmlHelper.ContainsMode("<broken", VirtualDisplayMode.Default));
+        string xml = VddSettingsXmlHelper.UpdateMonitorCountAndMode(null, 1, new VirtualDisplayMode(2560, 1440, 60));
+        Assert.IsTrue(VddSettingsXmlHelper.ContainsMode(xml, new VirtualDisplayMode(2560, 1440, 60)));
+        Assert.IsTrue(VirtualDriversVddBackend.IsMatchingVddAdapter("other", "VDD by MTT Display"));
+
+        var over4k = LanScreenShare.Desktop.MainWindow.BuildDisplayCapabilities(new VirtualDisplayMode(5120, 2880, 120), 0, isBusy: true);
+        Assert.IsTrue(over4k.IsBusy);
+        Assert.AreEqual(1.0, over4k.DpiScaleFactor);
+        Assert.IsNotNull(over4k.NativeMode);
+        Assert.IsTrue(over4k.NativeMode.Value.Width <= VirtualDisplayModeValidator.MaxWidth);
+        Assert.IsTrue(over4k.SupportedModes.Any(m => m.RefreshRateHz == 60));
+
+        var fallback = LanScreenShare.Desktop.MainWindow.BuildDisplayCapabilities(null, 1.5, isBusy: false);
+        Assert.IsNotNull(fallback.NativeMode);
+        Assert.AreEqual(1920, fallback.NativeMode.Value.Width);
+        Assert.AreEqual(1.5, fallback.DpiScaleFactor);
+    }
+
     private sealed class FakeVddPipeTransport : IVddPipeTransport
     {
         public bool ShouldFail { get; set; }
