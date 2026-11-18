@@ -1,22 +1,25 @@
 # LanScreenShare - Arquitectura, Roadmap y Diagrama de Clases
 
-Documento de seguimiento técnico, evolución arquitectónica y contratos del proyecto **LanScreenShare**. Este documento refleja fielmente las capacidades implementadas, los contratos de abstracción de red y multimedia, los mecanismos de seguridad criptográfica y la hoja de ruta multiplataforma.
+Documento de seguimiento técnico, evolución arquitectónica y contratos oficiales del proyecto **LanScreenShare**. Refleja las capacidades implementadas en el repositorio, los contratos de abstracción de red y multimedia, la seguridad criptográfica, la extensión inalámbrica de pantalla y la hoja de ruta multiplataforma.
 
 ---
 
 ## 1. Visión y Objetivos del Proyecto
 
-* **Objetivo principal:** Aplicación ultraligera, segura y de alto rendimiento para compartir pantalla, audio del sistema y control remoto en tiempo real a través de redes locales (LAN) con latencia sub-10ms.
-* **Estrategia nativa y aceleración por hardware:**
-  * **Windows:** Captura directa GPU mediante DirectX 11 DXGI Output Duplication y Windows Graphics Capture (WGC). Codificación y decodificación por hardware H.264 / NVENC / QuickSync / AMD AMF vía Media Foundation y captura de audio de baja latencia con WASAPI Loopback.
-  * **Ajuste Dinámico de Congestión (ABR):** Control de congestión adaptativo en tiempo real basado en algoritmo AIMD (*Additive Increase, Multiplicative Decrease*), gradientes de RTT, degradación defensiva de FPS y solicitudes dinámicas de fotogramas clave (*Instantaneous Decoder Refresh* / IDR).
-* **Transferencia Rápida de Archivos:**
-  * Canal de alta velocidad dedicado y autenticado mediante **mTLS** (puerto TCP 5004), soporte drag-and-drop en la interfaz, cálculo de integridad SHA-256 en vuelo y transmisión por bloques de 64 KB.
-* **Seguridad de Grado Criptográfico:**
-  * Emparejamiento por PIN de 6 dígitos, autenticación mutua TLS 1.3/1.2 (mTLS) con certificados efímeros y persistentes ECDSA P-256, almacén de dispositivos de confianza (`TrustedDeviceStore`) y protección de claves privadas vía DPAPI (Windows) o AES-256-GCM (Linux / Android / macOS).
-* **Diseño Orientado a Multiplataforma:**
-  * Interfaz de usuario construida sobre **Avalonia UI 12.0.2**, compatible de forma nativa con **Windows, Linux, macOS, Android e iOS**.
-  * Desacoplamiento total de la capa multimedia mediante el patrón *Abstract Factory* (`CaptureServiceFactory`, `AudioServiceFactory`, `IdentityKeyStorageFactory`), permitiendo la compilación y ejecución segura en cualquier sistema operativo sin dependencias rígidas de Win32.
+- **Objetivo principal:** Aplicación ligera, segura y de alto rendimiento para compartir pantalla, audio del sistema, control remoto, archivos y pantallas virtuales extendidas en redes locales (LAN).
+- **Estrategia nativa y aceleración por hardware:**
+  - **Windows:** Captura directa GPU mediante DirectX 11 DXGI Output Duplication (con selección multi-GPU por adaptador/salida y renderizado del cursor OS) y Win32 GDI / captura de ventanas. Codificación y decodificación H.264 por Media Foundation con detección dinámica de MFT hardware (NVENC / QuickSync / AMF) y audio de baja latencia mediante WASAPI Loopback y captura por proceso.
+  - **Control de congestión y sincronización:** Control adaptativo en tiempo real (**ABR** basado en AIMD en `AdaptiveBitrateController`) y alineación audiovisual (`AudioVideoSyncController`).
+- **Modo Pantalla Inalámbrica (Monitor Extendido Virtual):**
+  - Creación dinámica de monitor virtual sobre `Virtual-Display-Driver` (o backend `ParsecVDD`), configuración y restauración automática de topología Windows CCD (`WindowsDisplayTopologyManager`), señalización inversa autenticada por mTLS y proceso supervisor independiente (`LanScreenShare.DisplayWatchdog`).
+- **Soporte UAC y Escritorio Seguro (Winlogon):**
+  - Servicio Windows `LanScreenShare.SecureHost` bajo `NT AUTHORITY\SYSTEM` que lanza agentes por sesión e intercambia vídeo/entradas a través de Named Pipes con ACL de privilegio mínimo.
+- **Transferencia Rápida de Archivos:**
+  - Canal dedicado sobre mTLS (puerto TCP `5004`), transmisión por bloques de 64 KB, validación de integridad SHA-256, soporte Drag & Drop en UI y carpeta de descarga configurable por el usuario.
+- **Seguridad Criptográfica y Control de Acceso:**
+  - Autenticación mutua TLS 1.3 / 1.2 (mTLS) con certificados ECDSA P-256, código de verificación SAS de 6 dígitos, tokens atómicos por canal (`ChannelAttachmentToken`), almacén de dispositivos confiables con gestión y revocación desde la UI (`TrustedDevicesWindow`), sincronización de permisos por visor y protección de claves con DPAPI (Windows) o AES-256-GCM (multiplataforma).
+- **Diseño Orientado a Multiplataforma:**
+  - Interfaz en **Avalonia UI 12.0.2** sobre **.NET 9.0** y desacoplamiento por fábricas abstractas (`CaptureServiceFactory`, `AudioServiceFactory`, `IdentityKeyStorageFactory`).
 
 ---
 
@@ -24,20 +27,20 @@ Documento de seguimiento técnico, evolución arquitectónica y contratos del pr
 
 | Componente | Tecnología | Justificación y Rol en la Arquitectura |
 | :--- | :--- | :--- |
-| **Plataforma base** | .NET 9.0 (C# 13) | Alto rendimiento, manejo eficiente de memoria asincrónica (`Span<T>`, `Memory<T>`, `ArrayPool<byte>`). |
-| **Interfaz de Usuario** | Avalonia UI 12.0.2 (Fluent Theme) | Framework XAML multiplataforma de alto rendimiento con renderizado acelerado por GPU (SkiaSharp). |
-| **Descubrimiento LAN** | Sockets UDP (`System.Net.Sockets`) | Broadcast dirigido por subred (`Subnet Directed Broadcast`, ej. `192.168.1.255`) con aislamiento de adaptadores virtuales y auto-filtrado. |
-| **Seguridad de Transporte** | TLS 1.3 / mTLS (`SslStream`) | Canales de control y transferencia de archivos cifrados con autenticación mutua de certificados ECDSA P-256 y validación de huella (*thumbprint pinning*). |
-| **Almacenamiento de Claves** | DPAPI (Win) / AES-256-GCM (Cross-Platform) | Protección en reposo de certificados de identidad con permisos estrictos de sistema de archivos (`0600`). |
-| **Captura GPU (Windows)** | DirectX 11 DXGI Output Duplication | Captura de fotogramas directo desde la VRAM a 60 FPS con latencia inferior a 2ms e impacto despreciable en CPU. |
-| **Captura de Ventanas** | Win32 GDI & Windows Graphics Capture | Captura granular de pantallas completas o ventanas individuales incluso cuando están solapadas o minimizadas. |
-| **Captura Universal (Cross-Platform)** | `CrossPlatformScreenCaptureService` | Pipeline desacoplado que genera fotogramas sintéticos/test-card para entornos Linux/Android o pipelines de CI/CD. |
-| **Códecs de Video** | H.264 Hardware / JPEG SkiaSharp | Codificación por GPU (Media Foundation H.264) para mínimo consumo de ancho de banda y compresión JPEG paralela como fallback. |
-| **Streaming de Audio** | WASAPI Loopback / NAudio | Captura nativa de mezcla estéreo de altavoces y aislamiento selectivo de audio por proceso o aplicación específica. |
-| **Audio Universal (Cross-Platform)** | `NullAudioCaptureService` / `Player` | Implementaciones nulas seguras para plataformas sin subsistema WASAPI, garantizando estabilidad total sin excepciones de plataforma. |
-| **Control de Congestión (ABR)**| `AdaptiveBitrateController` (AIMD) | Ajuste dinámico de bitrate en tiempo real (2 a 50 Mbps), escala defensiva de FPS (60 → 45 → 30) y recuperación automática de pérdidas. |
-| **Simulación de Entrada** | Win32 `SendInput` / `NullInputSimulator` | Inyección de ratón, teclado relativo 3D (para videojuegos) y sincronización de portapapeles. |
-| **Transferencia de Archivos** | `FileTransferServer` / `Client` (mTLS) | Protocolo binario streaming en bloques de 64 KB con hash SHA-256 y soporte drag-and-drop integrado. |
+| **Plataforma base** | .NET 9.0 (C# 13) | Alto rendimiento y manejo eficiente de memoria (`Span<T>`, `Memory<T>`, `ArrayPool<byte>`). |
+| **Interfaz de Usuario** | Avalonia UI 12.0.2 (Fluent Theme) | Framework XAML multiplataforma con renderizado SkiaSharp y ventanas auxiliares (*popout*, dispositivos confiables, instalador VDD). |
+| **Descubrimiento LAN** | Sockets UDP (`DiscoveryService`, puerto `5000`) | Broadcast dirigido por subred con aislamiento de adaptadores virtuales, auto-filtrado y anuncio de capacidad Pantalla Inalámbrica. |
+| **Seguridad de Transporte** | TLS 1.3 / 1.2 mTLS (`SslStream`) | Canales cifrados con autenticación mutua ECDSA P-256, pinning de huella SHA-256, verificación SAS y tokens de un solo uso por sesión. |
+| **Almacenamiento de Claves** | DPAPI (Win) / AES-256-GCM (Cross-Platform) | Protección en reposo de claves privadas de identidad con permisos estrictos (`0600` fuera de Windows). |
+| **Captura GPU y Ventanas** | DirectX 11 DXGI (`Vortice.Direct3D11`) / Win32 GDI | Captura directa desde VRAM, soporte multi-GPU (`DxgiOutputSelector`), renderizado del cursor OS (`CursorSpriteRenderer`) y captura selectiva de ventanas. |
+| **Captura Universal** | `CrossPlatformScreenCaptureService` | Implementación desacoplada para compilación y pruebas multiplataforma fuera de Windows. |
+| **Códecs de Video** | Media Foundation H.264 (`Vortice.MediaFoundation`) / JPEG (`SkiaSharp`) | Detección de MFT hardware (`HardwareMftEncoderDiscovery`) con fallback explícito a software CPU o JPEG por bloques paralelos. |
+| **Streaming de Audio** | WASAPI Loopback / `NAudio.Wasapi` / `NullAudio*` | Captura global del dispositivo, captura por proceso (`ProcessLoopbackAudioCapture`), micrófono y audio nulo seguro multiplataforma. |
+| **Control de Congestión (ABR)** | `AdaptiveBitrateController` (AIMD) | Ajuste dinámico de bitrate, escala defensiva de FPS y solicitud automática de fotogramas clave (IDR). |
+| **Control Remoto y Escritorio Seguro** | Win32 `SendInput` + `LanScreenShare.SecureHost` | Inyección estándar y relativa 3D, sincronización de portapapeles y operación sobre UAC/Winlogon mediante Named Pipes con ACL. |
+| **Pantalla Inalámbrica** | `Virtual-Display-Driver` / `ParsecVDD` + Windows CCD API + `LanScreenShare.DisplayWatchdog` | Creación y ciclo de vida de monitores virtuales, preservación/restauración de topología y limpieza ante fallos del anfitrión. |
+| **Transferencia de Archivos** | `TcpFileTransferServer` / `Client` (mTLS, puerto `5004`) | Protocolo binario `LSFT` en bloques de 64 KB con verificación SHA-256 y ruta destino configurable. |
+| **Distribución e Instalador** | PowerShell + Inno Setup 6 (`installer\`) | Generación de `LanScreenShare-Setup.exe` con staging self-contained, driver VDD, reglas de firewall y servicio `SecureHost`. |
 
 ---
 
@@ -48,29 +51,32 @@ gantt
     title Roadmap de Evolución - LanScreenShare
     dateFormat  YYYY-MM-DD
     section Fase 1: Descubrimiento y Red Base
-    Setup de Repositorio y Gitignore       :done,    des1, 2026-09-26, 2026-09-26
-    UI Base en Avalonia UI                :done,    des2, 2026-09-26, 2026-09-26
-    Descubrimiento UDP multi-interfaz     :done,    des3, 2026-09-26, 2026-09-27
-    Filtro de exclusión mutua             :done,    des4, 2026-09-27, 2026-09-27
+    Setup de Repositorio y Gitignore          :done,    des1, 2026-09-26, 2026-09-26
+    UI Base en Avalonia UI                    :done,    des2, 2026-09-26, 2026-09-26
+    Descubrimiento UDP multi-interfaz         :done,    des3, 2026-09-26, 2026-09-27
+    Filtro de exclusión mutua                 :done,    des4, 2026-09-27, 2026-09-27
     section Fase 2: Streaming LAN y Media
-    Contratos en Core (IScreenCapture)    :done,    str1, 2026-09-27, 2026-09-27
-    Captura GDI Win32 y SkiaSharp         :done,    str2, 2026-09-27, 2026-09-27
-    Protocolo de transporte TCP Video     :done,    str3, 2026-09-27, 2026-09-27
-    Aceleración GPU DXGI Desktop Dupl.    :done,    str4, 2026-09-28, 2026-09-29
-    Streaming de Audio WASAPI Loopback    :done,    str5, 2026-09-30, 2026-10-01
-    section Fase 3: Control y Seguridad
-    Control Remoto (Mouse y Teclado)      :done,    sec1, 2026-10-02, 2026-10-03
-    Modo Videojuegos 3D (Delta Relativo)  :done,    sec2, 2026-10-04, 2026-10-05
-    Emparejamiento PIN 6 dígitos y mTLS   :done,    sec3, 2026-10-06, 2026-10-08
-    Persistencia de Confianza y DPAPI     :done,    sec4, 2026-10-09, 2026-10-10
-    section Fase 4: Optimización y Transferencia
-    Transferencia Rápida de Archivos mTLS :done,    opt1, 2026-11-09, 2026-11-10
-    Ajuste Automático de Bitrate (ABR)    :done,    opt2, 2026-11-10, 2026-11-11
-    Desacoplamiento Multiplataforma       :done,    opt3, 2026-11-11, 2026-11-11
-    section Fase 5: Drivers Nativos Externos
-    Implementación Nativa PipeWire (Linux):active,  nat1, 2026-11-15, 14d
-    Implementación Android MediaProjection:         nat2, after nat1, 14d
-    Implementación macOS ScreenCaptureKit :         nat3, after nat2, 14d
+    Contratos en Core (IScreenCapture)        :done,    str1, 2026-09-27, 2026-09-27
+    Captura GDI Win32 y SkiaSharp             :done,    str2, 2026-09-27, 2026-09-27
+    Protocolo TCP Video y Audio WASAPI        :done,    str3, 2026-09-27, 2026-10-01
+    Aceleración DXGI y Cursor OS Multi-GPU    :done,    str4, 2026-09-28, 2026-11-12
+    section Fase 3: Control y Seguridad mTLS
+    Control Remoto y Modo Videojuegos 3D      :done,    sec1, 2026-10-02, 2026-10-05
+    Emparejamiento SAS, mTLS y DPAPI          :done,    sec2, 2026-10-06, 2026-10-10
+    Gestión de Confianza y Permisos de Visor  :done,    sec3, 2026-11-11, 2026-11-12
+    section Fase 4: Transferencia, ABR y UI
+    Transferencia mTLS SHA-256 y Ruta UI      :done,    opt1, 2026-11-09, 2026-11-12
+    ABR AIMD, Telemetría y Presets            :done,    opt2, 2026-11-10, 2026-11-11
+    Popout, Cambio de Fuente y Desacoplamiento:done,    opt3, 2026-11-11, 2026-11-12
+    section Fase 5: Pantalla Inalámbrica y UAC
+    Infraestructura VDD, CCD y Watchdog       :done,    vdd1, 2026-11-12, 2026-11-13
+    Señalización Inversa mTLS y UI Asistente  :done,    vdd2, 2026-11-13, 2026-11-14
+    Servicio SYSTEM SecureHost (UAC/Winlogon) :done,    uac1, 2026-11-14, 2026-11-16
+    Instalador Windows Inno Setup y CI/Sonar  :done,    ins1, 2026-11-15, 2026-11-16
+    section Fase 6: Drivers Nativos Multiplataforma
+    Implementación Nativa PipeWire (Linux)    :active,  nat1, 2026-11-17, 14d
+    Implementación Android MediaProjection    :         nat2, after nat1, 14d
+    Implementación macOS ScreenCaptureKit     :         nat3, after nat2, 14d
 ```
 
 ---
@@ -78,27 +84,32 @@ gantt
 ## 4. Resumen Detallado de Módulos Implementados
 
 ### 4.1. Transferencia Rápida de Archivos LAN (mTLS - Puerto 5004)
-* **Arquitectura de Streaming por Bloques:** Implementado en `LanScreenShare.Network/FileTransferServer.cs` y `FileTransferClient.cs`. Utiliza un protocolo binario estructurado con números mágicos (`LSFT`), transmisión de metadatos en JSON y transporte de bloques de datos de 64 KB (`ArrayPool<byte>`).
-* **Seguridad de Transferencia:** El canal corre sobre mTLS mutuo requiriendo que emisor y receptor validen sus certificados de identidad ECDSA P-256 antes de transmitir cualquier byte.
-* **Integridad Criptográfica en Vuelo:** Cálculo simultáneo del hash SHA-256 en emisor y receptor con verificación final estricta para garantizar que el archivo recibido no sufrió corrupción.
-* **Experiencia de Usuario:** Arrastrar y soltar archivos (*Drag and Drop*) directamente sobre la ventana de transmisión con barra de progreso reactiva, tasa de transferencia en MB/s y botón de cancelación instantánea.
+- **Streaming por Bloques:** Implementado en `LanScreenShare.Network/Streaming/TcpFileTransferServer.cs` y `TcpFileTransferClient.cs` con protocolo binario `LSFT`, metadatos JSON y bloques de 64 KB usando `ArrayPool<byte>`.
+- **Seguridad e Integridad:** Corre sobre mTLS mutuo validando certificados ECDSA P-256 y verifica el hash SHA-256 completo en emisor y receptor antes de confirmar la entrega.
+- **Experiencia de Usuario:** Drag & Drop sobre la ventana principal, progreso en tiempo real, cancelación inmediata y carpeta de descargas configurable desde `MainWindow.FileTransfer.cs` y `AppSettings`.
 
-### 4.2. Control Dinámico de Congestión y Tasa de Bits Adaptativa (ABR)
-* **Algoritmo AIMD en Tiempo Real:** Implementado en `LanScreenShare.Core/Services/AdaptiveBitrateController.cs`. Evalúa métricas continuas de latencia de ida y vuelta (RTT), tiempo de codificación y tasa de pérdida de paquetes.
-* **Métricas y Gradientes:**
-  * **RTT < 25ms y sin pérdidas:** Incremento aditivo gradual (+1 Mbps o +2 Mbps) hasta el máximo configurado (ej. 35 Mbps).
-  * **RTT 25ms - 50ms:** Región de estabilidad óptima; preserva bitrate.
-  * **RTT 50ms - 90ms:** Congestión incipiente; aplica reducción preventiva multiplicativa (ej. $\times 0.85$).
-  * **RTT > 90ms o pérdidas sostenidas:** Reducción agresiva ($\times 0.70$) con fallback defensivo de fotogramas por segundo (60 FPS → 45 FPS → 30 FPS) y emisión inmediata de solicitud de *Keyframe* (I-Frame) al capturador.
-* **Integración en UI:** Telemetría en vivo en la barra de estado (`• ABR: 18 Mbps ⚡`), selector de activación en caliente y configuración persistente en `AppSettings`.
+### 4.2. Control Dinámico de Congestión (ABR) y Sincronización A/V
+- **Algoritmo AIMD en Tiempo Real:** Implementado en `LanScreenShare.Core/Services/AdaptiveBitrateController.cs` evaluando RTT, tiempos de codificación y pérdida de tramas.
+- **Métricas y Gradientes:**
+  - **RTT < 25 ms sin pérdidas:** Incremento aditivo gradual de bitrate hasta el tope configurado.
+  - **RTT 25 ms - 50 ms:** Región de estabilidad; mantiene bitrate.
+  - **RTT 50 ms - 90 ms:** Reducción preventiva multiplicativa ($\times 0.85$).
+  - **RTT > 90 ms o pérdidas sostenidas:** Reducción agresiva ($\times 0.70$), descenso escalonado de FPS (60 -> 45 -> 30) y solicitud inmediata de Keyframe (IDR).
+- **Integración en UI:** Telemetría en tiempo real en la barra de estado (`ABR: X Mbps`), perfiles sencillos (`Calidad Alta`, `Equilibrado`, `Red Limitada`) y modo avanzado persistente en `AppSettings`.
 
-### 4.3. Desacoplamiento y Soporte Multiplataforma
-* **Almacén Criptográfico Universal (`CrossPlatformIdentityKeyStorage`):** Almacenamiento seguro de claves privadas X.509 en Linux, Android y macOS mediante **AES-256-GCM** y derivación PBKDF2/HMAC-SHA256, con permisos de lectura/escritura restringidos exclusivamente al usuario actual (`0600`).
-* **Fábricas de Servicios:**
-  * `IdentityKeyStorageFactory`: Selecciona DPAPI en Windows y AES-256-GCM en otros sistemas operativos.
-  * `CaptureServiceFactory`: Instancia DXGI o GDI en Windows, y `CrossPlatformScreenCaptureService` en Linux/macOS/Android.
-  * `AudioServiceFactory`: Instancia WASAPI Loopback en Windows, y `NullAudioCaptureService` / `NullAudioPlayerService` en otras plataformas.
-* **Simulación de Entrada Agnóstica:** `NullInputSimulatorService` evita caídas o excepciones de plataforma en clientes o hosts ejecutados fuera de Windows.
+### 4.3. Modo Pantalla Inalámbrica (Monitor Extendido Virtual)
+- **Backends y Topología (`LanScreenShare.Core/Display` y `LanScreenShare.Media/Display`):** `VirtualDisplayCoordinator` gestiona la máquina de estados del monitor virtual mediante `IVirtualDisplayBackend` (`VirtualDriversVddBackend` y `ParsecVddBackend`) y `WindowsDisplayTopologyManager` (captura de snapshot CCD previo, aplicación de modo Extendido y restauración al finalizar).
+- **Señalización Inversa mTLS (`LanScreenShare.Network/Display`):** `DisplaySignalingClient` consulta capacidades en el puerto `5005` y emite una invitación con token efímero para que el receptor conecte de vuelta hacia los servidores mTLS del anfitrión (`VirtualDisplayProjectionHost` <-> `VirtualDisplayProjectionReceiver`).
+- **Resiliencia y Asistente:** `LanScreenShare.DisplayWatchdog` monitorea el PID del proceso padre para limpiar monitores virtuales y restaurar pantallas tras un cierre forzado. `VddDriverInstallerWindow` y `VirtualDisplayDriverInstallerService` guían la instalación del driver VDD en Windows.
+
+### 4.4. Soporte Nativo de UAC y Escritorio Seguro (`LanScreenShare.SecureHost`)
+- **Aislamiento de Sesión y Desktop Boundary:** Servicio Windows ejecutado bajo `NT AUTHORITY\SYSTEM` (`WindowsServiceDispatcher`, `SessionAgentSupervisor`, `WindowsSystemSessionLauncher`) que detecta cambios hacia `Winlogon` / UAC e instancia un proceso agente con acceso directo al escritorio seguro.
+- **Canal IPC Seguro:** `SecureAgentPipeServer` y `SecureAgentClient` se comunican mediante Named Pipes protegidos con ACL de privilegio mínimo (`SecureHostServiceManager`) y sanean las configuraciones de política mediante `SecureDesktopPolicySanitizer`.
+
+### 4.5. Seguridad, Dispositivos Confiables y Multiplataforma
+- **Gestión de Confianza y Permisos:** `TrustedDeviceManager`, `JsonPairedDeviceStore` y `TrustedDevicesWindow` permiten listar, inspeccionar y revocar equipos emparejados. Los permisos de visualización, audio y control remoto se sincronizan activamente entre anfitrión y visor.
+- **Almacén Criptográfico Agnóstico:** `IdentityKeyStorageFactory` selecciona DPAPI en Windows (`WindowsDpapiIdentityKeyStorage`) y AES-256-GCM con permisos `0600` fuera de Windows (`CrossPlatformIdentityKeyStorage`).
+- **Fábricas de Servicios:** `CaptureServiceFactory` y `AudioServiceFactory` proveen fallbacks multiplataforma (`CrossPlatformScreenCaptureService`, `NullAudioCaptureService`, `NullAudioPlayerService`, `NullInputSimulatorService`).
 
 ---
 
@@ -106,63 +117,16 @@ gantt
 
 ```mermaid
 classDiagram
-    %% =======================
-    %% CAPA CORE
-    %% =======================
     namespace LanScreenShare_Core {
-        class DeviceInfo {
-            +string Name
-            +string IPAddress
-            +DateTime LastSeen
-        }
-
-        class CapturedFrame {
-            +byte[] Data
-            +int Width
-            +int Height
-            +long Timestamp
-            +string Format
-            +int HostFps
-            +int HostFrameTimeMs
-        }
-
-        class CapturedAudioChunk {
-            +byte[] Data
-            +int SampleRate
-            +int Channels
-            +int BitsPerSample
-            +short AudioFormat
-            +long Timestamp
-        }
-
-        class RemoteInputMessage {
-            +InputEventType Type
-            +float NormalizedX
-            +float NormalizedY
-            +RemoteMouseButton Button
-            +short WheelDelta
-            +int KeyCode
-            +string ClipboardText
-        }
-
-        class FileMetadata {
-            +string TransferId
-            +string FileName
-            +long FileSizeBytes
-            +string Sha256Hash
-            +int ChunkSizeBytes
-        }
-
         class IScreenCaptureService {
             <<interface>>
             +bool IsCapturing
             +int TargetFps
-            +int Quality
             +int BitrateMbps
             +double ResolutionScale
-            +StartCapture(int, int, double, string, int, int, int) void
+            +StartCapture(...) void
             +StopCapture() void
-            +UpdateSettings(int, int, double, string, int, int, int) void
+            +UpdateSettings(...) void
             +RequestKeyframe() void
             +event FrameCaptured
         }
@@ -199,82 +163,78 @@ classDiagram
             +ResetIdentityAsync() Task
         }
 
+        class IVirtualDisplayBackend {
+            <<interface>>
+            +VirtualDisplayBackendCapabilities Capabilities
+            +CreateVirtualMonitorAsync(...) Task~VirtualDisplayInstance~
+            +DestroyVirtualMonitorAsync(...) Task
+        }
+
+        class IDisplayTopologyManager {
+            <<interface>>
+            +CaptureSnapshot() DisplayTopologySnapshot
+            +ApplyExtendTopology(...) bool
+            +RestoreSnapshot(DisplayTopologySnapshot) bool
+            +EnsureExtendedLayout(string) bool
+        }
+
         class AdaptiveBitrateController {
             +int CurrentBitrateMbps
             +int CurrentFps
             +bool IsAbrEnabled
             +OnFrameSent(long, int) void
             +OnTelemetryReceived(StreamTelemetry) void
-            +event BitrateChanged
-            +event FpsChanged
-            +event KeyframeRequested
+        }
+
+        class VirtualDisplayCoordinator {
+            +VirtualDisplayState State
+            +StartExtendedDisplayAsync(...) Task
+            +StopExtendedDisplayAsync(...) Task
+            +RecoverOrphanedSessionOnStartupAsync() Task
+        }
+
+        class SessionAuthority {
+            +TryCreateSessionAsync(...) Task
+            +IssueChannelToken(...) ChannelAttachmentToken
+            +RevokeSessionAsync(...) Task
+        }
+
+        class TrustedDeviceManager {
+            +ListPairedDevicesAsync() Task
+            +RevokeDeviceAsync(string) Task
         }
     }
 
-    %% =======================
-    %% CAPA SEGURIDAD & FACTORIES
-    %% =======================
-    namespace LanScreenShare_Security {
-        class IdentityKeyStorageFactory {
-            +Create()$ IIdentityKeyStorage
-        }
-
-        class WindowsDpapiIdentityKeyStorage {
-            -string _keyStorePath
-            +GetOrCreateIdentityCertificateAsync() Task~X509Certificate2~
-        }
-
-        class CrossPlatformIdentityKeyStorage {
-            -string _storagePath
-            +GetOrCreateIdentityCertificateAsync() Task~X509Certificate2~
-            -EncryptWithAesGcm(byte[], byte[])$ byte[]
-            -DecryptWithAesGcm(byte[], byte[])$ byte[]
-        }
-
-        class TrustedDeviceStore {
-            +IsDeviceTrusted(string, string) bool
-            +TrustDevice(string, string, string) void
-            +RevokeDevice(string) void
-        }
-    }
-
-    %% =======================
-    %% CAPA RED
-    %% =======================
     namespace LanScreenShare_Network {
         class DiscoveryService {
             +StartHostingBroadcast() void
-            +StopHosting() void
+            +StartWirelessDisplayBroadcast(int) void
             +StartListening() void
-            +event OnDeviceDiscovered
         }
 
         class TcpStreamServer {
             +StartAsync(int port, CancellationToken) Task
             +BroadcastFrameAsync(CapturedFrame) Task
-            +Stop() void
         }
 
-        class TcpStreamClient {
-            +ConnectAsync(string, int, CancellationToken) Task
-            +event FrameReceived
-            +event TelemetryUpdated
+        class TcpControlServer {
+            +StartAsync(int port, CancellationToken) Task
         }
 
-        class FileTransferServer {
-            +StartAsync(int port, X509Certificate2, CancellationToken) Task
-            +Stop() void
-            +event FileReceived
+        class TcpFileTransferServer {
+            +StartAsync(int port, CancellationToken) Task
         }
 
-        class FileTransferClient {
-            +SendFileAsync(string, string, int, X509Certificate2, IProgress) Task
+        class DisplaySignalingServer {
+            +StartAsync(int port, CancellationToken) Task
+        }
+
+        class VirtualDisplayProjectionHost {
+            +StartProjectionAsync(...) Task
+            +RefreshCaptureSourceFromTopology() void
         }
     }
 
-    %% =======================
-    %% CAPA MULTIMEDIA
-    %% =======================
     namespace LanScreenShare_Media {
         class CaptureServiceFactory {
             +Create(CaptureSource, string)$ IScreenCaptureService
@@ -282,97 +242,64 @@ classDiagram
 
         class AudioServiceFactory {
             +CreateAudioCapture()$ IAudioCaptureService
-            +CreateMicCapture()$ IAudioCaptureService
             +CreateAudioPlayer()$ IAudioPlayerService
         }
 
         class DxgiScreenCaptureService {
+            +bool RequireExactTargetMatch
             +StartCapture(...) void
             +StopCapture() void
         }
 
-        class WindowsScreenCaptureService {
-            +StartCapture(...) void
-            +StopCapture() void
-        }
-
-        class CrossPlatformScreenCaptureService {
-            +StartCapture(...) void
-            +StopCapture() void
+        class MediaFoundationH264EncoderService {
+            +EncodeFrameAsync(...) Task
         }
 
         class WasapiAudioCaptureService {
             +StartCapture() void
-            +StopCapture() void
         }
 
-        class WasapiAudioPlayerService {
-            +PlayChunk(CapturedAudioChunk) void
-        }
-
-        class NullAudioCaptureService {
-            +StartCapture() void
-            +StopCapture() void
-        }
-
-        class NullAudioPlayerService {
-            +PlayChunk(CapturedAudioChunk) void
-        }
+        class VirtualDriversVddBackend
+        class WindowsDisplayTopologyManager
+        class SecureHostServiceManager
     }
 
-    %% =======================
-    %% CAPA UI
-    %% =======================
-    namespace LanScreenShare_Desktop {
-        class MainWindow {
-            -DiscoveryService _discoveryService
-            -IScreenCaptureService _screenCaptureService
-            -AdaptiveBitrateController _abrController
-            -FileTransferServer _fileTransferServer
-            -FileTransferClient _fileTransferClient
-            -IIdentityKeyStorage _keyStorage
-            -IInputSimulatorService _inputSimulator
-        }
+    namespace LanScreenShare_Hosts_y_UI {
+        class MainWindow
+        class StreamPopoutWindow
+        class TrustedDevicesWindow
+        class VddDriverInstallerWindow
+        class WindowsServiceDispatcher
+        class VirtualDisplayWatchdogRunner
     }
-
-    %% =======================
-    %% RELACIONES
-    %% =======================
-    IIdentityKeyStorage <|.. WindowsDpapiIdentityKeyStorage
-    IIdentityKeyStorage <|.. CrossPlatformIdentityKeyStorage
-    IdentityKeyStorageFactory ..> IIdentityKeyStorage : genera
 
     IScreenCaptureService <|.. DxgiScreenCaptureService
-    IScreenCaptureService <|.. WindowsScreenCaptureService
-    IScreenCaptureService <|.. CrossPlatformScreenCaptureService
-    CaptureServiceFactory ..> IScreenCaptureService : genera
-
+    CaptureServiceFactory ..> IScreenCaptureService : crea
     IAudioCaptureService <|.. WasapiAudioCaptureService
-    IAudioCaptureService <|.. NullAudioCaptureService
-    IAudioPlayerService <|.. WasapiAudioPlayerService
-    IAudioPlayerService <|.. NullAudioPlayerService
-    AudioServiceFactory ..> IAudioCaptureService : genera
-    AudioServiceFactory ..> IAudioPlayerService : genera
-
-    MainWindow --> AdaptiveBitrateController : consulta y sincroniza
-    MainWindow --> FileTransferServer : aloja
-    MainWindow --> FileTransferClient : ejecuta envíos
-    MainWindow --> IdentityKeyStorageFactory : obtiene almacén criptográfico
-    MainWindow --> CaptureServiceFactory : crea capturador
-    MainWindow --> AudioServiceFactory : crea audio
+    AudioServiceFactory ..> IAudioCaptureService : crea
+    IVirtualDisplayBackend <|.. VirtualDriversVddBackend
+    IDisplayTopologyManager <|.. WindowsDisplayTopologyManager
+    VirtualDisplayCoordinator --> IVirtualDisplayBackend : administra
+    VirtualDisplayCoordinator --> IDisplayTopologyManager : aplica CCD
+    VirtualDisplayProjectionHost --> VirtualDisplayCoordinator : coordina
+    MainWindow --> VirtualDisplayProjectionHost : proyecta
+    MainWindow --> AdaptiveBitrateController : sincroniza ABR
+    MainWindow --> TrustedDeviceManager : gestiona confianza
+    MainWindow --> SecureHostServiceManager : controla UAC/Winlogon
+    WindowsServiceDispatcher --> SecureHostServiceManager : atiende IPC SYSTEM
 ```
 
 ---
 
-## 6. Hoja de Ruta para Próximas Fases (Drivers Nativos Específicos)
+## 6. Hoja de Ruta para Próximas Fases (Drivers Nativos Multiplataforma)
 
-Con la arquitectura completamente desacoplada mediante fábricas abstractas y contratos agnósticos, las siguientes implementaciones específicas de sistema operativo pueden integrarse de manera limpia y modular sin alterar el flujo principal de la aplicación:
+Con la arquitectura desacoplada mediante fábricas abstractas e interfaces en `LanScreenShare.Core`, el siguiente objetivo es implementar los backends nativos fuera de Windows sin alterar la capa de red ni la interfaz en Avalonia:
 
 1. **Linux (PipeWire / Wayland / X11):**
-   - Implementación de `PipeWireScreenCaptureService` conectándose al portal D-Bus `org.freedesktop.portal.ScreenCast`.
-   - Captura de audio del sistema a través de PulseAudio / PipeWire ALSA loopback.
+   - Implementar `PipeWireScreenCaptureService` mediante el portal D-Bus `org.freedesktop.portal.ScreenCast`.
+   - Captura de audio del sistema vía PipeWire / PulseAudio loopback.
 2. **Android (API 29+):**
-   - Implementación de `AndroidMediaProjectionService` utilizando `MediaProjection` y `VirtualDisplay` renderizado hacia `Surface`.
-   - Adquisición de `WifiManager.MulticastLock` en el ciclo de vida del servicio de descubrimiento UDP.
+   - Implementar `AndroidMediaProjectionService` con `MediaProjection` y `VirtualDisplay` renderizado hacia `Surface`.
+   - Gestión de `WifiManager.MulticastLock` en el descubrimiento UDP.
 3. **macOS (ScreenCaptureKit):**
-   - Implementación de `MacScreenCaptureKitService` utilizando las APIs nativas de alta eficiencia de macOS 12.3+ (`SCStream` y `SCContentFilter`).
+   - Implementar `MacScreenCaptureKitService` sobre `SCStream` y `SCContentFilter` para macOS 12.3+.
