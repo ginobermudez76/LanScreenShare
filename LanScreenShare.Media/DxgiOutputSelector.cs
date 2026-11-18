@@ -44,6 +44,18 @@ namespace LanScreenShare.Media
             if (candidates.Count == 0)
                 return -1;
 
+            int matchedIndex = TryFindMatchedOutputIndex(candidates, in target, requireExactMatch);
+            if (matchedIndex != -2)
+                return matchedIndex;
+
+            return requireExactMatch ? -1 : TrySelectFallbackIndex(candidates.Count, target.MonitorIndex);
+        }
+
+        private static int TryFindMatchedOutputIndex(
+            IReadOnlyList<DxgiOutputDescriptor> candidates,
+            in DxgiOutputTarget target,
+            bool requireExactMatch)
+        {
             int byDeviceName = FindByDeviceName(candidates, target.DeviceName);
             if (byDeviceName >= 0)
                 return byDeviceName;
@@ -52,10 +64,7 @@ namespace LanScreenShare.Media
                 return -1;
 
             int byBounds = FindByBounds(candidates, target.Bounds);
-            if (byBounds >= 0)
-                return byBounds;
-
-            return requireExactMatch ? -1 : TrySelectFallbackIndex(candidates.Count, target.MonitorIndex);
+            return byBounds >= 0 ? byBounds : -2;
         }
 
         private static int TrySelectFallbackIndex(int candidateCount, int monitorIndex) =>
@@ -94,12 +103,10 @@ namespace LanScreenShare.Media
             double targetIntervalMs = 1000.0 / Math.Max(1, targetFps);
             double remainingMs = targetIntervalMs - elapsedMs;
             if (remainingMs <= 0.5)
-                return 0;
+                return isNoFrame ? 2 : 0;
 
-            if (isNoFrame && remainingMs <= 1.5)
-                return 0;
-
-            return Math.Max(0, (int)Math.Floor(remainingMs));
+            int roundedMs = (int)Math.Floor(remainingMs);
+            return isNoFrame ? Math.Max(2, roundedMs) : Math.Max(0, roundedMs);
         }
 
         public static bool IsCursorNearCaptureBounds(
@@ -111,11 +118,13 @@ namespace LanScreenShare.Media
             if (!bounds.IsValid)
                 return false;
 
-            return cursorX >= bounds.Left - marginPx &&
-                   cursorX < bounds.Left + bounds.Width + marginPx &&
-                   cursorY >= bounds.Top - marginPx &&
-                   cursorY < bounds.Top + bounds.Height + marginPx;
+            bool inX = IsWithinExpandedRange(cursorX, bounds.Left, bounds.Width, marginPx);
+            bool inY = IsWithinExpandedRange(cursorY, bounds.Top, bounds.Height, marginPx);
+            return inX && inY;
         }
+
+        private static bool IsWithinExpandedRange(int value, int start, int length, int margin) =>
+            value >= start - margin && value < start + length + margin;
 
         public static bool ShouldTrackExternalSourceResolution(
             bool requireExactTargetMatch,
@@ -123,12 +132,16 @@ namespace LanScreenShare.Media
             int targetWidth,
             int targetHeight,
             int actualWidth,
-            int actualHeight) =>
-            requireExactTargetMatch &&
-            scalePercent >= 99 &&
-            targetWidth > 0 &&
-            targetHeight > 0 &&
-            (actualWidth != targetWidth || actualHeight != targetHeight);
+            int actualHeight)
+        {
+            if (!requireExactTargetMatch || scalePercent < 99)
+                return false;
+
+            if (targetWidth <= 0 || targetHeight <= 0)
+                return false;
+
+            return actualWidth != targetWidth || actualHeight != targetHeight;
+        }
     }
 
     internal readonly record struct CursorSample

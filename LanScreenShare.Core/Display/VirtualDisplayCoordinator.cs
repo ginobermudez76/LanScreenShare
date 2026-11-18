@@ -177,21 +177,37 @@ namespace LanScreenShare.Core.Display
 
         internal static string? FindAddedDeviceName(
             IReadOnlyList<DisplayPathSnapshot> beforePaths,
-            IReadOnlyList<DisplayPathSnapshot> afterPaths) =>
-            afterPaths
-                .Where(c => !string.IsNullOrWhiteSpace(c.DeviceName) && !PathExistedBefore(beforePaths, c))
-                .Select(c => c.DeviceName)
-                .FirstOrDefault();
+            IReadOnlyList<DisplayPathSnapshot> afterPaths)
+        {
+            foreach (var candidate in afterPaths)
+            {
+                if (IsNewlyAddedPath(beforePaths, candidate))
+                    return candidate.DeviceName;
+            }
 
-        private static bool PathExistedBefore(
+            return null;
+        }
+
+        private static bool IsNewlyAddedPath(
             IReadOnlyList<DisplayPathSnapshot> beforePaths,
-            DisplayPathSnapshot candidate) =>
-            beforePaths.Any(b =>
-                string.Equals(b.DeviceName, candidate.DeviceName, StringComparison.OrdinalIgnoreCase) ||
-                (b.AdapterLuidLow == candidate.AdapterLuidLow &&
-                 b.AdapterLuidHigh == candidate.AdapterLuidHigh &&
-                 b.TargetId == candidate.TargetId &&
-                 b.TargetId != 0));
+            DisplayPathSnapshot candidate)
+        {
+            if (string.IsNullOrWhiteSpace(candidate.DeviceName))
+                return false;
+
+            return !beforePaths.Any(b => IsSameDisplayPath(b, candidate));
+        }
+
+        private static bool IsSameDisplayPath(in DisplayPathSnapshot a, in DisplayPathSnapshot b)
+        {
+            if (string.Equals(a.DeviceName, b.DeviceName, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (a.TargetId == 0 || a.TargetId != b.TargetId)
+                return false;
+
+            return a.AdapterLuidLow == b.AdapterLuidLow && a.AdapterLuidHigh == b.AdapterLuidHigh;
+        }
 
         private static async Task<VirtualDisplayInstance?> TryCreateVirtualMonitorAsync(
             IVirtualDisplayBackend backend,

@@ -759,6 +759,83 @@ public class VirtualDisplayInfrastructureTests
 
         var queryFail = new FakeCcdAdapter { FailQueryPaths = true };
         Assert.IsFalse(new WindowsDisplayTopologyManager(queryFail).EnsureExtendedLayout(@"\\.\DISPLAY2"));
+
+        Assert.IsTrue(WindowsDisplayTopologyManager.IsRefreshRateMatched(59940, 1000, 60));
+        Assert.IsTrue(WindowsDisplayTopologyManager.IsRefreshRateMatched(0, 1, 60));
+        Assert.IsFalse(WindowsDisplayTopologyManager.IsRefreshRateMatched(30, 1, 60));
+
+        var fractional60 = new[]
+        {
+            new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", PositionX = 0, PositionY = 0, Width = 1920, Height = 1080, RefreshRateNumerator = 60, RefreshRateDenominator = 1 },
+            new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY2", PositionX = 1920, PositionY = 0, Width = 1366, Height = 768, RefreshRateNumerator = 59940, RefreshRateDenominator = 1000 }
+        };
+        Assert.IsNull(WindowsDisplayTopologyManager.ApplyModeToTargetPath(fractional60, @"\\.\DISPLAY2", new VirtualDisplayMode(1366, 768, 60)));
+
+        int queryCalls = 0;
+        var delayedCcd = new FakeCcdAdapter
+        {
+            Paths = [new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, PositionX = 0, PositionY = 0 }],
+            OnQueryPaths = () =>
+            {
+                queryCalls++;
+                return queryCalls switch
+                {
+                    1 => [new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, PositionX = 0, PositionY = 0 }],
+                    2 => [new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, PositionX = 0, PositionY = 0 }],
+                    _ =>
+                    [
+                        new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, PositionX = 0, PositionY = 0 },
+                        new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY2", Width = 1280, Height = 720, PositionX = 0, PositionY = 0 }
+                    ]
+                };
+            }
+        };
+        var mgrDelayed = new WindowsDisplayTopologyManager(delayedCcd, targetLookupRetryDelayMs: 1);
+        Assert.IsTrue(mgrDelayed.EnsureExtendedLayout(@"\\.\DISPLAY2"));
+        Assert.AreEqual(1, delayedCcd.ExtendCalls);
+        Assert.IsNotNull(delayedCcd.LastApplied);
+        Assert.AreEqual(1920, delayedCcd.LastApplied[1].PositionX);
+
+        var extendFail = new FakeCcdAdapter
+        {
+            Paths = [new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080 }],
+            FailExtend = true
+        };
+        Assert.IsFalse(new WindowsDisplayTopologyManager(extendFail).EnsureExtendedLayout(@"\\.\DISPLAY2"));
+
+        var singleAfterExtend = new FakeCcdAdapter
+        {
+            Paths = [new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080 }]
+        };
+        Assert.IsFalse(new WindowsDisplayTopologyManager(singleAfterExtend).EnsureExtendedLayout(null));
+
+        int failSecondQueryCalls = 0;
+        var failSecondQuery = new FakeCcdAdapter();
+        failSecondQuery.OnQueryPaths = () =>
+        {
+            failSecondQueryCalls++;
+            if (failSecondQueryCalls == 1)
+                return [new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080 }];
+
+            failSecondQuery.FailQueryPaths = true;
+            return [];
+        };
+        Assert.IsFalse(new WindowsDisplayTopologyManager(failSecondQuery).EnsureExtendedLayout(@"\\.\DISPLAY2"));
+
+        var extendFixesOverlapAutomatically = new FakeCcdAdapter
+        {
+            Paths = [new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080 }]
+        };
+        extendFixesOverlapAutomatically.OnExtend = () =>
+        {
+            extendFixesOverlapAutomatically.Paths =
+            [
+                new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, PositionX = 0 },
+                new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY2", Width = 1280, Height = 720, PositionX = 1920 }
+            ];
+        };
+        Assert.IsTrue(new WindowsDisplayTopologyManager(extendFixesOverlapAutomatically).EnsureExtendedLayout(@"\\.\DISPLAY2"));
+        Assert.IsNull(extendFixesOverlapAutomatically.LastApplied);
     }
 
     [TestMethod]
@@ -767,6 +844,9 @@ public class VirtualDisplayInfrastructureTests
         Assert.IsFalse(VddSettingsXmlHelper.ContainsMode(null, VirtualDisplayMode.Default));
         Assert.IsFalse(VddSettingsXmlHelper.ContainsMode("<broken", VirtualDisplayMode.Default));
         string xml = VddSettingsXmlHelper.UpdateMonitorCountAndMode(null, 1, new VirtualDisplayMode(2560, 1440, 60));
+        Assert.IsFalse(VddSettingsXmlHelper.ContainsMode(xml, new VirtualDisplayMode(100, 100, 60)));
+        Assert.IsFalse(VddSettingsXmlHelper.ContainsMode(xml, new VirtualDisplayMode(2560, 1080, 60)));
+        Assert.IsFalse(VddSettingsXmlHelper.ContainsMode(xml, new VirtualDisplayMode(2560, 1440, 30)));
         Assert.IsTrue(VddSettingsXmlHelper.ContainsMode(xml, new VirtualDisplayMode(2560, 1440, 60)));
         Assert.IsTrue(VirtualDriversVddBackend.IsMatchingVddAdapter("other", "VDD by MTT Display"));
 
@@ -790,6 +870,7 @@ public class VirtualDisplayInfrastructureTests
         Assert.IsTrue(WindowsDisplayTopologyManager.TryParseMonitorRectFallback(mi, out var rectMode));
         Assert.AreEqual(new VirtualDisplayMode(2560, 1440, 60), rectMode);
         Assert.IsFalse(WindowsDisplayTopologyManager.TryParseMonitorRectFallback(new byte[4], out _));
+        Assert.IsFalse(WindowsDisplayTopologyManager.TryParseMonitorRectFallback(new byte[104], out _));
 
         byte[] devMode = new byte[220];
         System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(devMode.AsSpan(166, 2), 144);
@@ -800,6 +881,33 @@ public class VirtualDisplayInfrastructureTests
         Assert.AreEqual(new VirtualDisplayMode(2560, 1440, 75), devParsed);
         Assert.AreEqual(1.5, dpi, 0.01);
         Assert.IsFalse(WindowsDisplayTopologyManager.TryParseDevModePhysicalMode(new byte[10], out _, out _));
+
+        byte[] zeroDimDevMode = new byte[220];
+        Assert.IsFalse(WindowsDisplayTopologyManager.TryParseDevModePhysicalMode(zeroDimDevMode, out _, out _));
+
+        byte[] zeroFreqDevMode = new byte[220];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(zeroFreqDevMode.AsSpan(172, 4), 1920);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(zeroFreqDevMode.AsSpan(176, 4), 1080);
+        Assert.IsTrue(WindowsDisplayTopologyManager.TryParseDevModePhysicalMode(zeroFreqDevMode, out var defaultHzMode, out _));
+        Assert.AreEqual(60, defaultHzMode.RefreshRateHz);
+
+        bool gotZero = WindowsDisplayTopologyManager.TryGetWindowMonitorPhysicalMode(IntPtr.Zero, out var zeroMode, out double zeroScale);
+        if (gotZero)
+        {
+            Assert.IsTrue(zeroMode.Width > 0 && zeroMode.Height > 0);
+            Assert.IsTrue(zeroScale > 0);
+        }
+        bool gotHwnd = WindowsDisplayTopologyManager.TryGetWindowMonitorPhysicalMode(new IntPtr(123456), out var hwndMode, out double hwndScale);
+        if (gotHwnd)
+        {
+            Assert.IsTrue(hwndMode.Width > 0 && hwndMode.Height > 0);
+            Assert.IsTrue(hwndScale > 0);
+        }
+
+        string reorderedXml = VddSettingsXmlHelper.UpdateMonitorCountAndMode(xml, 1, new VirtualDisplayMode(1366, 768, 60));
+        var doc = System.Xml.Linq.XDocument.Parse(reorderedXml);
+        var firstWidth = doc.Root?.Element("resolutions")?.Elements("resolution").FirstOrDefault()?.Element("width")?.Value;
+        Assert.AreEqual("1366", firstWidth);
     }
 
     [TestMethod]
@@ -833,16 +941,38 @@ public class VirtualDisplayInfrastructureTests
         Assert.IsNotNull(ccd.LastApplied);
         Assert.AreEqual(1920, ccd.LastApplied[1].PositionX);
         Assert.AreEqual(2560, ccd.LastApplied[1].Width);
+
+        using var scopeNoNewPath = new TempSnapshotScope();
+        var ccdNoNew = new FakeCcdAdapter
+        {
+            Paths = [new DisplayPathSnapshot { DeviceName = @"\\.\DISPLAY1", Width = 1920, Height = 1080, AdapterLuidLow = 1, TargetId = 1 }]
+        };
+        var pipe = new FakeVddPipeTransport();
+        var backendNoNew = new VirtualDriversVddBackend(pipe, new FakeVddEnvironment { Present = true, DeviceName = null });
+        await using var coordNoNew = new VirtualDisplayCoordinator(
+            [backendNoNew],
+            new WindowsDisplayTopologyManager(ccdNoNew),
+            null,
+            new VirtualDisplayCoordinatorOptions { SnapshotFilePath = scopeNoNewPath.BackupFilePath });
+
+        var resNoNew = await coordNoNew.StartExtendedDisplayAsync(new VirtualDisplayMode(1366, 768, 60));
+        Assert.IsTrue(resNoNew.Success);
+        Assert.IsNull(resNoNew.Session!.DeviceName);
+        Assert.AreEqual(2, pipe.Commands.Count);
+        Assert.AreEqual(VddCommandKind.ReloadDriver, pipe.Commands[0].Kind);
+        Assert.AreEqual(VddCommandKind.SetDisplayCount, pipe.Commands[1].Kind);
     }
 
     private sealed class FakeVddPipeTransport : IVddPipeTransport
     {
         public bool ShouldFail { get; set; }
         public VddCommandRequest LastCommand { get; private set; }
+        public List<VddCommandRequest> Commands { get; } = [];
 
         public Task<bool> SendCommandAsync(VddCommandRequest command, CancellationToken ct = default)
         {
             LastCommand = command;
+            Commands.Add(command);
             return Task.FromResult(!ShouldFail);
         }
     }
@@ -893,12 +1023,17 @@ public class VirtualDisplayInfrastructureTests
         public IReadOnlyList<DisplayPathSnapshot> Paths { get; set; } = Array.Empty<DisplayPathSnapshot>();
         public IReadOnlyList<DisplayPathSnapshot>? LastApplied { get; private set; }
         public Action? OnExtend { get; set; }
+        public Func<IReadOnlyList<DisplayPathSnapshot>>? OnQueryPaths { get; set; }
         public int ExtendCalls { get; private set; }
         public bool FailExtend { get; set; }
         public bool FailQueryPaths { get; set; }
 
         public bool TryQueryActiveDisplayPaths(out IReadOnlyList<DisplayPathSnapshot> paths)
         {
+            if (OnQueryPaths != null)
+            {
+                Paths = OnQueryPaths();
+            }
             paths = Paths;
             return !FailQueryPaths;
         }

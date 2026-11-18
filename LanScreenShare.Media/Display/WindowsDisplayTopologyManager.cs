@@ -18,15 +18,17 @@ namespace LanScreenShare.Media.Display
     public sealed partial class WindowsDisplayTopologyManager : IDisplayTopologyManager
     {
         private readonly ICcdPlatformAdapter _adapter;
+        private readonly int _targetLookupRetryDelayMs;
 
         public WindowsDisplayTopologyManager()
-            : this(CreateDefaultAdapter())
+            : this(CreateDefaultAdapter(), targetLookupRetryDelayMs: 50)
         {
         }
 
-        internal WindowsDisplayTopologyManager(ICcdPlatformAdapter adapter)
+        internal WindowsDisplayTopologyManager(ICcdPlatformAdapter adapter, int targetLookupRetryDelayMs = 0)
         {
             _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
+            _targetLookupRetryDelayMs = Math.Max(0, targetLookupRetryDelayMs);
         }
 
         private static ICcdPlatformAdapter CreateDefaultAdapter() =>
@@ -66,25 +68,42 @@ namespace LanScreenShare.Media.Display
             if (!_adapter.TryQueryActiveDisplayPaths(out var activePaths))
                 return false;
 
-            int targetIdx = FindTargetPathIndexOrNegative(activePaths, preferredDeviceName);
-            bool needsExtend = activePaths.Count < 2 || (targetIdx >= 0 && HasOverlappingBounds(activePaths, targetIdx));
-            if (!needsExtend)
+            if (!RequiresExtendedTopologyPass(activePaths, preferredDeviceName))
                 return true;
 
             if (!_adapter.ApplyExtendTopology())
                 return false;
 
-            if (!TryQueryPathsReadyForTarget(preferredDeviceName, out var afterExtend) || afterExtend.Count < 2)
-                return afterExtend.Count >= 2;
+            if (!TryQueryPathsReadyForTarget(preferredDeviceName, out var afterExtend))
+                return false;
 
-            targetIdx = FindTargetPathIndexOrNegative(afterExtend, preferredDeviceName);
-            if (targetIdx >= 0 && HasOverlappingBounds(afterExtend, targetIdx))
-            {
-                var separated = SeparateOverlappingTargetPath(afterExtend, targetIdx);
-                return _adapter.ApplySuppliedConfig(separated);
-            }
+            if (afterExtend.Count < 2)
+                return false;
 
-            return true;
+            return RepairOverlappingTargetIfNeeded(afterExtend, preferredDeviceName);
+        }
+
+        private static bool RequiresExtendedTopologyPass(
+            IReadOnlyList<DisplayPathSnapshot> activePaths,
+            string? preferredDeviceName)
+        {
+            if (activePaths.Count < 2)
+                return true;
+
+            int targetIdx = FindTargetPathIndexOrNegative(activePaths, preferredDeviceName);
+            return targetIdx >= 0 && HasOverlappingBounds(activePaths, targetIdx);
+        }
+
+        private bool RepairOverlappingTargetIfNeeded(
+            IReadOnlyList<DisplayPathSnapshot> paths,
+            string? preferredDeviceName)
+        {
+            int targetIdx = FindTargetPathIndexOrNegative(paths, preferredDeviceName);
+            if (targetIdx < 0 || !HasOverlappingBounds(paths, targetIdx))
+                return true;
+
+            var separated = SeparateOverlappingTargetPath(paths, targetIdx);
+            return _adapter.ApplySuppliedConfig(separated);
         }
 
         private bool TryQueryPathsReadyForTarget(string? preferredDeviceName, out IReadOnlyList<DisplayPathSnapshot> activePaths)
@@ -92,21 +111,26 @@ namespace LanScreenShare.Media.Display
             if (!_adapter.TryQueryActiveDisplayPaths(out activePaths))
                 return false;
 
-            if (_adapter is not Win32CcdAdapter || string.IsNullOrWhiteSpace(preferredDeviceName))
+            if (string.IsNullOrWhiteSpace(preferredDeviceName))
                 return true;
 
-            for (int attempt = 0; attempt < 12; attempt++)
+            for (int attempt = 0; attempt < 6; attempt++)
             {
-                if (activePaths.Any(p => string.Equals(p.DeviceName, preferredDeviceName, StringComparison.OrdinalIgnoreCase)))
+                if (ContainsDevicePath(activePaths, preferredDeviceName))
                     return true;
 
-                System.Threading.Thread.Sleep(50);
+                if (_targetLookupRetryDelayMs > 0)
+                    System.Threading.Thread.Sleep(_targetLookupRetryDelayMs);
+
                 if (!_adapter.TryQueryActiveDisplayPaths(out activePaths))
                     return false;
             }
 
             return true;
         }
+
+        private static bool ContainsDevicePath(IReadOnlyList<DisplayPathSnapshot> paths, string deviceName) =>
+            paths.Any(p => string.Equals(p.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase));
 
         public bool RestoreSnapshot(DisplayTopologySnapshot snapshot)
         {
@@ -139,19 +163,27 @@ namespace LanScreenShare.Media.Display
             return copy;
         }
 
+        internal static bool IsRefreshRateMatched(uint numerator, uint denominator, int requestedHz)
+        {
+            if (numerator == 0 || requestedHz <= 0)
+                return true;
+
+            int currentHz = (int)Math.Round((double)numerator / Math.Max(1u, denominator));
+            return Math.Abs(currentHz - requestedHz) <= 1;
+        }
+
         private static bool NeedsTargetPathUpdate(
             in DisplayPathSnapshot target,
             in VirtualDisplayMode mode,
             bool overlapsOther)
         {
-            if (overlapsOther || target.Width != mode.Width || target.Height != mode.Height)
+            if (overlapsOther)
                 return true;
 
-            if (target.RefreshRateNumerator == 0)
-                return false;
+            if (target.Width != mode.Width || target.Height != mode.Height)
+                return true;
 
-            uint currentHz = target.RefreshRateNumerator / Math.Max(1u, target.RefreshRateDenominator);
-            return currentHz != (uint)mode.RefreshRateHz;
+            return !IsRefreshRateMatched(target.RefreshRateNumerator, target.RefreshRateDenominator, mode.RefreshRateHz);
         }
 
         private static DisplayPathSnapshot BuildUpdatedTargetPath(
@@ -175,25 +207,28 @@ namespace LanScreenShare.Media.Display
         private static bool HasOverlappingBounds(IReadOnlyList<DisplayPathSnapshot> paths, int targetIdx)
         {
             var target = paths[targetIdx];
-            int targetRight = target.PositionX + Math.Max(1, target.Width);
-            int targetBottom = target.PositionY + Math.Max(1, target.Height);
-
             for (int i = 0; i < paths.Count; i++)
             {
-                if (i == targetIdx)
-                    continue;
-
-                var other = paths[i];
-                int otherRight = other.PositionX + Math.Max(1, other.Width);
-                int otherBottom = other.PositionY + Math.Max(1, other.Height);
-
-                bool overlapX = target.PositionX < otherRight && targetRight > other.PositionX;
-                bool overlapY = target.PositionY < otherBottom && targetBottom > other.PositionY;
-                if (overlapX && overlapY)
+                if (i != targetIdx && DoPathsOverlap(in target, paths[i]))
                     return true;
             }
 
             return false;
+        }
+
+        private static bool DoPathsOverlap(in DisplayPathSnapshot a, DisplayPathSnapshot b)
+        {
+            if (!DoIntervalsOverlap(a.PositionX, a.Width, b.PositionX, b.Width))
+                return false;
+
+            return DoIntervalsOverlap(a.PositionY, a.Height, b.PositionY, b.Height);
+        }
+
+        private static bool DoIntervalsOverlap(int startA, int lengthA, int startB, int lengthB)
+        {
+            int endA = startA + Math.Max(1, lengthA);
+            int endB = startB + Math.Max(1, lengthB);
+            return startA < endB && endA > startB;
         }
 
         private static int ComputeNonOverlappingPositionX(IReadOnlyList<DisplayPathSnapshot> paths, int targetIdx)
@@ -515,6 +550,7 @@ namespace LanScreenShare.Media.Display
                     return false;
 
                 var (nativePaths, nativeModes) = PrepareSuppliedNativeArrays(paths);
+                ClearTargetModeIndices(nativePaths);
 
                 return WindowsDisplayTopologyManager.ApplyWithFallbackStrategy(
                     () => InvokeSetDisplayConfig(nativePaths, nativeModes),

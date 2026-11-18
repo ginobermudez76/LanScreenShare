@@ -42,7 +42,10 @@ namespace LanScreenShare.Media.Display
 
         public static bool ContainsMode(string? xmlContent, VirtualDisplayMode mode)
         {
-            if (string.IsNullOrWhiteSpace(xmlContent) || !VirtualDisplayModeValidator.IsSupported(in mode))
+            if (string.IsNullOrWhiteSpace(xmlContent))
+                return false;
+
+            if (!VirtualDisplayModeValidator.IsSupported(in mode))
                 return false;
 
             try
@@ -102,11 +105,12 @@ namespace LanScreenShare.Media.Display
                 return;
 
             var resolutions = GetOrCreateElement(root, "resolutions");
-            bool alreadyPresent = resolutions.Elements("resolution").Any(el => MatchesMode(el, mode));
-            if (alreadyPresent)
-                return;
+            foreach (var existing in resolutions.Elements("resolution").Where(el => MatchesMode(el, mode)).ToList())
+            {
+                existing.Remove();
+            }
 
-            resolutions.Add(new XElement("resolution",
+            resolutions.AddFirst(new XElement("resolution",
                 new XElement("width", mode.Width.ToString(CultureInfo.InvariantCulture)),
                 new XElement("height", mode.Height.ToString(CultureInfo.InvariantCulture)),
                 new XElement("refresh_rate", mode.RefreshRateHz.ToString(CultureInfo.InvariantCulture))));
@@ -114,10 +118,13 @@ namespace LanScreenShare.Media.Display
 
         private static bool MatchesMode(XElement resolutionEl, in VirtualDisplayMode mode)
         {
-            bool widthMatch = TryGetInt(resolutionEl, "width", out int w) && w == mode.Width;
-            bool heightMatch = TryGetInt(resolutionEl, "height", out int h) && h == mode.Height;
-            bool hzMatch = TryGetInt(resolutionEl, "refresh_rate", out int hz) && hz == mode.RefreshRateHz;
-            return widthMatch && heightMatch && hzMatch;
+            if (!TryGetInt(resolutionEl, "width", out int w) || w != mode.Width)
+                return false;
+
+            if (!TryGetInt(resolutionEl, "height", out int h) || h != mode.Height)
+                return false;
+
+            return TryGetInt(resolutionEl, "refresh_rate", out int hz) && hz == mode.RefreshRateHz;
         }
 
         private static bool TryGetInt(XElement parent, string name, out int value)

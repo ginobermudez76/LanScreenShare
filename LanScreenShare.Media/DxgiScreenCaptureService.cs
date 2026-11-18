@@ -193,7 +193,6 @@ namespace LanScreenShare.Media
 
         private void CaptureLoop(CancellationToken token)
         {
-            uint timerPeriodResult = timeBeginPeriod(1);
             IntPtr mmcssHandle = ConfigureCaptureThreadPriority();
             var stopwatch = new Stopwatch();
             var fpsTracker = new HostFpsTracker();
@@ -207,10 +206,6 @@ namespace LanScreenShare.Media
             }
             finally
             {
-                if (timerPeriodResult == 0)
-                {
-                    _ = timeEndPeriod(1);
-                }
                 RevertMmcss(mmcssHandle);
             }
         }
@@ -344,7 +339,7 @@ namespace LanScreenShare.Media
             int frameIntervalMs,
             ref bool hasCapturedAtLeastOneFrame)
         {
-            uint timeoutMs = (uint)Math.Clamp(frameIntervalMs - 2, 4, 16);
+            uint timeoutMs = (uint)Math.Clamp(frameIntervalMs / 2, 4, 8);
             var acquireResult = session.Duplication!.AcquireNextFrame(timeoutMs, out _, out IDXGIResource? desktopResource);
 
             if (acquireResult.Success && desktopResource != null)
@@ -412,25 +407,39 @@ namespace LanScreenShare.Media
             bool forceKeyframe = _forceKeyframeRequested;
             _forceKeyframeRequested = false;
 
+            var workBitmap = TryCopyStagingToWorkBitmap(session);
+            if (workBitmap == null)
+                return;
+
+            var options = BuildFrameEncodingOptions(session, forceKeyframe);
+            var frame = EncodeBitmap(workBitmap, in options);
+            if (frame == null)
+                return;
+
+            frameProcStopwatch.Stop();
+            frame.HostFrameTimeMs = (int)frameProcStopwatch.ElapsedMilliseconds;
+            frame.HostFps = fpsTracker.RecordFrameAndGetFps();
+            OnFrameCaptured(frame);
+        }
+
+        private SKBitmap? TryCopyStagingToWorkBitmap(DxgiSessionResources session)
+        {
             var mapped = session.Context!.Map(session.StagingTexture!, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
             try
             {
-                var buffer = new RawFrameBuffer(
-                    mapped.DataPointer,
-                    session.Bounds.ScreenWidth,
-                    session.Bounds.ScreenHeight,
-                    (int)mapped.RowPitch);
+                int width = session.Bounds.ScreenWidth;
+                int height = session.Bounds.ScreenHeight;
+                var workBitmap = EnsureReusableWorkBitmap(width, height);
+                var imageInfo = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
+                using var stagingView = new SKBitmap();
+                stagingView.InstallPixels(imageInfo, mapped.DataPointer, (int)mapped.RowPitch);
+                using var pixmap = stagingView.PeekPixels();
+                if (pixmap == null)
+                    return null;
 
-                var options = BuildFrameEncodingOptions(session, forceKeyframe);
-                var frame = EncodeFrameFromPointer(buffer, options);
-                if (frame != null)
-                {
-                    frameProcStopwatch.Stop();
-                    frame.HostFrameTimeMs = (int)frameProcStopwatch.ElapsedMilliseconds;
-                    frame.HostFps = fpsTracker.RecordFrameAndGetFps();
-
-                    OnFrameCaptured(frame);
-                }
+                return pixmap.ReadPixels(workBitmap.Info, workBitmap.GetPixels(), workBitmap.RowBytes)
+                    ? workBitmap
+                    : null;
             }
             finally
             {
@@ -777,16 +786,41 @@ namespace LanScreenShare.Media
 
         private SKBitmap EnsureReusableWorkBitmap(int width, int height)
         {
-            if (_reusableWorkBitmap != null &&
-                _reusableWorkBitmap.Width == width &&
-                _reusableWorkBitmap.Height == height)
-            {
-                return _reusableWorkBitmap;
-            }
+            if (CanReuseWorkBitmap(width, height))
+                return _reusableWorkBitmap!;
 
             _reusableWorkBitmap?.Dispose();
             _reusableWorkBitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
             return _reusableWorkBitmap;
+        }
+
+        private bool CanReuseWorkBitmap(int width, int height)
+        {
+            if (_reusableWorkBitmap == null)
+                return false;
+
+            return _reusableWorkBitmap.Width == width && _reusableWorkBitmap.Height == height;
+        }
+
+        private CapturedFrame? EncodeBitmap(
+            SKBitmap sourceBitmap,
+            in FrameEncodingOptions options)
+        {
+            try
+            {
+                bool shouldDrawCursor = ShouldCompositeCursorOnFrame(
+                    options.ScreenLeft, options.ScreenTop, sourceBitmap.Width, sourceBitmap.Height);
+                var (bitmapToEncode, resizedBitmap, finalWidth, finalHeight) = PrepareResizedBitmap(
+                    sourceBitmap,
+                    new BitmapResizeOptions(sourceBitmap.Width, sourceBitmap.Height, options.Scale, options.CustomTargetWidth, options.CustomTargetHeight));
+
+                return EncodePreparedBitmap(bitmapToEncode, resizedBitmap, finalWidth, finalHeight, sourceBitmap.Width, sourceBitmap.Height, shouldDrawCursor, in options);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DXGI] Error codificando fotograma: {ex.Message}");
+                return null;
+            }
         }
 
         private CapturedFrame? EncodeFrameFromPointer(
@@ -800,48 +834,72 @@ namespace LanScreenShare.Media
                 skBitmap.InstallPixels(imageInfo, buffer.DataPointer, buffer.RowPitch);
 
                 var (bitmapToEncode, resizedBitmap, finalWidth, finalHeight, shouldDrawCursor) = PrepareEncodingBitmap(skBitmap, buffer, options);
-
-                try
-                {
-                    if (shouldDrawCursor)
-                    {
-                        float scaleX = (float)finalWidth / Math.Max(1, buffer.Width);
-                        float scaleY = (float)finalHeight / Math.Max(1, buffer.Height);
-                        DrawCursorOnBitmap(bitmapToEncode, new CursorRenderTarget
-                        {
-                            ScreenLeft = options.ScreenLeft,
-                            ScreenTop = options.ScreenTop,
-                            ScaleX = scaleX,
-                            ScaleY = scaleY
-                        });
-                    }
-
-                    string currentCodec = _codec;
-                    byte[]? encodedBytes = currentCodec == "h264"
-                        ? EncodeH264(bitmapToEncode, new H264FrameRequest(finalWidth, finalHeight, options.ForceKeyframe))
-                        : EncodeJpeg(bitmapToEncode, options.Quality);
-
-                    if (encodedBytes == null || encodedBytes.Length == 0) return null;
-
-                    return new CapturedFrame
-                    {
-                        Data = encodedBytes,
-                        Width = finalWidth,
-                        Height = finalHeight,
-                        Format = currentCodec,
-                        Timestamp = DateTime.UtcNow.Ticks
-                    };
-                }
-                finally
-                {
-                    resizedBitmap?.Dispose();
-                }
+                return EncodePreparedBitmap(bitmapToEncode, resizedBitmap, finalWidth, finalHeight, buffer.Width, buffer.Height, shouldDrawCursor, in options);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[DXGI] Error codificando fotograma: {ex.Message}");
                 return null;
             }
+        }
+
+        private CapturedFrame? EncodePreparedBitmap(
+            SKBitmap bitmapToEncode,
+            SKBitmap? disposableBitmap,
+            int finalWidth,
+            int finalHeight,
+            int sourceWidth,
+            int sourceHeight,
+            bool shouldDrawCursor,
+            in FrameEncodingOptions options)
+        {
+            try
+            {
+                if (shouldDrawCursor)
+                {
+                    DrawCursorScaled(bitmapToEncode, finalWidth, finalHeight, sourceWidth, sourceHeight, in options);
+                }
+
+                string currentCodec = _codec;
+                byte[]? encodedBytes = currentCodec == "h264"
+                    ? EncodeH264(bitmapToEncode, new H264FrameRequest(finalWidth, finalHeight, options.ForceKeyframe))
+                    : EncodeJpeg(bitmapToEncode, options.Quality);
+
+                if (encodedBytes == null || encodedBytes.Length == 0)
+                    return null;
+
+                return new CapturedFrame
+                {
+                    Data = encodedBytes,
+                    Width = finalWidth,
+                    Height = finalHeight,
+                    Format = currentCodec,
+                    Timestamp = DateTime.UtcNow.Ticks
+                };
+            }
+            finally
+            {
+                disposableBitmap?.Dispose();
+            }
+        }
+
+        private void DrawCursorScaled(
+            SKBitmap bitmapToEncode,
+            int finalWidth,
+            int finalHeight,
+            int sourceWidth,
+            int sourceHeight,
+            in FrameEncodingOptions options)
+        {
+            float scaleX = (float)finalWidth / Math.Max(1, sourceWidth);
+            float scaleY = (float)finalHeight / Math.Max(1, sourceHeight);
+            DrawCursorOnBitmap(bitmapToEncode, new CursorRenderTarget
+            {
+                ScreenLeft = options.ScreenLeft,
+                ScreenTop = options.ScreenTop,
+                ScaleX = scaleX,
+                ScaleY = scaleY
+            });
         }
 
         private void DrawCursorOnBitmap(SKBitmap bitmap, in CursorRenderTarget target)
@@ -903,12 +961,6 @@ namespace LanScreenShare.Media
         [LibraryImport("avrt.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static partial bool AvRevertMmThreadCharacteristics(IntPtr avrtHandle);
-
-        [LibraryImport("winmm.dll")]
-        private static partial uint timeBeginPeriod(uint uPeriod);
-
-        [LibraryImport("winmm.dll")]
-        private static partial uint timeEndPeriod(uint uPeriod);
 
         private sealed partial class Win32NativeCursorProvider : INativeCursorProvider
         {

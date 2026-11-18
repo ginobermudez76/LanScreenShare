@@ -247,8 +247,10 @@ public class DxgiSelectionAndCursorTests
     public void DxgiOutputSelector_PacingCursorBoundsAndExternalResolution_WorkAsExpected()
     {
         Assert.AreEqual(0, DxgiOutputSelector.ComputeFramePaceSleepMs(16.3, 60, isNoFrame: false));
-        Assert.AreEqual(0, DxgiOutputSelector.ComputeFramePaceSleepMs(15.5, 60, isNoFrame: true));
+        Assert.AreEqual(2, DxgiOutputSelector.ComputeFramePaceSleepMs(15.5, 60, isNoFrame: true));
+        Assert.AreEqual(2, DxgiOutputSelector.ComputeFramePaceSleepMs(18.0, 60, isNoFrame: true));
         Assert.AreEqual(12, DxgiOutputSelector.ComputeFramePaceSleepMs(4.2, 60, isNoFrame: false));
+        Assert.AreEqual(12, DxgiOutputSelector.ComputeFramePaceSleepMs(4.2, 60, isNoFrame: true));
 
         var rect = new DxgiOutputRect { Left = 1920, Top = 0, Width = 2560, Height = 1440 };
         Assert.IsTrue(DxgiOutputSelector.IsCursorNearCaptureBounds(1900, 100, in rect));

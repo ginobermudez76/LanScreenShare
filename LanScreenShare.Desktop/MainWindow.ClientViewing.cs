@@ -532,22 +532,26 @@ namespace LanScreenShare.Desktop
         {
             if (frameImage == null) return;
 
-            var screenImage = this.FindControl<Image>("ScreenImage");
-            if (screenImage != null)
-            {
-                if (screenImage.Source != frameImage)
-                {
-                    screenImage.Source = frameImage;
-                }
-                screenImage.InvalidateVisual();
-            }
-
+            UpdateViewerScreenImage(frameImage);
             if (_isPopoutActive)
             {
                 _popoutWindow?.UpdateFrame(frameImage);
             }
 
             UpdateViewerFrameStatus(codecLabel);
+        }
+
+        private void UpdateViewerScreenImage(IImage frameImage)
+        {
+            var screenImage = this.FindControl<Image>("ScreenImage");
+            if (screenImage == null)
+                return;
+
+            if (screenImage.Source != frameImage)
+            {
+                screenImage.Source = frameImage;
+            }
+            screenImage.InvalidateVisual();
         }
 
         private void UpdateViewerFrameStatus(string codecLabel)
@@ -566,6 +570,17 @@ namespace LanScreenShare.Desktop
             }
         }
 
+        private bool ShouldDisconnectActiveViewerSession()
+        {
+            if (_isHosting)
+                return false;
+
+            if (_isViewing)
+                return true;
+
+            return _isWirelessDisplayModeActive && _projectionReceiver?.IsSessionBusy == true;
+        }
+
         private void StreamClient_StatusChanged(object? sender, string status)
         {
             Dispatcher.UIThread.Post(() =>
@@ -578,7 +593,7 @@ namespace LanScreenShare.Desktop
 
                 if (!_streamClient.IsConnected)
                 {
-                    if (!_isHosting && (_isViewing || (_isWirelessDisplayModeActive && _projectionReceiver?.IsSessionBusy == true)))
+                    if (ShouldDisconnectActiveViewerSession())
                     {
                         HandleViewerDisconnected(status);
                         return;

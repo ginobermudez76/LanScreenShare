@@ -560,6 +560,31 @@ public class VirtualDisplayProjectionMtlsTests
         LanScreenShare.Desktop.MainWindow.GuardExtendedTopologyStep(true, host, topologyAdapter);
         Assert.AreEqual(2, captureInstances.Count);
         Assert.AreEqual(1, topologyAdapter.ExtendCalls);
+
+        topologyAdapter.NextSnapshot = new DisplayTopologySnapshot
+        {
+            Paths =
+            [
+                new DisplayPathSnapshot
+                {
+                    DeviceName = displayService.CurrentSession!.DeviceName!,
+                    Width = 1280,
+                    Height = 720,
+                    PositionX = 1920,
+                    PositionY = 0
+                }
+            ]
+        };
+        host.RefreshCaptureSourceFromTopology();
+        Assert.AreEqual(3, captureInstances.Count);
+
+        var sourceA = new CaptureSource { Id = "vdd:1", Name = "A", DeviceName = @"\\.\DISPLAY2", X = 1920, Y = 0, Width = 1280, Height = 720 };
+        var sourceB = new CaptureSource { Id = "vdd:1", Name = "A", DeviceName = @"\\.\DISPLAY3", X = 1920, Y = 0, Width = 1280, Height = 720 };
+        var sourceC = new CaptureSource { Id = "vdd:1", Name = "A", DeviceName = @"\\.\DISPLAY2", X = 1920, Y = 100, Width = 1280, Height = 720 };
+        Assert.IsTrue(VirtualDisplayProjectionHost.HasCaptureSourceGeometryChanged(null, sourceA));
+        Assert.IsTrue(VirtualDisplayProjectionHost.HasCaptureSourceGeometryChanged(sourceA, sourceB));
+        Assert.IsTrue(VirtualDisplayProjectionHost.HasCaptureSourceGeometryChanged(sourceA, sourceC));
+        Assert.IsFalse(VirtualDisplayProjectionHost.HasCaptureSourceGeometryChanged(sourceA, sourceA));
     }
 
     private sealed class StubTopologyManager : IDisplayTopologyManager

@@ -404,19 +404,19 @@ namespace LanScreenShare.Media.Display
                 return null;
             }
 
+            if (!hadRequestedMode)
+            {
+                // Si el controlador ya estaba cargado con una tabla EDID previa, recargamos vdd_settings.xml
+                // antes de activar la pantalla virtual para exponer de inmediato la resolución nativa del receptor.
+                await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.ReloadDriver), ct);
+            }
+
             bool sent = await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.SetDisplayCount, targetCount), ct);
             if (!sent)
             {
                 RestorePreviousCountInSettings(mode);
                 await _environment.DisableDriverAsync(CancellationToken.None);
                 return null;
-            }
-
-            if (!hadRequestedMode)
-            {
-                // Si el controlador ya estaba cargado con una tabla EDID previa, recargamos vdd_settings.xml
-                // para exponer de inmediato la resolución nativa del receptor.
-                await _pipeTransport.SendCommandAsync(new VddCommandRequest(VddCommandKind.ReloadDriver), ct);
             }
 
             TimeSpan deviceLookupTimeout = _environment is WindowsVddEnvironment

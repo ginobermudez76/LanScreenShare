@@ -153,7 +153,10 @@ namespace LanScreenShare.Desktop
             VirtualDisplayProjectionHost? host,
             IDisplayTopologyManager? topologyManager)
         {
-            if (!isExtendingDisplay || host == null || !host.IsProjecting || topologyManager == null)
+            if (!isExtendingDisplay || host is not { IsProjecting: true })
+                return;
+
+            if (topologyManager == null)
                 return;
 
             if (topologyManager is WindowsDisplayTopologyManager winTopo)
@@ -282,8 +285,15 @@ namespace LanScreenShare.Desktop
         private DisplayCapabilitiesDto BuildLocalDisplayCapabilities()
         {
             var (nativeMode, dpiScale) = ResolveLocalPhysicalDisplayMode();
-            bool isBusy = _isViewing || _isHosting || _isExtendingDisplay;
-            return BuildDisplayCapabilities(nativeMode, dpiScale, isBusy);
+            return BuildDisplayCapabilities(nativeMode, dpiScale, IsLocalDisplaySessionBusy());
+        }
+
+        private bool IsLocalDisplaySessionBusy()
+        {
+            if (_isViewing || _isHosting)
+                return true;
+
+            return _isExtendingDisplay;
         }
 
         internal static DisplayCapabilitiesDto BuildDisplayCapabilities(
@@ -292,22 +302,8 @@ namespace LanScreenShare.Desktop
             bool isBusy)
         {
             var normalizedNative = NormalizeDisplayMode(detectedNativeMode);
-            var modes = new List<VirtualDisplayMode>();
-
-            if (normalizedNative is { } native)
-            {
-                AddModeIfSupported(modes, native);
-            }
-
-            int maxW = normalizedNative?.Width ?? 1920;
-            int maxH = normalizedNative?.Height ?? 1080;
-            int hz = normalizedNative?.RefreshRateHz ?? 60;
-            AddStandardCandidateModes(modes, maxW, maxH, hz);
-
-            if (modes.Count == 0)
-            {
-                modes.Add(VirtualDisplayMode.Default);
-            }
+            var referenceMode = normalizedNative ?? VirtualDisplayMode.Default;
+            var modes = BuildSupportedModesList(normalizedNative, referenceMode);
 
             return new DisplayCapabilitiesDto
             {
@@ -318,6 +314,25 @@ namespace LanScreenShare.Desktop
                 SupportsAuxiliaryInput = false,
                 IsBusy = isBusy
             };
+        }
+
+        private static List<VirtualDisplayMode> BuildSupportedModesList(
+            VirtualDisplayMode? normalizedNative,
+            VirtualDisplayMode referenceMode)
+        {
+            var modes = new List<VirtualDisplayMode>();
+            if (normalizedNative is { } native)
+            {
+                AddModeIfSupported(modes, native);
+            }
+
+            AddStandardCandidateModes(modes, referenceMode.Width, referenceMode.Height, referenceMode.RefreshRateHz);
+            if (modes.Count == 0)
+            {
+                modes.Add(VirtualDisplayMode.Default);
+            }
+
+            return modes;
         }
 
         private static void AddStandardCandidateModes(List<VirtualDisplayMode> modes, int maxW, int maxH, int hz)
@@ -334,14 +349,25 @@ namespace LanScreenShare.Desktop
 
             foreach (var (w, h) in standardCandidates)
             {
-                if (w > maxW || h > maxH)
-                    continue;
+                TryAddCandidateResolution(modes, w, h, maxW, maxH, hz);
+            }
+        }
 
-                AddModeIfSupported(modes, new VirtualDisplayMode(w, h, hz));
-                if (hz != 60)
-                {
-                    AddModeIfSupported(modes, new VirtualDisplayMode(w, h, 60));
-                }
+        private static void TryAddCandidateResolution(
+            List<VirtualDisplayMode> modes,
+            int width,
+            int height,
+            int maxW,
+            int maxH,
+            int hz)
+        {
+            if (width > maxW || height > maxH)
+                return;
+
+            AddModeIfSupported(modes, new VirtualDisplayMode(width, height, hz));
+            if (hz != 60)
+            {
+                AddModeIfSupported(modes, new VirtualDisplayMode(width, height, 60));
             }
         }
 
@@ -355,29 +381,31 @@ namespace LanScreenShare.Desktop
 
         private static VirtualDisplayMode? NormalizeDisplayMode(VirtualDisplayMode? rawMode)
         {
-            if (rawMode is not { } raw || raw.Width <= 0 || raw.Height <= 0)
+            if (rawMode is not { } raw)
                 return null;
 
-            int width = raw.Width;
-            int height = raw.Height;
+            if (raw.Width <= 0 || raw.Height <= 0)
+                return null;
 
-            if (width > VirtualDisplayModeValidator.MaxWidth || height > VirtualDisplayModeValidator.MaxHeight)
-            {
-                double ratio = Math.Min(
-                    (double)VirtualDisplayModeValidator.MaxWidth / width,
-                    (double)VirtualDisplayModeValidator.MaxHeight / height);
-                width = (int)Math.Floor(width * ratio);
-                height = (int)Math.Floor(height * ratio);
-            }
-
+            var (width, height) = ScaleDownToMaxBounds(raw.Width, raw.Height);
             width = Math.Clamp(width & ~1, VirtualDisplayModeValidator.MinWidth, VirtualDisplayModeValidator.MaxWidth);
             height = Math.Clamp(height & ~1, VirtualDisplayModeValidator.MinHeight, VirtualDisplayModeValidator.MaxHeight);
-            int hz = Math.Clamp(raw.RefreshRateHz > 0 ? raw.RefreshRateHz : 60,
-                VirtualDisplayModeValidator.MinRefreshRateHz,
-                60);
+            int targetHz = raw.RefreshRateHz > 0 ? raw.RefreshRateHz : 60;
+            int hz = Math.Clamp(targetHz, VirtualDisplayModeValidator.MinRefreshRateHz, 60);
 
             var normalized = new VirtualDisplayMode(width, height, hz);
             return VirtualDisplayModeValidator.IsSupported(in normalized) ? normalized : null;
+        }
+
+        private static (int Width, int Height) ScaleDownToMaxBounds(int width, int height)
+        {
+            if (width <= VirtualDisplayModeValidator.MaxWidth && height <= VirtualDisplayModeValidator.MaxHeight)
+                return (width, height);
+
+            double ratio = Math.Min(
+                (double)VirtualDisplayModeValidator.MaxWidth / width,
+                (double)VirtualDisplayModeValidator.MaxHeight / height);
+            return ((int)Math.Floor(width * ratio), (int)Math.Floor(height * ratio));
         }
 
         private (VirtualDisplayMode? Mode, double DpiScale) ResolveLocalPhysicalDisplayMode()

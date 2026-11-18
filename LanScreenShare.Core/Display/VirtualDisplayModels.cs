@@ -239,7 +239,6 @@ namespace LanScreenShare.Core.Display
     {
         DisplayTopologySnapshot CaptureSnapshot();
         bool ApplyExtendTopology(string? preferredDeviceName, VirtualDisplayMode mode);
-        bool EnsureExtendedLayout(string? preferredDeviceName) => true;
         bool RestoreSnapshot(DisplayTopologySnapshot snapshot);
     }
 

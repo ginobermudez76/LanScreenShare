@@ -447,7 +447,7 @@ namespace LanScreenShare.Media
             // 2. Enviar el nuevo fotograma de entrada
             _encoder.ProcessInput(0, inputSample, 0);
 
-            // 3. Drenar eventos generados sin sufrir saltos de 15.6 ms por Thread.Sleep sin timer de alta precisión
+            // 3. Drenar eventos generados sin sufrir saltos de 15.6 ms al esperar respuesta temprana de GPU
             var waitSw = Stopwatch.StartNew();
             while (outputMs.Length == 0 && waitSw.ElapsedMilliseconds < 30)
             {
@@ -455,10 +455,21 @@ namespace LanScreenShare.Media
                 if (outputMs.Length > 0)
                     break;
 
-                Thread.Sleep(1);
+                WaitForAsyncEncoderStep(waitSw.ElapsedMilliseconds);
             }
 
             return outputMs.ToArray();
+        }
+
+        private static void WaitForAsyncEncoderStep(long elapsedMs)
+        {
+            if (elapsedMs < 2)
+            {
+                Thread.SpinWait(64);
+                return;
+            }
+
+            Thread.Sleep(1);
         }
 
         private static void WriteSampleBytesToStream(IMFSample produced, MemoryStream outputMs)

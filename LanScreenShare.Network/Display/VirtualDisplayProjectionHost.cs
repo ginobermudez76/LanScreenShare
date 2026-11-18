@@ -253,22 +253,30 @@ public sealed class VirtualDisplayProjectionHost : IAsyncDisposable
 
         var topology = _deps.TopologyManager?.CaptureSnapshot();
         var updatedSource = VirtualDisplayCaptureSourceFactory.CreateCaptureSource(session, topology);
-        bool changed = ActiveCaptureSource == null ||
-                       !string.Equals(ActiveCaptureSource.DeviceName, updatedSource.DeviceName, StringComparison.OrdinalIgnoreCase) ||
-                       ActiveCaptureSource.X != updatedSource.X ||
-                       ActiveCaptureSource.Y != updatedSource.Y ||
-                       ActiveCaptureSource.Width != updatedSource.Width ||
-                       ActiveCaptureSource.Height != updatedSource.Height;
+        bool changed = HasCaptureSourceGeometryChanged(ActiveCaptureSource, updatedSource);
 
         ActiveCaptureSource = updatedSource;
         if (changed)
         {
             StartIsolatedCapture(session, _baseProfile);
+            return;
         }
-        else
-        {
-            _captureService?.RequestKeyframe();
-        }
+
+        _captureService?.RequestKeyframe();
+    }
+
+    internal static bool HasCaptureSourceGeometryChanged(CaptureSource? current, CaptureSource updated)
+    {
+        if (current == null)
+            return true;
+
+        if (!string.Equals(current.DeviceName, updated.DeviceName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (current.Width != updated.Width || current.Height != updated.Height)
+            return true;
+
+        return current.X != updated.X || current.Y != updated.Y;
     }
 
     public async Task StopProjectionAsync(CancellationToken ct = default)
