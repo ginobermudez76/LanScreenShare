@@ -10,6 +10,7 @@ namespace LanScreenShare.Core.Display
     public sealed record DisplayCapabilitiesDto
     {
         public IReadOnlyList<VirtualDisplayMode> SupportedModes { get; init; } = new[] { VirtualDisplayMode.Default };
+        public VirtualDisplayMode? NativeMode { get; init; }
         public double DpiScaleFactor { get; init; } = 1.0;
         public int OrientationDegrees { get; init; } = 0;
         public string DeviceName { get; init; } = string.Empty;

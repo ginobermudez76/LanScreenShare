@@ -205,20 +205,27 @@ namespace LanScreenShare.Desktop
 
         private DisplayCapabilitiesDto BuildLocalDisplayCapabilities()
         {
-            var modes = new List<VirtualDisplayMode>
+            var nativeMode = ResolveLocalNativeDisplayMode();
+            var modes = new List<VirtualDisplayMode>();
+
+            if (nativeMode is { } native)
             {
+                modes.Add(native);
+            }
+
+            VirtualDisplayMode[] standardModes =
+            [
                 new(1920, 1080, 60),
                 new(2560, 1440, 60),
                 new(1600, 900, 60),
                 new(1280, 720, 60)
-            };
+            ];
 
-            if (Screens.Primary is { } primary)
+            foreach (var mode in standardModes)
             {
-                var nativeMode = new VirtualDisplayMode(primary.Bounds.Width, primary.Bounds.Height, 60);
-                if (VirtualDisplayModeValidator.IsSupported(in nativeMode) && !modes.Contains(nativeMode))
+                if (!modes.Contains(mode))
                 {
-                    modes.Insert(0, nativeMode);
+                    modes.Add(mode);
                 }
             }
 
@@ -226,10 +233,23 @@ namespace LanScreenShare.Desktop
             {
                 DeviceName = Environment.MachineName,
                 SupportedModes = modes,
+                NativeMode = nativeMode,
                 DpiScaleFactor = Screens.Primary?.Scaling ?? 1.0,
                 SupportsAuxiliaryInput = false,
                 IsBusy = _isViewing || _isHosting || _isExtendingDisplay
             };
+        }
+
+        private VirtualDisplayMode? ResolveLocalNativeDisplayMode()
+        {
+            if (NativeDisplayHelper.TryGetPrimaryPhysicalDisplayMode() is { } physicalMode)
+                return physicalMode;
+
+            if (Screens.Primary is not { } primary)
+                return null;
+
+            var fallbackMode = new VirtualDisplayMode(primary.Bounds.Width, primary.Bounds.Height, 60);
+            return VirtualDisplayModeValidator.IsSupported(in fallbackMode) ? fallbackMode : null;
         }
 
         private async Task<bool> HandleIncomingProjectionInviteAsync(DisplayInvitationAcceptanceContext context)

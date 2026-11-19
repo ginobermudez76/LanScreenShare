@@ -49,15 +49,20 @@ namespace LanScreenShare.Core.Display
 
         public static VirtualDisplayMode? SelectBestSupportedMode(
             IReadOnlyList<VirtualDisplayMode> advertisedModes,
-            VirtualDisplayMode? preferred = null)
+            VirtualDisplayMode? preferred = null,
+            VirtualDisplayMode? nativeMode = null)
         {
             ArgumentNullException.ThrowIfNull(advertisedModes);
             var valid = advertisedModes.Where(m => IsSupported(in m)).ToList();
-            if (valid.Count == 0)
-                return null;
 
             if (preferred is { } target && valid.Contains(target))
                 return target;
+
+            if (nativeMode is { } native && IsSupported(in native))
+                return native;
+
+            if (valid.Count == 0)
+                return null;
 
             return valid
                 .OrderByDescending(m => (long)m.Width * m.Height)
