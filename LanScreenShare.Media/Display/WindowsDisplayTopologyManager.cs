@@ -13,6 +13,7 @@ namespace LanScreenShare.Media.Display
         bool TryQueryActiveDisplayPaths(out IReadOnlyList<DisplayPathSnapshot> paths);
         bool ApplyExtendTopology();
         bool ApplySuppliedConfig(IReadOnlyList<DisplayPathSnapshot> paths);
+        bool TryApplyDisplayMode(string? deviceName, VirtualDisplayMode mode) => false;
     }
 
     public sealed partial class WindowsDisplayTopologyManager : IDisplayTopologyManager
@@ -48,6 +49,9 @@ namespace LanScreenShare.Media.Display
                 return false;
 
             if (!VirtualDisplayModeValidator.IsSupported(in mode))
+                return true;
+
+            if (_adapter.TryApplyDisplayMode(preferredDeviceName, mode))
                 return true;
 
             if (!_adapter.TryQueryActiveDisplayPaths(out var activePaths) || activePaths.Count == 0)
@@ -92,6 +96,41 @@ namespace LanScreenShare.Media.Display
                 RefreshRateDenominator = 1
             };
             return copy;
+        }
+
+        internal static int FindTargetModeIndex(
+            DisplayConfigModeInfo[] modes,
+            Luid targetAdapterId,
+            uint targetId,
+            VirtualDisplayMode mode)
+        {
+            int bestIndex = -1;
+            double bestRefreshDelta = double.MaxValue;
+            for (int i = 0; i < modes.Length; i++)
+            {
+                var candidate = modes[i];
+                if (candidate.InfoType != DisplayConfigModeInfoTypeTarget)
+                    continue;
+                if (candidate.AdapterId.LowPart != targetAdapterId.LowPart ||
+                    candidate.AdapterId.HighPart != targetAdapterId.HighPart ||
+                    candidate.Id != targetId)
+                    continue;
+                if (candidate.TargetActiveWidth != (uint)mode.Width ||
+                    candidate.TargetActiveHeight != (uint)mode.Height)
+                    continue;
+
+                double hz = candidate.TargetVSyncDenominator > 0
+                    ? candidate.TargetVSyncNumerator / (double)candidate.TargetVSyncDenominator
+                    : 0;
+                double delta = Math.Abs(hz - mode.RefreshRateHz);
+                if (delta < bestRefreshDelta)
+                {
+                    bestRefreshDelta = delta;
+                    bestIndex = i;
+                }
+            }
+
+            return bestIndex;
         }
 
         internal const int SourceDeviceNamePacketSize = 84;
@@ -146,8 +185,8 @@ namespace LanScreenShare.Media.Display
             return paths.Count - 1;
         }
 
-        private const uint DisplayConfigModeInfoTypeSource = 1;
-        private const uint DisplayConfigModeInfoTypeTarget = 2;
+        internal const uint DisplayConfigModeInfoTypeSource = 1;
+        internal const uint DisplayConfigModeInfoTypeTarget = 2;
         private const uint DisplayConfigPathActive = 0x00000001;
 
         internal static (DisplayConfigPathInfo[] Paths, DisplayConfigModeInfo[] Modes) PrepareSuppliedNativeArrays(
@@ -323,6 +362,7 @@ namespace LanScreenShare.Media.Display
         internal sealed partial class Win32CcdAdapter : ICcdPlatformAdapter
         {
             private const uint QdcOnlyActivePaths = 0x00000002;
+            private const uint QdcDatabaseCurrent = 0x00000004;
             private const uint SdcApply = 0x00000080;
             private const uint SdcTopologyExtend = 0x00000004;
             private const uint SdcUseSuppliedDisplayConfig = 0x00000020;
@@ -386,6 +426,78 @@ namespace LanScreenShare.Media.Display
                     () => ClearTargetModeIndices(nativePaths),
                     () => SetDisplayConfig(0, IntPtr.Zero, 0, IntPtr.Zero, SdcApply | 0x00000001u /* SdcTopologyInternal */) == 0,
                     nativePaths.Length);
+            }
+
+            public bool TryApplyDisplayMode(string? deviceName, VirtualDisplayMode mode)
+            {
+                if (!VirtualDisplayModeValidator.IsSupported(in mode))
+                    return false;
+
+                if (GetDisplayConfigBufferSizes(QdcDatabaseCurrent, out uint pathCount, out uint modeCount) != 0 || pathCount == 0)
+                    return false;
+
+                var pathInfos = new DisplayConfigPathInfo[pathCount];
+                var modeInfos = new DisplayConfigModeInfo[modeCount];
+                var pathsHandle = GCHandle.Alloc(pathInfos, GCHandleType.Pinned);
+                var modesHandle = GCHandle.Alloc(modeInfos, GCHandleType.Pinned);
+                try
+                {
+                    int err = QueryDisplayConfig(
+                        QdcDatabaseCurrent,
+                        ref pathCount,
+                        pathsHandle.AddrOfPinnedObject(),
+                        ref modeCount,
+                        modesHandle.AddrOfPinnedObject(),
+                        IntPtr.Zero);
+                    if (err != 0)
+                        return false;
+                }
+                finally
+                {
+                    pathsHandle.Free();
+                    modesHandle.Free();
+                }
+
+                var activePaths = pathInfos.Where(p => (p.Flags & DisplayConfigPathActive) != 0).ToArray();
+                if (activePaths.Length == 0)
+                    return false;
+
+                int targetIndex = SelectActivePathIndex(activePaths, deviceName);
+                if (targetIndex < 0)
+                    return false;
+
+                var targetPath = activePaths[targetIndex];
+                int modeIndex = WindowsDisplayTopologyManager.FindTargetModeIndex(
+                    modeInfos,
+                    targetPath.TargetInfo.AdapterId,
+                    targetPath.TargetInfo.Id,
+                    mode);
+                if (modeIndex < 0)
+                    return false;
+
+                targetPath.TargetInfo.ModeInfoIdx = (uint)modeIndex;
+                var chosenMode = modeInfos[modeIndex];
+                targetPath.TargetInfo.RefreshRateNumerator = chosenMode.TargetVSyncNumerator;
+                targetPath.TargetInfo.RefreshRateDenominator = chosenMode.TargetVSyncDenominator;
+                activePaths[targetIndex] = targetPath;
+
+                return InvokeSetDisplayConfig(activePaths, modeInfos);
+            }
+
+            private int SelectActivePathIndex(DisplayConfigPathInfo[] activePaths, string? deviceName)
+            {
+                if (!string.IsNullOrWhiteSpace(deviceName))
+                {
+                    for (int i = 0; i < activePaths.Length; i++)
+                    {
+                        var path = activePaths[i];
+                        string? gdiName = QuerySourceDeviceName(path.SourceInfo.AdapterId, path.SourceInfo.Id);
+                        if (string.Equals(gdiName, deviceName, StringComparison.OrdinalIgnoreCase))
+                            return i;
+                    }
+                }
+
+                return activePaths.Length - 1;
             }
 
             private static bool InvokeSetDisplayConfig(DisplayConfigPathInfo[] nativePaths, DisplayConfigModeInfo[] nativeModes)
