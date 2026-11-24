@@ -405,6 +405,47 @@ public class VirtualDisplayInfrastructureTests
     }
 
     [TestMethod]
+    public void FindTargetModeIndex_SelectsClosestRefreshForNativeResolution()
+    {
+        var adapter = new WindowsDisplayTopologyManager.Luid { LowPart = 1, HighPart = 2 };
+        var otherAdapter = new WindowsDisplayTopologyManager.Luid { LowPart = 9, HighPart = 9 };
+        WindowsDisplayTopologyManager.DisplayConfigModeInfo[] modes =
+        [
+            CreateTargetModeInfo(adapter, 7, 1920, 1080, 60),
+            CreateTargetModeInfo(adapter, 7, 2560, 1440, 60),
+            CreateTargetModeInfo(adapter, 7, 2560, 1440, 144),
+            CreateTargetModeInfo(otherAdapter, 7, 2560, 1440, 165),
+            CreateTargetModeInfo(adapter, 8, 2560, 1440, 120)
+        ];
+
+        int match = WindowsDisplayTopologyManager.FindTargetModeIndex(modes, adapter, 7, new VirtualDisplayMode(2560, 1440, 120));
+        int noResolution = WindowsDisplayTopologyManager.FindTargetModeIndex(modes, adapter, 7, new VirtualDisplayMode(1366, 768, 60));
+
+        Assert.AreEqual(2, match);
+        Assert.AreEqual(-1, noResolution);
+    }
+
+    private static WindowsDisplayTopologyManager.DisplayConfigModeInfo CreateTargetModeInfo(
+        WindowsDisplayTopologyManager.Luid adapter,
+        uint targetId,
+        uint width,
+        uint height,
+        uint refreshHz)
+    {
+        var mode = new WindowsDisplayTopologyManager.DisplayConfigModeInfo
+        {
+            InfoType = WindowsDisplayTopologyManager.DisplayConfigModeInfoTypeTarget,
+            Id = targetId,
+            AdapterId = adapter,
+            TargetVSyncNumerator = refreshHz * 1000,
+            TargetVSyncDenominator = 1000,
+            TargetActiveWidth = width,
+            TargetActiveHeight = height
+        };
+        return mode;
+    }
+
+    [TestMethod]
     public async Task WindowsPlatformAdapters_ExecuteSafelyAgainstTempPathsAndNamedPipe()
     {
         if (!OperatingSystem.IsWindows())
