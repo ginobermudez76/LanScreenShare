@@ -89,4 +89,5 @@ La salida se genera en `installer\output\LanScreenShare-Setup.exe`. Si necesitas
 - [**`PROJECT_ROADMAP.md`**](PROJECT_ROADMAP.md): Arquitectura detallada, tecnologías, estado actualizado de hitos y diagrama de clases.
 - [**`docs/adr/ADR-001-SESSION-SECURITY-AND-PAIRING.md`**](docs/adr/ADR-001-SESSION-SECURITY-AND-PAIRING.md): Arquitectura de seguridad de sesión, autenticación mutua (mTLS) y emparejamiento.
 - [**`docs/adr/ADR-002-UAC-AND-SECURE-DESKTOP-HANDLING.md`**](docs/adr/ADR-002-UAC-AND-SECURE-DESKTOP-HANDLING.md): Manejo de UAC, Winlogon y escritorio seguro.
+- [**`docs/adr/ADR-003-ANDROID-HOST-AND-VIEWER-ARCHITECTURE.md`**](docs/adr/ADR-003-ANDROID-HOST-AND-VIEWER-ARCHITECTURE.md): Arquitectura de Android (.NET 9 + Avalonia UI) para modos Emisor y Visor.
 - [**`docs/PLAN_REFINAMIENTO_ARQUITECTURA_Y_UI.md`**](docs/PLAN_REFINAMIENTO_ARQUITECTURA_Y_UI.md): Plan histórico de refinamiento arquitectónico y mejoras de UI.
